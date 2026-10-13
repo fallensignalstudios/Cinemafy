@@ -28,7 +28,8 @@
 - [x] Animated letterbox bars in/out, synced to the blend
 - [x] Play relative to player / anchor actor; align gameplay camera to the final cutscene camera
 - [x] Skip that still blends out
-- [ ] Listening-reaction idles during dialogue
+- [x] Listening reactions: hears the speaker's face curves, backchannel nods, emphasis blinks/brows, thinking glances, 6 temperaments
+- [ ] Listener v2: audio-envelope hearing and sentiment-aware reactions from dialogue tags
 - [ ] Per-shot grade overrides + "match to reference shot"
 
 ## 🚀 Stretch

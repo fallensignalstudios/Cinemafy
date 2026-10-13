@@ -38,6 +38,7 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 | **Gaze** | Living eyes: micro-saccades, a lazy head that carries part of the turn, natural blinks, double blinks and blink-on-gaze-shift. | `Cinemafy Gaze` component |
 | **Light Rig** | A gaffer in a box: key, fill, rim and eye light that place themselves around a character **relative to the shot's camera**. Styles: Three-Point, Loop, Rembrandt, Butterfly, Split, Noir and Silhouette. Short- or broad-side keying is picked automatically from where the face is turned. Intensities are in **lux at the face**, so moving lights never changes exposure. **Character Only** mode uses lighting channel 1, so cutscene cheats never touch the environment. In game it can re-light for every camera cut. `Intensity` is keyable. | Tools → Cinemafy → Light Rig / `Cinemafy Light Rig` actor |
 | **Gameplay ↔ Cutscene** | `UCinemafyCutsceneSubsystem::PlayCutscene` blends from the gameplay camera into the cutscene and back. Animated letterbox bars follow the blend, the cutscene can re-anchor to the player (no teleport pop), and the gameplay camera lands facing where the cutscene ended. Skips still blend out. | Tools → Cinemafy → Set Up Gameplay Blend + `Cinemafy Cutscene` subsystem |
+| **Listener** | Characters who actually listen. It reads the speaker's MetaHuman jaw curve to find phrase endings, emphasis and long stretches of talk. Listeners nod in the pauses, blink and raise brows on stressed words, tilt or glance away while processing, and idle quietly in silence. Six temperaments: Attentive, Warm, Stoic, Skeptical, Nervous, Hostile. `Engagement` is keyable, and `React()` places a reaction on an exact line. Goes quiet while its own character talks. | Tools → Cinemafy → Add Listening / `Cinemafy Listener` component |
 | **Looks** | Clean Cinema, Warm Epic, Teal & Orange, Bleach Bypass, Noir, Cold Steel. Applied on top of your existing post settings, with a strength slider. | Tools → Cinemafy → Look & Letterbox |
 | **Letterbox** | 2.39 scope or 1.85 flat. Real in-game bars through the camera's aspect constraint. | Tools → Cinemafy → Look & Letterbox |
 | **Look Presets** | `CinemafyLookPreset` data asset: save a grade and letterbox as a reusable "film stock". | Content Browser → Miscellaneous → Data Asset |
@@ -58,7 +59,8 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
 7. Before step 3, open your Level Sequence in Sequencer and move the playhead before each shot: every **Create Shot** drops a camera cut right there. 🎬
 8. Open *Tools → Cinemafy → Shot Browser* and hit **Capture Thumbnails** to see your edit as a film strip.
 9. Select both characters plus all the cameras, then run *Check 180-Degree Line* for peace of mind.
-10. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
+10. Select both characters: *Add Listening → Attentive* (or *Skeptical* for Voss 😏). Each now reacts while the other talks.
+11. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
 
 > **Tip:** keep `bFlipSide` the same for every shot in a scene. That's what keeps you on one side of the line.
 
@@ -116,6 +118,39 @@ To switch who a character is looking at mid-cutscene, add a Sequencer **Event Tr
 
 ---
 
+## Hooking Listener into a MetaHuman
+
+Like Gaze, the Listener **computes** and your Anim Blueprints **apply**. It also drives the
+character's Gaze component for you: looking at the speaker, glancing away while thinking and
+blinking on emphasis.
+
+**Face Anim BP:** read the Listener's outputs and add them to the matching expression curves
+(a *Modify Curve* node in *Add* mode, or Control Rig):
+
+| Listener output | MetaHuman curves |
+|---|---|
+| `BrowRaise` | `CTRL_expressions_browRaiseInL/R`, `CTRL_expressions_browRaiseOuterL/R` |
+| `BrowFurrow` | `CTRL_expressions_browDownL/R`, `CTRL_expressions_browLateralL/R` |
+| `Smile` | `CTRL_expressions_mouthCornerPullL/R` |
+| `Squint` | `CTRL_expressions_eyeSquintInnerL/R` |
+
+**Body Anim BP:**
+- `HeadRotation` → *Transform (Modify) Bone* on `head` (or split it with `neck_02`), set to *Add to Existing*.
+- `BreathAlpha` and `WeightShift` → blend in a breathing additive and lean between idle variations.
+- `OnReaction` → play body montages for the big beats (an "acknowledge" or "shrug").
+
+**How it hears:** by default it watches `CTRL_expressions_jawOpen` on the speaker. That curve
+follows MetaHuman Animator and audio-driven performances, so no markup is needed. For non-MetaHuman
+characters, add their jaw or viseme curve to `SpeechCurves`, or turn on `bUseManualSpeechEnergy`
+and key `ManualSpeechEnergy`. If listeners react too much or too little, adjust `SpeechThreshold`
+and watch `HeardEnergy`.
+
+**Directing it:** key `Engagement` down for a character who's tuning out. Call `React` from a
+Sequencer event track to land a nod or a head shake on an exact line. Call `SetSpeaker` to switch
+who they're listening to in group scenes.
+
+---
+
 ## Notes and gotchas
 
 - **Camera Feel** and **Camera Move** offset the *camera component*, not the actor, so they stack
@@ -130,6 +165,8 @@ To switch who a character is looking at mid-cutscene, add a Sequencer **Event Tr
   stays balanced relative to it.
 - **Character Only** lighting turns on lighting channel 1 for the subject's meshes (body, face
   and groom). Their normal channel 0 world lighting is left as it was.
+- With **Drive Gaze** on, the Listener owns its Gaze's `LookAtOffset` (for thinking glances).
+  Use `SetLookAtTarget` to aim the gaze and leave the offset to the Listener.
 - Bone names default to MetaHuman (`FACIAL_L_Eye`, `FACIAL_R_Eye`, `head`) and fall back
   gracefully for other characters.
 

@@ -8,6 +8,7 @@
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
 #include "CinemafyLightRig.h"
+#include "CinemafyListenerComponent.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -561,6 +562,43 @@ bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeco
 	CinemafySequencer::NotifyChanged();
 	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: gameplay blend set up (%.2fs in, %.2fs out, %d animation tracks)."), BlendInSeconds, BlendOutSeconds, AnimTracks);
 	return true;
+}
+
+int32 UCinemafyEditorLibrary::AddListeningToSelection(ECinemafyTemperament Temperament)
+{
+	TArray<AActor*> Characters;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			Characters.Add(Actor);
+		}
+	}
+
+	if (Characters.Num() == 0)
+	{
+		WarnNothingSelected(TEXT("character (with a skeletal mesh)"));
+		return 0;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("AddListening", "Cinemafy: Add Listening"));
+	for (int32 Index = 0; Index < Characters.Num(); ++Index)
+	{
+		AActor* Character = Characters[Index];
+		FindOrAddComponent<UCinemafyGazeComponent>(Character, TEXT("CinemafyGaze"));
+
+		UCinemafyListenerComponent* Listener = FindOrAddComponent<UCinemafyListenerComponent>(Character, TEXT("CinemafyListener"));
+		Listener->Temperament = Temperament;
+		// Different seeds so two listeners never react in lockstep.
+		Listener->Seed = static_cast<int32>(GetTypeHash(Character->GetFName()) % 1000);
+
+		// A pair becomes a conversation: each listens to the other.
+		if (Characters.Num() == 2)
+		{
+			Listener->SetSpeaker(Characters[1 - Index]);
+		}
+	}
+	return Characters.Num();
 }
 
 int32 UCinemafyEditorLibrary::AddGazeToSelection()

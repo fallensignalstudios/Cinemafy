@@ -89,6 +89,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static bool SetUpGameplayBlendForOpenSequence(float BlendInSeconds = 1.f, float BlendOutSeconds = 1.f, bool bIncludeAnimations = true);
 
+	/**
+	 * Adds a Listener (and Gaze, if missing) to each selected character. Select exactly two and
+	 * they're set up as a conversation: each listens to the other. Returns how many were set up.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 AddListeningToSelection(ECinemafyTemperament Temperament);
+
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 AddGazeToSelection();

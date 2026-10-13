@@ -273,3 +273,31 @@ struct FCinemafyCutsceneSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Handoff")
 	bool bHideHUD = true;
 };
+
+/** A listener's personality: how often and how strongly they react. */
+UENUM(BlueprintType)
+enum class ECinemafyTemperament : uint8
+{
+	Attentive UMETA(DisplayName = "Attentive (engaged, nods)"),
+	Warm      UMETA(DisplayName = "Warm (smiles, tilts)"),
+	Stoic     UMETA(DisplayName = "Stoic (minimal, slow)"),
+	Skeptical UMETA(DisplayName = "Skeptical (tilts, furrows)"),
+	Nervous   UMETA(DisplayName = "Nervous (glances away, fidgets)"),
+	Hostile   UMETA(DisplayName = "Hostile (chin up, stares)")
+};
+
+/** A single listening gesture. Trigger these from Sequencer events with React(). */
+UENUM(BlueprintType)
+enum class ECinemafyReaction : uint8
+{
+	Nod        UMETA(DisplayName = "Nod"),
+	SmallNod   UMETA(DisplayName = "Small Nod (uh-huh)"),
+	DoubleNod  UMETA(DisplayName = "Double Nod"),
+	HeadShake  UMETA(DisplayName = "Head Shake"),
+	Tilt       UMETA(DisplayName = "Head Tilt"),
+	BrowRaise  UMETA(DisplayName = "Brow Raise"),
+	Smile      UMETA(DisplayName = "Smile"),
+	Frown      UMETA(DisplayName = "Frown"),
+	LookAway   UMETA(DisplayName = "Look Away (thinking)"),
+	Blink      UMETA(DisplayName = "Blink")
+};

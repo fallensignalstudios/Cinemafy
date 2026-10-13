@@ -74,6 +74,12 @@ namespace
 		AddEnumEntries<ECinemafyLightingStyle>(Section, [](ECinemafyLightingStyle Style) { UCinemafyEditorLibrary::ApplyLightingStyleToSelection(Style); });
 	}
 
+	void FillListenMenu(UToolMenu* Menu)
+	{
+		FToolMenuSection& Section = Menu->AddSection("Listen", LOCTEXT("ListenSection", "Select characters (two = a conversation)"));
+		AddEnumEntries<ECinemafyTemperament>(Section, [](ECinemafyTemperament Temperament) { UCinemafyEditorLibrary::AddListeningToSelection(Temperament); });
+	}
+
 	void FillLookMenu(UToolMenu* Menu)
 	{
 		FToolMenuSection& Section = Menu->AddSection("Look", LOCTEXT("LookSection", "Look"));
@@ -167,6 +173,10 @@ void FCinemafyEditorModule::RegisterMenus()
 		LOCTEXT("LineCheckMenuTip", "Select two characters and your cameras. Flags cameras across the line of action."),
 		FSlateIcon(),
 		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::CheckLineOfActionForSelection(); })));
+
+	Section.AddSubMenu("CinemafyListen", LOCTEXT("ListenMenu", "Add Listening"),
+		LOCTEXT("ListenMenuTip", "Characters react while others talk: nods in pauses, blinks on emphasis, thinking glances. Pick a temperament."),
+		FNewToolMenuDelegate::CreateStatic(&FillListenMenu));
 
 	Section.AddMenuEntry("CinemafyGaze", LOCTEXT("GazeMenu", "Add Gaze to Characters"),
 		LOCTEXT("GazeMenuTip", "Add living eyes (saccades, head follow, blinks) to the selected characters."),
