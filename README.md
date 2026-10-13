@@ -39,6 +39,7 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 | **Light Rig** | A gaffer in a box: key, fill, rim and eye light that place themselves around a character **relative to the shot's camera**. Styles: Three-Point, Loop, Rembrandt, Butterfly, Split, Noir and Silhouette. Short- or broad-side keying is picked automatically from where the face is turned. Intensities are in **lux at the face**, so moving lights never changes exposure. **Character Only** mode uses lighting channel 1, so cutscene cheats never touch the environment. In game it can re-light for every camera cut. `Intensity` is keyable. | Tools → Cinemafy → Light Rig / `Cinemafy Light Rig` actor |
 | **Gameplay ↔ Cutscene** | `UCinemafyCutsceneSubsystem::PlayCutscene` blends from the gameplay camera into the cutscene and back. Animated letterbox bars follow the blend, the cutscene can re-anchor to the player (no teleport pop), and the gameplay camera lands facing where the cutscene ended. Skips still blend out. | Tools → Cinemafy → Set Up Gameplay Blend + `Cinemafy Cutscene` subsystem |
 | **Listener** | Characters who actually listen. It reads the speaker's MetaHuman jaw curve to find phrase endings, emphasis and long stretches of talk. Listeners nod in the pauses, blink and raise brows on stressed words, tilt or glance away while processing, and idle quietly in silence. Six temperaments: Attentive, Warm, Stoic, Skeptical, Nervous, Hostile. `Engagement` is keyable, and `React()` places a reaction on an exact line. Goes quiet while its own character talks. | Tools → Cinemafy → Add Listening / `Cinemafy Listener` component |
+| **Cinemafy Face** | Facial performance control for MetaHumans, via one anim node in the face Anim BP. Per-region gain to boost or calm a performance, adaptive jitter cleanup (One Euro filter) for mocap and LiveLink, spring "flesh" dynamics, 10 crossfading emotion poses, breathing, idle face life and blink-driven pupil constriction. It also applies Gaze and Listener to the face automatically. | `Cinemafy Face` anim node + component / Tools → Cinemafy → Face Emotion |
 | **Looks** | Clean Cinema, Warm Epic, Teal & Orange, Bleach Bypass, Noir, Cold Steel. Applied on top of your existing post settings, with a strength slider. | Tools → Cinemafy → Look & Letterbox |
 | **Letterbox** | 2.39 scope or 1.85 flat. Real in-game bars through the camera's aspect constraint. | Tools → Cinemafy → Look & Letterbox |
 | **Look Presets** | `CinemafyLookPreset` data asset: save a grade and letterbox as a reusable "film stock". | Content Browser → Miscellaneous → Data Asset |
@@ -95,59 +96,39 @@ What you get out of the box:
 
 ---
 
-## Hooking Gaze into a MetaHuman
+## MetaHuman face setup (one node)
 
-The Gaze component **computes**, and your Anim Blueprint **applies**. That way it plays nicely with
-whatever face and body animation you already have.
+1. Open the MetaHuman's **Face** Anim Blueprint and add the **Cinemafy Face** node (right-click → *Cinemafy*)
+   right before **Output Pose**, so it runs before RigLogic.
+2. Add a **Cinemafy Face** component to the character, or use *Tools → Cinemafy → Face Emotion*.
 
-In the **Face** Anim BP (or a post-process ABP on the face mesh):
+That one node then handles the whole face:
 
-1. `Event Blueprint Update Animation` → `Try Get Pawn Owner` → `Get Component by Class (Cinemafy Gaze)`.
-2. Cache `EyeLookNormalized`, `HeadLookAtLocation` and `BlinkAlpha` into variables.
-3. Drive the eyes:
-   - `EyeLookNormalized.X` → left/right eye look controls (`CTRL_L_eye` / `CTRL_R_eye` X)
-   - `EyeLookNormalized.Y` → up/down eye look controls (Y)
-   - `BlinkAlpha` → blink controls (`CTRL_L_eye_blink` / `CTRL_R_eye_blink`)
-
-   You can do this with a Control Rig node or with *Modify Curve*, depending on your face setup.
-4. In the **Body** Anim BP, aim the neck and head at `HeadLookAtLocation` (a *Look At* node, or a
-   Control Rig aim), with a blend weight around 0.5–0.8.
-
-To switch who a character is looking at mid-cutscene, add a Sequencer **Event Track** that calls
-`SetLookAtTarget`. Key `GazeWeight` to fade the system in and out around hand-animated beats.
-
----
-
-## Hooking Listener into a MetaHuman
-
-Like Gaze, the Listener **computes** and your Anim Blueprints **apply**. It also drives the
-character's Gaze component for you: looking at the speaker, glancing away while thinking and
-blinking on emphasis.
-
-**Face Anim BP:** read the Listener's outputs and add them to the matching expression curves
-(a *Modify Curve* node in *Add* mode, or Control Rig):
-
-| Listener output | MetaHuman curves |
+| Layer | What it does |
 |---|---|
-| `BrowRaise` | `CTRL_expressions_browRaiseInL/R`, `CTRL_expressions_browRaiseOuterL/R` |
-| `BrowFurrow` | `CTRL_expressions_browDownL/R`, `CTRL_expressions_browLateralL/R` |
-| `Smile` | `CTRL_expressions_mouthCornerPullL/R` |
-| `Squint` | `CTRL_expressions_eyeSquintInnerL/R` |
+| **Performance control** | `PerformanceIntensity` (keyable) boosts or calms everything. A **Face Profile** asset sets gain and offset per region (brows, eyes, cheeks, nose, mouth, jaw, tongue) and per curve. |
+| **Jitter cleanup** | A One Euro filter per curve. It smooths heavily when a curve is slow (where mocap jitter shows) and lightly when it moves fast, so blinks and plosives stay crisp. Set `JitterReduction` per region. |
+| **Flesh dynamics** | A damped spring per curve adds a hint of overshoot and settle (`Springiness` per region). Eyes default to 0 so blinks stay snappy. |
+| **Emotions** | Neutral, Happy, Sad, Angry, Fear, Surprise, Disgust, Contempt, Determined and Worried. They crossfade over `EmotionBlendTime`, and `EmotionIntensity` is keyable. Call `SetEmotion` from a Sequencer event to change one on a line. Override any pose in the profile's `CustomEmotions`. |
+| **Life** | Slow, asymmetric micro-movement (`FaceLife`, keyable), nostril and jaw breathing, and pupils that briefly constrict after every blink, whether performed or procedural. |
+| **Gaze** | Eye-look curves from the Gaze component (blended over the performer's eyes by `GazeEyeLookBlend`), plus procedural blinks. |
+| **Listener** | Brow raise and furrow, smile and squint go onto the right MetaHuman curves automatically. |
 
-**Body Anim BP:**
-- `HeadRotation` → *Transform (Modify) Bone* on `head` (or split it with `neck_02`), set to *Add to Existing*.
-- `BreathAlpha` and `WeightShift` → blend in a breathing additive and lean between idle variations.
-- `OnReaction` → play body montages for the big beats (an "acknowledge" or "shrug").
+The node's `Alpha` blends between the raw performance and the processed one. That's handy for A/B checks.
 
-**How it hears:** by default it watches `CTRL_expressions_jawOpen` on the speaker. That curve
-follows MetaHuman Animator and audio-driven performances, so no markup is needed. For non-MetaHuman
-characters, add their jaw or viseme curve to `SpeechCurves`, or turn on `bUseManualSpeechEnergy`
-and key `ManualSpeechEnergy`. If listeners react too much or too little, adjust `SpeechThreshold`
-and watch `HeardEnergy`.
+**Body Anim BP:** this part is still manual.
+- Gaze: aim the neck and head at `HeadLookAtLocation` with a *Look At* node or a Control Rig aim (weight around 0.5–0.8).
+- Listener: apply `HeadRotation` with *Transform (Modify) Bone* on `head` (*Add to Existing*). Use `BreathAlpha` and `WeightShift` for idle layers, and `OnReaction` for body montages.
 
-**Directing it:** key `Engagement` down for a character who's tuning out. Call `React` from a
-Sequencer event track to land a nod or a head shake on an exact line. Call `SetSpeaker` to switch
-who they're listening to in group scenes.
+**Not using MetaHumans?** Point the profile's `CurvePrefix` at your rig's curves. Gaze, Listener and Face
+also expose all their values to Blueprint, so you can wire them by hand.
+
+**How Listener hears:** by default it watches `CTRL_expressions_jawOpen` on the speaker. That curve
+follows MetaHuman Animator and audio-driven performances, so no markup is needed. Other rigs can add
+their own curves to `SpeechCurves`, or key `ManualSpeechEnergy`. Tune `SpeechThreshold` while watching `HeardEnergy`.
+
+**Directing listeners:** key `Engagement`, call `React` from a Sequencer event track, and call
+`SetSpeaker` to switch who they're listening to.
 
 ---
 
@@ -177,7 +158,8 @@ who they're listening to in group scenes.
 ```
 Cinemafy.uplugin
 Source/
-  Cinemafy/            Runtime: components, lens/look/framing libraries
-  CinemafyEditor/      Editor: Tools menu, undoable actions
+  Cinemafy/            Runtime: components, anim node, lens/look/framing libraries
+  CinemafyEditor/      Editor: Tools menu, Shot Browser, undoable actions
+  CinemafyAnimGraph/   Anim Blueprint node (UncookedOnly)
 Docs/ROADMAP.md
 ```

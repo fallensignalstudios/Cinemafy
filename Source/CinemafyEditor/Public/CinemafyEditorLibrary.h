@@ -96,6 +96,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 AddListeningToSelection(ECinemafyTemperament Temperament);
 
+	/** Adds a Cinemafy Face component (if missing) to each selected character and sets its emotion. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 ApplyFaceEmotionToSelection(ECinemafyEmotion Emotion);
+
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 AddGazeToSelection();

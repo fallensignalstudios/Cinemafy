@@ -80,6 +80,12 @@ namespace
 		AddEnumEntries<ECinemafyTemperament>(Section, [](ECinemafyTemperament Temperament) { UCinemafyEditorLibrary::AddListeningToSelection(Temperament); });
 	}
 
+	void FillFaceMenu(UToolMenu* Menu)
+	{
+		FToolMenuSection& Section = Menu->AddSection("Face", LOCTEXT("FaceSection", "Adds Cinemafy Face if needed (needs the Cinemafy Face anim node)"));
+		AddEnumEntries<ECinemafyEmotion>(Section, [](ECinemafyEmotion Emotion) { UCinemafyEditorLibrary::ApplyFaceEmotionToSelection(Emotion); });
+	}
+
 	void FillLookMenu(UToolMenu* Menu)
 	{
 		FToolMenuSection& Section = Menu->AddSection("Look", LOCTEXT("LookSection", "Look"));
@@ -177,6 +183,10 @@ void FCinemafyEditorModule::RegisterMenus()
 	Section.AddSubMenu("CinemafyListen", LOCTEXT("ListenMenu", "Add Listening"),
 		LOCTEXT("ListenMenuTip", "Characters react while others talk: nods in pauses, blinks on emphasis, thinking glances. Pick a temperament."),
 		FNewToolMenuDelegate::CreateStatic(&FillListenMenu));
+
+	Section.AddSubMenu("CinemafyFace", LOCTEXT("FaceMenu", "Face Emotion"),
+		LOCTEXT("FaceMenuTip", "Give the selected characters a Cinemafy Face (performance control, cleanup, dynamics) and an emotion."),
+		FNewToolMenuDelegate::CreateStatic(&FillFaceMenu));
 
 	Section.AddMenuEntry("CinemafyGaze", LOCTEXT("GazeMenu", "Add Gaze to Characters"),
 		LOCTEXT("GazeMenuTip", "Add living eyes (saccades, head follow, blinks) to the selected characters."),

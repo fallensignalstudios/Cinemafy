@@ -32,6 +32,12 @@
 - [ ] Listener v2: audio-envelope hearing and sentiment-aware reactions from dialogue tags
 - [ ] Per-shot grade overrides + "match to reference shot"
 
+## 🙂 v0.5: Face
+- [x] Cinemafy Face anim node: region gain, One Euro jitter cleanup, spring flesh, emotions, breathing, life, pupil response
+- [x] Gaze and Listener applied to MetaHuman face curves automatically
+- [ ] Viseme-aware jaw/lip boosting and per-phoneme cleanup
+- [ ] Emotion "intensity curves" authored from dialogue tags
+
 ## 🚀 Stretch
 - [ ] Director assistant: describe a beat ("tense standoff") and get proposed coverage
 - [ ] Anamorphic mode (squeeze, oval bokeh, streak flares)

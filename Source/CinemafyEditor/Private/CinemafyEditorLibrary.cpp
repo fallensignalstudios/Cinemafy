@@ -9,6 +9,7 @@
 #include "CinemafyGazeComponent.h"
 #include "CinemafyLightRig.h"
 #include "CinemafyListenerComponent.h"
+#include "CinemafyFaceComponent.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -599,6 +600,27 @@ int32 UCinemafyEditorLibrary::AddListeningToSelection(ECinemafyTemperament Tempe
 		}
 	}
 	return Characters.Num();
+}
+
+int32 UCinemafyEditorLibrary::ApplyFaceEmotionToSelection(ECinemafyEmotion Emotion)
+{
+	const FScopedTransaction Transaction(LOCTEXT("FaceEmotion", "Cinemafy: Face Emotion"));
+	int32 Count = 0;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			UCinemafyFaceComponent* Face = FindOrAddComponent<UCinemafyFaceComponent>(Actor, TEXT("CinemafyFace"));
+			Face->Emotion = Emotion;
+			++Count;
+		}
+	}
+
+	if (Count == 0)
+	{
+		WarnNothingSelected(TEXT("character (with a skeletal mesh)"));
+	}
+	return Count;
 }
 
 int32 UCinemafyEditorLibrary::AddGazeToSelection()

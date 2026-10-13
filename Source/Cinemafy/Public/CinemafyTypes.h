@@ -301,3 +301,81 @@ enum class ECinemafyReaction : uint8
 	LookAway   UMETA(DisplayName = "Look Away (thinking)"),
 	Blink      UMETA(DisplayName = "Blink")
 };
+
+/** Emotion poses layered on top of a facial performance. */
+UENUM(BlueprintType)
+enum class ECinemafyEmotion : uint8
+{
+	Neutral,
+	Happy,
+	Sad,
+	Angry,
+	Fear,
+	Surprise,
+	Disgust,
+	Contempt,
+	Determined,
+	Worried,
+	Count UMETA(Hidden)
+};
+
+/** Face regions, for per-region control of a facial performance. */
+UENUM(BlueprintType)
+enum class ECinemafyFaceRegion : uint8
+{
+	Brows,
+	Eyes,
+	Cheeks,
+	Nose,
+	Mouth,
+	Jaw,
+	Tongue,
+	Other,
+	Count UMETA(Hidden)
+};
+
+/** How one face region's curves are processed. */
+USTRUCT(BlueprintType)
+struct FCinemafyFaceRegionSettings
+{
+	GENERATED_BODY()
+
+	/** Multiplies the performance. > 1 boosts, < 1 calms it down. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (ClampMin = "0", UIMax = "3"))
+	float Gain = 1.f;
+
+	/** Added after gain. Use small values to bias a region (e.g. a slight resting brow raise). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (UIMin = "-0.5", UIMax = "0.5"))
+	float Offset = 0.f;
+
+	/** 0 = raw, 1 = heavily smoothed. Adaptive: slow jitter is removed, fast moves still get through. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (ClampMin = "0", ClampMax = "1"))
+	float JitterReduction = 0.f;
+
+	/** 0 = none, 1 = jelly. A touch of spring gives flesh a little overshoot and settle. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (ClampMin = "0", ClampMax = "1"))
+	float Springiness = 0.f;
+};
+
+/** Gain/offset for one specific curve, applied on top of its region. */
+USTRUCT(BlueprintType)
+struct FCinemafyCurveOverride
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (ClampMin = "0", UIMax = "3"))
+	float Gain = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (UIMin = "-0.5", UIMax = "0.5"))
+	float Offset = 0.f;
+};
+
+/** A custom emotion pose: curve name -> additive value. */
+USTRUCT(BlueprintType)
+struct FCinemafyEmotionPose
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face")
+	TMap<FName, float> Curves;
+};
