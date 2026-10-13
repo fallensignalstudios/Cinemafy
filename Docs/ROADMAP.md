@@ -35,7 +35,8 @@
 ## 🙂 v0.5: Face
 - [x] Cinemafy Face anim node: region gain, One Euro jitter cleanup, spring flesh, emotions, breathing, life, pupil response
 - [x] Gaze and Listener applied to MetaHuman face curves automatically
-- [ ] Viseme-aware jaw/lip boosting and per-phoneme cleanup
+- [x] Viseme-aware lip sync: P/B/M seal with hold, F/V tuck, rounding/stretch boost, jaw lift, silence gate
+- [ ] Lip sync v2: audio-assisted plosive detection and look-ahead when the sequence is baked
 - [ ] Emotion "intensity curves" authored from dialogue tags
 
 ## 🚀 Stretch

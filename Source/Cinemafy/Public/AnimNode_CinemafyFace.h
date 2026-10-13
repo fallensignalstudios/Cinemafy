@@ -66,6 +66,9 @@ private:
 		bool bPupilResponse = true;
 		TArray<float> EmotionWeights;
 
+		float Articulation = 1.f;
+		FCinemafyLipSyncSettings LipSync;
+
 		bool bHasGaze = false;
 		FVector2D EyeLook = FVector2D::ZeroVector;
 		float GazeBlink = 0.f;
@@ -91,6 +94,7 @@ private:
 	float ProcessCurve(FName Curve, float Value, const UCinemafyFaceProfile& Profile, float DeltaTime);
 	void AddEmotions(TMap<FName, float>& Additive) const;
 	void AddLife(TMap<FName, float>& Additive) const;
+	void ApplyLipSync(const TMap<FName, float>& Raw, TMap<FName, float>& Result, const UCinemafyFaceProfile& InProfile, float DeltaTime);
 
 	FFrameInput Input;
 	/** Owned by the Face component (a UPROPERTY), so it outlives this node's use of it. */
@@ -105,5 +109,13 @@ private:
 	float PendingDeltaTime = 0.f;
 	float Time = 0.f;
 	float PreviousBlink = 0.f;
+
+	// Lip-sync state
+	float Seal = 0.f;
+	float Tuck = 0.f;
+	float ClosureHoldUntil = -1.f;
+	float TuckHoldUntil = -1.f;
+	float LastSpeechTime = -100.f;
+	float SilenceGateAlpha = 0.f;
 	float PupilConstriction = 0.f;
 };

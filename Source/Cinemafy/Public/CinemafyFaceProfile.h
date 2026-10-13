@@ -51,6 +51,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Emotions")
 	TMap<ECinemafyEmotion, FCinemafyEmotionPose> CustomEmotions;
 
+	/** The mouth curves the lip-sync stage reads and shapes. Defaults match MetaHuman. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Lip Sync")
+	FCinemafyLipSyncCurves LipSyncCurves;
+
 	/** Only curves starting with this are processed. MetaHuman face controls use CTRL_expressions_. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Curves")
 	FString CurvePrefix = TEXT("CTRL_expressions_");

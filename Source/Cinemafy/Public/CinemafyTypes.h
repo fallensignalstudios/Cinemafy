@@ -379,3 +379,78 @@ struct FCinemafyEmotionPose
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face")
 	TMap<FName, float> Curves;
 };
+
+/** How the lip-sync stage of Cinemafy Face sharpens a dialogue performance. */
+USTRUCT(BlueprintType)
+struct FCinemafyLipSyncSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync")
+	bool bEnabled = true;
+
+	/** P / B / M: how firmly detected lip closures are sealed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", ClampMax = "1"))
+	float ClosureAssist = 0.8f;
+
+	/** Minimum time a closure stays sealed, so it can't fall between frames. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", UIMax = "150", Units = "ms"))
+	float ClosureHoldMs = 70.f;
+
+	/** F / V: how firmly the lower lip tucks under the teeth. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", ClampMax = "1"))
+	float LabiodentalAssist = 0.6f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", UIMax = "150", Units = "ms"))
+	float LabiodentalHoldMs = 60.f;
+
+	/** OO / W: extra lip rounding. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", UIMax = "1"))
+	float RoundingBoost = 0.3f;
+
+	/** EE / S: extra lip stretch. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", UIMax = "1"))
+	float WideBoost = 0.2f;
+
+	/** Lifts small jaw openings so quiet speech still reads, without blowing out big ones. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", UIMax = "1"))
+	float JawLift = 0.3f;
+
+	/** Damps small mouth twitches while nobody's talking. Real expressions pass through. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync", meta = (ClampMin = "0", ClampMax = "1"))
+	float SilenceGate = 0.5f;
+};
+
+/** Which MetaHuman curves the lip-sync stage reads and shapes. Editable in the Face Profile. */
+USTRUCT(BlueprintType)
+struct FCinemafyLipSyncCurves
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync")
+	FName Jaw = TEXT("CTRL_expressions_jawOpen");
+
+	/** Lips pressed together (P / B / M). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync")
+	TArray<FName> Closure = {
+		TEXT("CTRL_expressions_mouthLipsTogetherUL"), TEXT("CTRL_expressions_mouthLipsTogetherUR"),
+		TEXT("CTRL_expressions_mouthLipsTogetherDL"), TEXT("CTRL_expressions_mouthLipsTogetherDR") };
+
+	/** Lower lip under the upper teeth (F / V). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync")
+	TArray<FName> Labiodental = {
+		TEXT("CTRL_expressions_mouthLowerLipBiteL"), TEXT("CTRL_expressions_mouthLowerLipBiteR") };
+
+	/** Rounded lips (OO / W). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync")
+	TArray<FName> Rounding = {
+		TEXT("CTRL_expressions_mouthFunnelUL"), TEXT("CTRL_expressions_mouthFunnelUR"),
+		TEXT("CTRL_expressions_mouthFunnelDL"), TEXT("CTRL_expressions_mouthFunnelDR"),
+		TEXT("CTRL_expressions_mouthPurseUL"), TEXT("CTRL_expressions_mouthPurseUR"),
+		TEXT("CTRL_expressions_mouthPurseDL"), TEXT("CTRL_expressions_mouthPurseDR") };
+
+	/** Stretched lips (EE / S). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lip Sync")
+	TArray<FName> Wide = {
+		TEXT("CTRL_expressions_mouthStretchL"), TEXT("CTRL_expressions_mouthStretchR") };
+};

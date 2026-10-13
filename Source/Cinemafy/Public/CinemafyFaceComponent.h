@@ -28,6 +28,15 @@ public:
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Face", meta = (ClampMin = "0", UIMax = "2"))
 	float PerformanceIntensity = 1.f;
 
+	// --- Lip sync ----------------------------------------------------------------
+
+	/** Overall lip-sync sharpening: 0 = off, 1 = as configured, 2 = extra crisp. Keyable per line. */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Face|Lip Sync", meta = (ClampMin = "0", UIMax = "2"))
+	float Articulation = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face|Lip Sync")
+	FCinemafyLipSyncSettings LipSync;
+
 	// --- Emotion ---------------------------------------------------------------
 
 	/** Emotion layered on top of the performance. Crossfades over EmotionBlendTime when changed. */

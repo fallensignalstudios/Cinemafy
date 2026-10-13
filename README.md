@@ -109,6 +109,7 @@ That one node then handles the whole face:
 | **Performance control** | `PerformanceIntensity` (keyable) boosts or calms everything. A **Face Profile** asset sets gain and offset per region (brows, eyes, cheeks, nose, mouth, jaw, tongue) and per curve. |
 | **Jitter cleanup** | A One Euro filter per curve. It smooths heavily when a curve is slow (where mocap jitter shows) and lightly when it moves fast, so blinks and plosives stay crisp. Set `JitterReduction` per region. |
 | **Flesh dynamics** | A damped spring per curve adds a hint of overshoot and settle (`Springiness` per region). Eyes default to 0 so blinks stay snappy. |
+| **Lip sync** | Reads mouth shapes from the raw performance (before smoothing rounds them off), then:<br>• **P/B/M:** seals the lips fully, with a minimum hold so closures never fall between frames<br>• **F/V:** firms up the lower-lip tuck<br>• **OO/EE:** boosts rounding and stretch<br>• **Jaw:** lifts small openings so quiet speech reads<br>• **Silence:** gates small mouth twitches when no one's talking<br>`Articulation` (keyable) scales it all; fine controls live under `LipSync`. |
 | **Emotions** | Neutral, Happy, Sad, Angry, Fear, Surprise, Disgust, Contempt, Determined and Worried. They crossfade over `EmotionBlendTime`, and `EmotionIntensity` is keyable. Call `SetEmotion` from a Sequencer event to change one on a line. Override any pose in the profile's `CustomEmotions`. |
 | **Life** | Slow, asymmetric micro-movement (`FaceLife`, keyable), nostril and jaw breathing, and pupils that briefly constrict after every blink, whether performed or procedural. |
 | **Gaze** | Eye-look curves from the Gaze component (blended over the performer's eyes by `GazeEyeLookBlend`), plus procedural blinks. |
@@ -119,6 +120,12 @@ The node's `Alpha` blends between the raw performance and the processed one. Tha
 **Body Anim BP:** this part is still manual.
 - Gaze: aim the neck and head at `HeadLookAtLocation` with a *Look At* node or a Control Rig aim (weight around 0.5–0.8).
 - Listener: apply `HeadRotation` with *Transform (Modify) Bone* on `head` (*Add to Existing*). Use `BreathAlpha` and `WeightShift` for idle layers, and `OnReaction` for body montages.
+
+**Lip-sync tips:** key `Articulation` up for shouted or important lines and down for mumbles.
+If closures seal when they shouldn't (some performers rest with lips together), lower `ClosureAssist`
+or raise `SilenceGate`. The mouth curves it reads are listed in the Face Profile under *Lip Sync*,
+so you can fix them if your rig names them differently. The node's debug line (Anim BP debug /
+`ShowDebug Animation`) shows live Seal, Tuck and Gate values.
 
 **Not using MetaHumans?** Point the profile's `CurvePrefix` at your rig's curves. Gaze, Listener and Face
 also expose all their values to Blueprint, so you can wire them by hand.

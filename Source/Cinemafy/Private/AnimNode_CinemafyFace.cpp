@@ -56,7 +56,8 @@ void FAnimNode_CinemafyFace::Update_AnyThread(const FAnimationUpdateContext& Con
 void FAnimNode_CinemafyFace::GatherDebugData(FNodeDebugData& DebugData)
 {
 	FString DebugLine = DebugData.GetNodeName(this);
-	DebugLine += FString::Printf(TEXT("(Alpha: %.2f, Face: %d, Gaze: %d, Listener: %d)"), Alpha, Input.bHasFace, Input.bHasGaze, Input.bHasListener);
+	DebugLine += FString::Printf(TEXT("(Alpha: %.2f, Face: %d, Gaze: %d, Listener: %d, Seal: %.2f, Tuck: %.2f, Gate: %.2f)"),
+		Alpha, Input.bHasFace, Input.bHasGaze, Input.bHasListener, Seal, Tuck, SilenceGateAlpha);
 	DebugData.AddDebugItem(DebugLine);
 	Source.GatherDebugData(DebugData);
 }
@@ -82,6 +83,8 @@ void FAnimNode_CinemafyFace::PreUpdate(const UAnimInstance* InAnimInstance)
 		Input.BreathRate = Face->BreathRate;
 		Input.bPupilResponse = Face->bPupilResponse;
 		Input.EmotionWeights = Face->GetEmotionWeights();
+		Input.Articulation = Face->Articulation;
+		Input.LipSync = Face->LipSync;
 		Profile = Face->Profile;
 	}
 
@@ -243,6 +246,128 @@ void FAnimNode_CinemafyFace::AddLife(TMap<FName, float>& Additive) const
 	}
 }
 
+void FAnimNode_CinemafyFace::ApplyLipSync(const TMap<FName, float>& Raw, TMap<FName, float>& Result, const UCinemafyFaceProfile& InProfile, float DeltaTime)
+{
+	const FCinemafyLipSyncSettings& Settings = Input.LipSync;
+	const float Articulation = FMath::Max(Input.Articulation, 0.f);
+	if (!Settings.bEnabled || Articulation <= 0.f)
+	{
+		return;
+	}
+
+	const FCinemafyLipSyncCurves& Curves = InProfile.LipSyncCurves;
+	const float Intensity = Input.PerformanceIntensity;
+
+	// Detection reads the raw performance: smoothing rounds off exactly the moments we're looking for.
+	auto Average = [&Raw](const TArray<FName>& Names)
+	{
+		float Sum = 0.f;
+		int32 Found = 0;
+		for (const FName& Name : Names)
+		{
+			if (const float* Value = Raw.Find(Name))
+			{
+				Sum += *Value;
+				++Found;
+			}
+		}
+		return Found > 0 ? Sum / Found : 0.f;
+	};
+
+	const float* RawJaw = Raw.Find(Curves.Jaw);
+	const float Jaw = RawJaw ? *RawJaw * Intensity : 0.f;
+	const float Together = Average(Curves.Closure) * Intensity;
+	const float Bite = Average(Curves.Labiodental) * Intensity;
+
+	// P / B / M: lips heading together while the jaw is nearly shut.
+	const float ClosureScore = FMath::Clamp((Together - 0.2f) / 0.3f, 0.f, 1.f) * FMath::Clamp((0.3f - Jaw) / 0.2f, 0.f, 1.f);
+	if (ClosureScore > 0.5f)
+	{
+		ClosureHoldUntil = Time + Settings.ClosureHoldMs / 1000.f;
+	}
+	const float SealTarget = Time < ClosureHoldUntil ? 1.f : 0.f;
+	// Seal fast, release a little slower, so the "pop" of the plosive still reads.
+	Seal = FMath::FInterpTo(Seal, SealTarget, DeltaTime, SealTarget > Seal ? 40.f : 18.f);
+
+	// F / V: lower lip tucking under the teeth.
+	const float BiteScore = FMath::Clamp((Bite - 0.15f) / 0.3f, 0.f, 1.f);
+	if (BiteScore > 0.5f)
+	{
+		TuckHoldUntil = Time + Settings.LabiodentalHoldMs / 1000.f;
+	}
+	const float TuckTarget = Time < TuckHoldUntil ? 1.f : 0.f;
+	Tuck = FMath::FInterpTo(Tuck, TuckTarget, DeltaTime, TuckTarget > Tuck ? 35.f : 15.f);
+
+	// Talking = jaw moving or a consonant shape in the last moment (bridges gaps between words).
+	if (Jaw > 0.04f || ClosureScore > 0.5f || BiteScore > 0.5f)
+	{
+		LastSpeechTime = Time;
+	}
+	const bool bSpeaking = Time - LastSpeechTime < 0.35f;
+	SilenceGateAlpha = FMath::FInterpTo(SilenceGateAlpha, bSpeaking ? 0.f : 1.f, DeltaTime, 6.f);
+
+	const float SealAmount = FMath::Clamp(Seal * Settings.ClosureAssist * Articulation, 0.f, 1.f);
+	const float TuckAmount = FMath::Clamp(Tuck * Settings.LabiodentalAssist * Articulation, 0.f, 1.f);
+
+	// Jaw: lift small openings (a gentle compressor), then shut it for seals and tucks.
+	if (float* JawValue = Result.Find(Curves.Jaw))
+	{
+		float V = FMath::Max(*JawValue, 0.f);
+		if (Settings.JawLift > 0.f)
+		{
+			V = FMath::Pow(V, 1.f / (1.f + Settings.JawLift * Articulation));
+		}
+		V = FMath::Lerp(V, FMath::Min(V, 0.02f), SealAmount);
+		V = FMath::Lerp(V, FMath::Min(V, 0.08f), TuckAmount);
+		*JawValue = V;
+	}
+
+	for (const FName& Name : Curves.Closure)
+	{
+		if (float* Value = Result.Find(Name))
+		{
+			*Value = FMath::Lerp(*Value, 1.f, SealAmount);
+		}
+	}
+	for (const FName& Name : Curves.Labiodental)
+	{
+		if (float* Value = Result.Find(Name))
+		{
+			*Value = FMath::Lerp(*Value, FMath::Max(*Value, 0.75f), TuckAmount);
+		}
+	}
+	for (const FName& Name : Curves.Rounding)
+	{
+		if (float* Value = Result.Find(Name))
+		{
+			*Value *= 1.f + Settings.RoundingBoost * Articulation;
+		}
+	}
+	for (const FName& Name : Curves.Wide)
+	{
+		if (float* Value = Result.Find(Name))
+		{
+			*Value *= 1.f + Settings.WideBoost * Articulation;
+		}
+	}
+
+	// Silence gate: squash small mouth values (mocap noise) with a soft knee, leave real expressions alone.
+	const float Gate = FMath::Clamp(Settings.SilenceGate * Articulation, 0.f, 1.f) * SilenceGateAlpha;
+	if (Gate > 0.f)
+	{
+		constexpr float Knee = 0.1f;
+		for (TPair<FName, float>& Pair : Result)
+		{
+			const ECinemafyFaceRegion Region = ClassifyCurve(Pair.Key, InProfile.CurvePrefix);
+			const bool bMouthArea = Region == ECinemafyFaceRegion::Mouth || Region == ECinemafyFaceRegion::Jaw || Region == ECinemafyFaceRegion::Tongue;
+			if (bMouthArea && Pair.Value < Knee)
+			{
+				Pair.Value *= 1.f - Gate * (1.f - Pair.Value / Knee);
+			}
+		}
+	}
+}
+
 void FAnimNode_CinemafyFace::Evaluate_AnyThread(FPoseContext& Output)
 {
 	Source.Evaluate(Output);
@@ -283,7 +408,13 @@ void FAnimNode_CinemafyFace::Evaluate_AnyThread(FPoseContext& Output)
 		Result.Add(Pair.Key, bApplyFace ? ProcessCurve(Pair.Key, Pair.Value, ActiveProfile, DeltaTime) : Pair.Value);
 	}
 
-	// 2) Layers on top: emotion, life, breathing, listening, pupils.
+	// 2) Lip sync: crisp closures and tucks, clearer vowels, quiet mouth in silence.
+	if (bApplyFace && Input.bHasFace)
+	{
+		ApplyLipSync(Original, Result, ActiveProfile, DeltaTime);
+	}
+
+	// 3) Layers on top: emotion, life, breathing, listening, pupils.
 	TMap<FName, float> Additive;
 	if (bApplyFace && Input.bHasFace)
 	{
@@ -314,7 +445,7 @@ void FAnimNode_CinemafyFace::Evaluate_AnyThread(FPoseContext& Output)
 		Result.FindOrAdd(Pair.Key) += Pair.Value;
 	}
 
-	// 3) Gaze: eye look (blended over the performer's) and blinks (whichever is more closed wins).
+	// 4) Gaze: eye look (blended over the performer's) and blinks (whichever is more closed wins).
 	const FName BlinkL = Control(TEXT("eyeBlinkL"));
 	const FName BlinkR = Control(TEXT("eyeBlinkR"));
 	if (bApplyGaze && Input.bHasGaze)
@@ -341,7 +472,7 @@ void FAnimNode_CinemafyFace::Evaluate_AnyThread(FPoseContext& Output)
 		BR = FMath::Max(BR, Input.GazeBlink);
 	}
 
-	// 4) Pupils briefly constrict as the lids reopen after any blink (performed or procedural).
+	// 5) Pupils briefly constrict as the lids reopen after any blink (performed or procedural).
 	if (bApplyFace && Input.bHasFace && Input.bPupilResponse)
 	{
 		const float* BlinkValue = Result.Find(BlinkL);
@@ -355,7 +486,7 @@ void FAnimNode_CinemafyFace::Evaluate_AnyThread(FPoseContext& Output)
 		AddBoth(Result, TEXT("eyePupilNarrow"), 0.35f * PupilConstriction);
 	}
 
-	// 5) Write back, clamped to the control range and blended by Alpha.
+	// 6) Write back, clamped to the control range and blended by Alpha.
 	for (const TPair<FName, float>& Pair : Result)
 	{
 		const float* Before = Original.Find(Pair.Key);
