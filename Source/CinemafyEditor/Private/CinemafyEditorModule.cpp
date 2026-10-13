@@ -2,6 +2,7 @@
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
+#include "CinemafySceneDirector.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -86,6 +87,12 @@ namespace
 		AddEnumEntries<ECinemafyEmotion>(Section, [](ECinemafyEmotion Emotion) { UCinemafyEditorLibrary::ApplyFaceEmotionToSelection(Emotion); });
 	}
 
+	void FillDirectorMenu(UToolMenu* Menu)
+	{
+		FToolMenuSection& Section = Menu->AddSection("Director", LOCTEXT("DirectorSection", "Select the characters in the scene"));
+		AddEnumEntries<ECinemafyDirectorPreset>(Section, [](ECinemafyDirectorPreset Style) { UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(Style); });
+	}
+
 	void FillLookMenu(UToolMenu* Menu)
 	{
 		FToolMenuSection& Section = Menu->AddSection("Look", LOCTEXT("LookSection", "Look"));
@@ -103,6 +110,19 @@ namespace
 
 void FCinemafyEditorModule::StartupModule()
 {
+	// The Scene Director lives in the runtime module; its Direct / Clear buttons are answered here.
+	DirectorRequestHandle = ACinemafySceneDirector::OnEditorRequest.AddLambda([](ACinemafySceneDirector* Director, ECinemafyDirectorRequest Request)
+	{
+		if (Request == ECinemafyDirectorRequest::Direct)
+		{
+			UCinemafyEditorLibrary::DirectSceneInSequencer(Director);
+		}
+		else
+		{
+			UCinemafyEditorLibrary::ClearDirectedShots(Director);
+		}
+	});
+
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyShotBrowser::TabName,
 		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
 		{
@@ -121,6 +141,8 @@ void FCinemafyEditorModule::StartupModule()
 
 void FCinemafyEditorModule::ShutdownModule()
 {
+	ACinemafySceneDirector::OnEditorRequest.Remove(DirectorRequestHandle);
+
 	if (FSlateApplication::IsInitialized())
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyShotBrowser::TabName);
@@ -140,6 +162,10 @@ void FCinemafyEditorModule::RegisterMenus()
 		LOCTEXT("ShotBrowserMenuTip", "Open a film strip of every camera cut in the open Level Sequence."),
 		FSlateIcon(),
 		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyShotBrowser::TabName); })));
+
+	Section.AddSubMenu("CinemafyDirector", LOCTEXT("DirectorMenu", "Scene Director"),
+		LOCTEXT("DirectorMenuTip", "Create an AI director for the selected characters: write lines, pick a style, hit Direct."),
+		FNewToolMenuDelegate::CreateStatic(&FillDirectorMenu));
 
 	Section.AddSubMenu("CinemafyShots", LOCTEXT("ShotsMenu", "Create Shot"),
 		LOCTEXT("ShotsMenuTip", "Spawn a framed, eye-focused camera. Select the subject first, then who they're talking to."),

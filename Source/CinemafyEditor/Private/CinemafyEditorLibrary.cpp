@@ -10,6 +10,11 @@
 #include "CinemafyLightRig.h"
 #include "CinemafyListenerComponent.h"
 #include "CinemafyFaceComponent.h"
+#include "CinemafyDirectorLibrary.h"
+#include "CinemafySceneDirector.h"
+#include "SCinemafyShotBrowser.h"
+#include "EngineUtils.h"
+#include "Sections/MovieSceneCameraCutSection.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -621,6 +626,241 @@ int32 UCinemafyEditorLibrary::ApplyFaceEmotionToSelection(ECinemafyEmotion Emoti
 		WarnNothingSelected(TEXT("character (with a skeletal mesh)"));
 	}
 	return Count;
+}
+
+namespace
+{
+	/** Removes camera cut sections bound to any camera carrying the director's tag. */
+	int32 RemoveDirectorCuts(ACinemafySceneDirector* Director, ULevelSequence* Sequence, UMovieSceneCameraCutTrack* CutTrack)
+	{
+		const FName Tag = Director->GetDirectorTag();
+		TSet<FGuid> DirectorBindings;
+		for (TActorIterator<ACineCameraActor> It(Director->GetWorld()); It; ++It)
+		{
+			if (It->Tags.Contains(Tag))
+			{
+				const FGuid Binding = CinemafySequencer::FindBinding(Sequence, *It);
+				if (Binding.IsValid())
+				{
+					DirectorBindings.Add(Binding);
+				}
+			}
+		}
+
+		TArray<UMovieSceneSection*> ToRemove;
+		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
+		{
+			const UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+			if (Cut && DirectorBindings.Contains(Cut->GetCameraBindingID().GetGuid()))
+			{
+				ToRemove.Add(Section);
+			}
+		}
+
+		CutTrack->Modify();
+		for (UMovieSceneSection* Section : ToRemove)
+		{
+			CutTrack->RemoveSection(*Section);
+		}
+		return ToRemove.Num();
+	}
+
+	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
+	{
+		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
+		if (!Track)
+		{
+			Track = MovieScene->AddCameraCutTrack(UMovieSceneCameraCutTrack::StaticClass());
+		}
+		return Cast<UMovieSceneCameraCutTrack>(Track);
+	}
+}
+
+int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Director)
+{
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	if (!Director || !MovieScene)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoSequence", "Open the Level Sequence you want the scene cut into, then hit Direct."));
+		return 0;
+	}
+
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Director->Lines, Director->GetStyle(), Director->Seed);
+	if (Plan.Num() == 0)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
+		return 0;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("DirectScene", "Cinemafy: Direct Scene"));
+	Director->Modify();
+	Director->LastPlan = Plan;
+	MovieScene->Modify();
+
+	UMovieSceneCameraCutTrack* CutTrack = GetOrAddCutTrack(MovieScene);
+	if (!CutTrack)
+	{
+		return 0;
+	}
+	RemoveDirectorCuts(Director, Sequence, CutTrack);
+
+	// Cameras this director made on earlier takes, by shot. Reusing them keeps any hand tweaks.
+	const FName DirectorTag = Director->GetDirectorTag();
+	TMap<FName, ACineCameraActor*> ExistingCameras;
+	for (TActorIterator<ACineCameraActor> It(Director->GetWorld()); It; ++It)
+	{
+		if (It->Tags.Contains(DirectorTag))
+		{
+			for (const FName& Tag : It->Tags)
+			{
+				if (Tag.ToString().StartsWith(TEXT("Cinemafy.Shot.")))
+				{
+					ExistingCameras.Add(Tag, *It);
+				}
+			}
+		}
+	}
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+	const FFrameNumber SceneStart = CinemafySequencer::GetPlayheadTick(MovieScene);
+	FFrameNumber SceneEnd = SceneStart;
+
+	for (const FCinemafyPlannedShot& Shot : Plan)
+	{
+		const FName ShotTag(*FString::Printf(TEXT("Cinemafy.Shot.%s.%d.%s.%s.%d"), *Director->GetName(), static_cast<int32>(Shot.ShotType),
+			Shot.Subject ? *Shot.Subject->GetName() : TEXT("-"), Shot.Counterpart ? *Shot.Counterpart->GetName() : TEXT("-"), Director->bFlipSide ? 1 : 0));
+
+		ACineCameraActor* Camera = ExistingCameras.FindRef(ShotTag);
+		if (!Camera)
+		{
+			FCinemafyShotRequest Request;
+			Request.ShotType = Shot.ShotType;
+			Request.Subject = Shot.Subject;
+			Request.Counterpart = Shot.Counterpart;
+			Request.bUseRecommendedLens = false;
+			Request.Lens = Shot.Lens;
+			Request.bFlipSide = Director->bFlipSide;
+			Camera = CreateShot(Request, false);
+			if (!Camera)
+			{
+				continue;
+			}
+			Camera->Tags.Add(DirectorTag);
+			Camera->Tags.Add(ShotTag);
+			ExistingCameras.Add(ShotTag, Camera);
+		}
+
+		UCinemafyCameraFeelComponent* Feel = FindOrAddComponent<UCinemafyCameraFeelComponent>(Camera, TEXT("CinemafyFeel"));
+		Feel->Feel = Shot.Feel;
+		Feel->Seed = static_cast<int32>(GetTypeHash(Camera->GetFName()) % 1000);
+
+		const FGuid Binding = CinemafySequencer::BindActor(Sequence, Camera);
+		const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
+		const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime + Shot.Duration);
+		if (UMovieSceneCameraCutSection* Cut = CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), Start))
+		{
+			Cut->SetRange(TRange<FFrameNumber>(Start, End));
+		}
+		SceneEnd = FMath::Max(SceneEnd, End);
+
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Shot.Reason);
+	}
+
+	// Make sure the whole scene fits in the playback range.
+	const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
+	if (Playback.GetUpperBoundValue() < SceneEnd)
+	{
+		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), SceneEnd));
+	}
+
+	CinemafySequencer::NotifyChanged();
+	SCinemafyShotBrowser::RefreshActive();
+
+	GEditor->SelectNone(false, true);
+	GEditor->SelectActor(Director, true, true);
+	return Plan.Num();
+}
+
+int32 UCinemafyEditorLibrary::ClearDirectedShots(ACinemafySceneDirector* Director)
+{
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
+	if (!Director || !CutTrack)
+	{
+		return 0;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("ClearDirected", "Cinemafy: Clear Directed Shots"));
+	MovieScene->Modify();
+	const int32 Removed = RemoveDirectorCuts(Director, Sequence, CutTrack);
+	CinemafySequencer::NotifyChanged();
+	SCinemafyShotBrowser::RefreshActive();
+	return Removed;
+}
+
+ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style)
+{
+	TArray<AActor*> Characters;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			Characters.Add(Actor);
+		}
+	}
+
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	FVector Location = FVector::ZeroVector;
+	for (const AActor* Character : Characters)
+	{
+		Location += Character->GetActorLocation() / Characters.Num();
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("CreateDirector", "Cinemafy: Create Scene Director"));
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transactional;
+	ACinemafySceneDirector* Director = World->SpawnActor<ACinemafySceneDirector>(Location, FRotator::ZeroRotator, Params);
+	if (!Director)
+	{
+		return nullptr;
+	}
+	Director->SetActorLabel(TEXT("CinemafyDirector"));
+	Director->Style = Style;
+
+	// A starter script: two characters trading lines as the tension builds. Replace with your real lines.
+	if (Characters.Num() >= 2)
+	{
+		const float Intensities[] = { 0.2f, 0.35f, 0.5f, 0.65f, 0.8f, 0.95f };
+		for (int32 Index = 0; Index < static_cast<int32>(UE_ARRAY_COUNT(Intensities)); ++Index)
+		{
+			FCinemafyLine Line;
+			Line.Speaker = Characters[Index % 2];
+			Line.Listener = Characters[(Index + 1) % 2];
+			Line.Intensity = Intensities[Index];
+			Line.Duration = FMath::Lerp(4.f, 2.5f, Line.Intensity);
+			Line.PauseAfter = 0.6f;
+			Line.Note = FString::Printf(TEXT("Line %d: %s"), Index + 1, *Line.Speaker->GetActorLabel());
+			Director->Lines.Add(Line);
+		}
+	}
+	else if (Characters.Num() == 1)
+	{
+		FCinemafyLine Line;
+		Line.Speaker = Characters[0];
+		Line.Note = TEXT("Monologue");
+		Director->Lines.Add(Line);
+	}
+
+	GEditor->SelectNone(false, true);
+	GEditor->SelectActor(Director, true, true);
+	return Director;
 }
 
 int32 UCinemafyEditorLibrary::AddGazeToSelection()

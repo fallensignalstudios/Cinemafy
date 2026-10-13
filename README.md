@@ -28,6 +28,7 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 | Tool | What it does | Where |
 |---|---|---|
 | **Create Shot** | Select the subject, then who they're talking to, and pick a shot. You get a CineCamera that's framed (eyes on the upper third, lead room), lensed with the right prime, focused on the eyes, and **always on the same side of the 180° line**. If a Level Sequence is open, the camera is **added to it with a camera cut at the playhead**. | Tools → Cinemafy → Create Shot |
+| **Scene Director** 🎬 | An AI director for dialogue scenes. Write lines (speaker, listener, duration, intensity), pick a style (Classic Hollywood, Intimate Drama, Kinetic Action, Slow Burn, Noir Thriller, Epic or custom), and hit **Direct**. It plans the coverage and the edit with real editing craft and bakes cameras, lenses, camera feel and timed cuts into the open sequence. **Re-roll** for another take; tweaks you make to its cameras survive. At runtime, `DirectLine()` cuts gameplay conversations live. | Tools → Cinemafy → Scene Director / `Cinemafy Scene Director` actor |
 | **Shot Browser** | A dockable film strip of every camera cut in the open sequence. Each card shows a thumbnail rendered through that shot's camera at the first frame of its cut, the lens and aperture, and the duration with pacing warnings for flash cuts and overlong shots. The shot under the playhead lights up live, and clicking a card jumps there and selects its camera. | Tools → Cinemafy → Shot Browser |
 | **Camera Move** | Push in, pull out, truck, pedestal, crane (it tilts to hold the subject) and orbit (around the focus point). Key `Progress` 0 → 1 in Sequencer; the easing is built in, including an "operator settle" with a tiny overshoot. Or call `Play()` from gameplay. | `Cinemafy Camera Move` component / Tools → Cinemafy → Camera Move |
 | **180° Line Check** | Select two characters and your cameras. Cameras across the line from the rest get flagged and selected. | Tools → Cinemafy → Check 180-Degree Line |
@@ -64,6 +65,39 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
 11. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
 
 > **Tip:** keep `bFlipSide` the same for every shot in a scene. That's what keeps you on one side of the line.
+
+---
+
+## Directing a scene with the Scene Director
+
+1. Select the characters and pick *Tools → Cinemafy → Scene Director → Intimate Drama* (or any style).
+   You get a director with a starter script of six alternating lines, building in intensity.
+2. Edit the **Lines** to match your real dialogue: speaker, listener, how long it takes to say,
+   the pause after it, and how intense it is (0 = small talk, 1 = the big reveal).
+3. Open your Level Sequence, put the playhead where the scene starts, select the director and
+   click **Direct** in its Details panel. Cameras and cuts appear, and the Shot Browser updates.
+4. Not feeling it? Click **Re-roll** for a new take, or switch styles and Direct again.
+   Moved a camera by hand? The director reuses its cameras, so your tweak survives.
+
+How it decides, per shot:
+- **Size follows drama:** wide when calm, tighter as intensity rises, with an extreme close-up only at the peak.
+- **Shot-reverse-shot:** cutting between speakers favors matching shot sizes.
+- **No jump cuts:** two shots in a row on the same person must change size meaningfully (pushing in is allowed).
+- **Reaction shots:** sometimes during a line, more often in the pause after it.
+- **Establishing shot:** the scene opens on a wide two-shot (style dependent).
+- **Pacing:** each style has calm vs. intense shot-length ranges, a lens bias, an appetite for low angles and calm vs. intense camera feel.
+
+Every decision is logged with a reason ("Line 4: Close-Up on Voss (tightening for drama, intensity 0.8)")
+and kept in the director's **Last Plan**.
+
+**Live, in gameplay:** call `DirectLine(Speaker, Listener, Duration, Intensity)` from your dialogue
+system as each line starts, then `EndConversation()` when it's over. The director blends in from the
+gameplay camera, cuts between live-solved cameras (so it follows characters who move), and points
+everyone's Listener at whoever's talking. `StartConversation()` plays the director's own script live.
+
+> Inspired by [Cine-AI](https://github.com/inanevin/Cine-AI) (Evin, Hämäläinen & Guckelsberger,
+> CHI PLAY 2022): director styles as weighted shot vocabularies, steered by scene intensity, with
+> each shot chosen in light of the last. Cinemafy's implementation is its own.
 
 ---
 

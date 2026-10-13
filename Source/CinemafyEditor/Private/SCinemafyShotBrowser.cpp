@@ -24,6 +24,15 @@
 #define LOCTEXT_NAMESPACE "CinemafyShotBrowser"
 
 const FName SCinemafyShotBrowser::TabName(TEXT("CinemafyShotBrowser"));
+TWeakPtr<SCinemafyShotBrowser> SCinemafyShotBrowser::ActiveInstance;
+
+void SCinemafyShotBrowser::RefreshActive()
+{
+	if (const TSharedPtr<SCinemafyShotBrowser> Browser = ActiveInstance.Pin())
+	{
+		Browser->Refresh();
+	}
+}
 
 namespace
 {
@@ -98,6 +107,7 @@ void SCinemafyShotBrowser::Construct(const FArguments& InArgs)
 		]
 	];
 
+	ActiveInstance = StaticCastSharedRef<SCinemafyShotBrowser>(AsShared());
 	Refresh();
 }
 

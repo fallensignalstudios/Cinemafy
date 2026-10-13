@@ -40,6 +40,7 @@
 - [ ] Emotion "intensity curves" authored from dialogue tags
 
 ## 🚀 Stretch
-- [ ] Director assistant: describe a beat ("tense standoff") and get proposed coverage
+- [x] Scene Director: style presets, intensity-driven coverage planner, Sequencer bake, re-roll, live directing
+- [ ] Director v2: camera moves per shot (keyed Progress), emotion events per line, style learning from an existing edit
 - [ ] Anamorphic mode (squeeze, oval bokeh, streak flares)
 - [ ] Movie Render Graph presets for trailer captures

@@ -1,0 +1,248 @@
+#include "CinemafySceneDirector.h"
+#include "CinemafyCameraFeelComponent.h"
+#include "CinemafyCameraLibrary.h"
+#include "CinemafyDirectorLibrary.h"
+#include "CinemafyFocusComponent.h"
+#include "CinemafyFramingLibrary.h"
+#include "CinemafyListenerComponent.h"
+#include "CinemafyModule.h"
+#include "CineCameraActor.h"
+#include "CineCameraComponent.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+
+#if WITH_EDITOR
+FCinemafyDirectorEditorRequest ACinemafySceneDirector::OnEditorRequest;
+#endif
+
+namespace
+{
+	FString ShotKey(const FCinemafyPlannedShot& Shot, bool bFlipSide)
+	{
+		return FString::Printf(TEXT("%d|%s|%s|%d"), static_cast<int32>(Shot.ShotType),
+			Shot.Subject ? *Shot.Subject->GetName() : TEXT("-"),
+			Shot.Counterpart ? *Shot.Counterpart->GetName() : TEXT("-"),
+			bFlipSide ? 1 : 0);
+	}
+
+	template <typename TComponent>
+	TComponent* FindOrAddRuntimeComponent(AActor* Actor)
+	{
+		if (TComponent* Existing = Actor->FindComponentByClass<TComponent>())
+		{
+			return Existing;
+		}
+		TComponent* Component = NewObject<TComponent>(Actor);
+		Actor->AddInstanceComponent(Component);
+		Component->RegisterComponent();
+		return Component;
+	}
+}
+
+ACinemafySceneDirector::ACinemafySceneDirector()
+{
+	PrimaryActorTick.bCanEverTick = true;
+	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+}
+
+FCinemafyDirectorStyle ACinemafySceneDirector::GetStyle() const
+{
+	return Style == ECinemafyDirectorPreset::Custom ? CustomStyle : UCinemafyDirectorLibrary::GetPresetStyle(Style);
+}
+
+FName ACinemafySceneDirector::GetDirectorTag() const
+{
+	return FName(*FString::Printf(TEXT("Cinemafy.Director.%s"), *GetName()));
+}
+
+void ACinemafySceneDirector::Direct()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::Direct);
+#endif
+}
+
+void ACinemafySceneDirector::Reroll()
+{
+	Modify();
+	Seed = FMath::Rand();
+	Direct();
+}
+
+void ACinemafySceneDirector::ClearShots()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::Clear);
+#endif
+}
+
+// --- Live directing -------------------------------------------------------------------
+
+void ACinemafySceneDirector::QueueShots(const TArray<FCinemafyPlannedShot>& Shots, float TimeOffset)
+{
+	// A new line replaces whatever was still pending from the last one.
+	LiveQueue.Reset();
+	NextShot = 0;
+	for (FCinemafyPlannedShot Shot : Shots)
+	{
+		Shot.StartTime += TimeOffset;
+		LiveQueue.Add(Shot);
+		LiveEndTime = FMath::Max(LiveEndTime, Shot.StartTime + Shot.Duration);
+	}
+}
+
+void ACinemafySceneDirector::StartConversation()
+{
+	LastPlan = UCinemafyDirectorLibrary::PlanScene(Lines, GetStyle(), Seed);
+	if (LastPlan.Num() == 0)
+	{
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the script has no lines with speakers."));
+		return;
+	}
+
+	bLive = true;
+	bAutoEnd = true;
+	bFirstCut = true;
+	LiveTime = 0.f;
+	LiveEndTime = 0.f;
+	QueueShots(LastPlan, 0.f);
+	SetActorTickEnabled(true);
+}
+
+void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float Duration, float Intensity)
+{
+	if (!Speaker)
+	{
+		return;
+	}
+
+	if (!bLive)
+	{
+		bLive = true;
+		bFirstCut = true;
+		LiveTime = 0.f;
+		LiveEndTime = 0.f;
+		LiveLineIndex = 0;
+		bHasLastLiveShot = false;
+		LiveRandom.Initialize(Seed);
+	}
+	// Lines driven by a dialogue system end when it says so.
+	bAutoEnd = false;
+
+	FCinemafyLine Line;
+	Line.Speaker = Speaker;
+	Line.Listener = Listener;
+	Line.Duration = Duration;
+	Line.PauseAfter = 0.f;
+	Line.Intensity = Intensity;
+
+	const TArray<FCinemafyPlannedShot> Shots = UCinemafyDirectorLibrary::PlanLine(
+		Line, LiveLineIndex++, GetStyle(), LiveRandom, bHasLastLiveShot ? &LastLiveShot : nullptr, bFirstCut, 0.f);
+	QueueShots(Shots, LiveTime);
+	SetActorTickEnabled(true);
+}
+
+void ACinemafySceneDirector::EndConversation()
+{
+	if (!bLive)
+	{
+		return;
+	}
+
+	bLive = false;
+	LiveQueue.Reset();
+	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
+	{
+		PC->SetViewTargetWithBlend(PC->GetPawn(), BlendOutTime, VTBlend_Cubic);
+	}
+}
+
+void ACinemafySceneDirector::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!bLive)
+	{
+		return;
+	}
+
+	LiveTime += DeltaSeconds;
+	while (NextShot < LiveQueue.Num() && LiveQueue[NextShot].StartTime <= LiveTime)
+	{
+		CutTo(LiveQueue[NextShot++]);
+	}
+
+	if (bAutoEnd && NextShot >= LiveQueue.Num() && LiveTime >= LiveEndTime)
+	{
+		EndConversation();
+	}
+}
+
+ACineCameraActor* ACinemafySceneDirector::GetLiveCamera(const FCinemafyPlannedShot& Shot)
+{
+	const FString Key = ShotKey(Shot, bFlipSide);
+	if (TObjectPtr<ACineCameraActor>* Existing = LiveCameras.Find(Key))
+	{
+		if (IsValid(*Existing))
+		{
+			return *Existing;
+		}
+	}
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ACineCameraActor* Camera = GetWorld()->SpawnActor<ACineCameraActor>(GetActorLocation(), FRotator::ZeroRotator, Params);
+	if (Camera)
+	{
+		Camera->Tags.Add(GetDirectorTag());
+		LiveCameras.Add(Key, Camera);
+	}
+	return Camera;
+}
+
+void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
+{
+	APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	ACineCameraActor* Camera = PC ? GetLiveCamera(Shot) : nullptr;
+	if (!Camera)
+	{
+		return;
+	}
+
+	// Re-solve every cut: characters move during gameplay conversations.
+	FCinemafyShotRequest Request;
+	Request.ShotType = Shot.ShotType;
+	Request.Subject = Shot.Subject;
+	Request.Counterpart = Shot.Counterpart;
+	Request.bUseRecommendedLens = false;
+	Request.Lens = Shot.Lens;
+	Request.bFlipSide = bFlipSide;
+
+	FCinemafyShotSolution Solution;
+	if (!UCinemafyFramingLibrary::SolveShot(Request, Solution))
+	{
+		return;
+	}
+
+	Camera->SetActorTransform(Solution.CameraTransform);
+	UCineCameraComponent* Cine = Camera->GetCineCameraComponent();
+	UCinemafyCameraLibrary::ApplySensor(Cine, Request.Sensor);
+	UCinemafyCameraLibrary::ApplyPrime(Cine, Solution.Lens, 2.8f);
+
+	FindOrAddRuntimeComponent<UCinemafyCameraFeelComponent>(Camera)->Feel = Shot.Feel;
+	FindOrAddRuntimeComponent<UCinemafyFocusComponent>(Camera)->FocusTarget = Shot.Subject;
+
+	if (bUpdateListeners && !Shot.bIsReaction && Shot.Counterpart)
+	{
+		if (UCinemafyListenerComponent* Listener = Shot.Counterpart->FindComponentByClass<UCinemafyListenerComponent>())
+		{
+			Listener->SetSpeaker(Shot.Subject);
+		}
+	}
+
+	// Blend in from gameplay on the first shot; hard cuts after that, like a real edit.
+	PC->SetViewTargetWithBlend(Camera, bFirstCut ? BlendInTime : 0.f, VTBlend_Cubic);
+	bFirstCut = false;
+	LastLiveShot = Shot;
+	bHasLastLiveShot = true;
+}

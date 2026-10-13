@@ -454,3 +454,142 @@ struct FCinemafyLipSyncCurves
 	TArray<FName> Wide = {
 		TEXT("CTRL_expressions_mouthStretchL"), TEXT("CTRL_expressions_mouthStretchR") };
 };
+
+/** Built-in directing styles: archetypes, not imitations of real directors. */
+UENUM(BlueprintType)
+enum class ECinemafyDirectorPreset : uint8
+{
+	ClassicHollywood UMETA(DisplayName = "Classic Hollywood (clean coverage)"),
+	IntimateDrama    UMETA(DisplayName = "Intimate Drama (close, lingering)"),
+	KineticAction    UMETA(DisplayName = "Kinetic Action (fast, handheld, low)"),
+	SlowBurn         UMETA(DisplayName = "Slow Burn (wide, patient)"),
+	NoirThriller     UMETA(DisplayName = "Noir Thriller (low angles, tight)"),
+	Epic             UMETA(DisplayName = "Epic (wide, heroic)"),
+	Custom           UMETA(DisplayName = "Custom")
+};
+
+/**
+ * A directing style: the shot vocabulary a director favors and how pacing reacts to drama.
+ * Shot choice = preference x how well the shot size fits the moment's intensity x continuity rules.
+ */
+USTRUCT(BlueprintType)
+struct FCinemafyDirectorStyle
+{
+	GENERATED_BODY()
+
+	FCinemafyDirectorStyle();
+
+	/** Relative preference for each shot type (0 = never, 1 = neutral, 2 = loves it). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style")
+	TMap<ECinemafyShotType, float> ShotPreference;
+
+	/** How much intensity tightens the framing (wide when calm, close-ups at the peak). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "0", ClampMax = "1"))
+	float TightenWithIntensity = 0.6f;
+
+	/** Shot length range (seconds) at intensity 0. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pacing")
+	FVector2D CalmShotLength = FVector2D(3.5, 6.0);
+
+	/** Shot length range (seconds) at intensity 1. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pacing")
+	FVector2D IntenseShotLength = FVector2D(1.8, 3.5);
+
+	/** Chance to cut to the listener during a line (higher in the pause after it). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pacing", meta = (ClampMin = "0", ClampMax = "1"))
+	float ReactionShotChance = 0.35f;
+
+	/** Appetite for low hero angles when things heat up. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "0", ClampMax = "1"))
+	float LowAngleBias = 0.2f;
+
+	/** Shift every lens choice wider (-) or longer (+), in prime steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "-2", ClampMax = "2"))
+	int32 LensBias = 0;
+
+	/** Open the scene on a wide two-shot so the audience knows where everyone is. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style")
+	bool bEstablishingShot = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	ECinemafyCameraFeel CalmFeel = ECinemafyCameraFeel::Tripod;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+	ECinemafyCameraFeel IntenseFeel = ECinemafyCameraFeel::Shoulder;
+};
+
+/** One line of dialogue in a scene script. */
+USTRUCT(BlueprintType)
+struct FCinemafyLine
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	TObjectPtr<AActor> Speaker = nullptr;
+
+	/** Who they're talking to (needed for reaction shots, two-shots and over-the-shoulders). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	TObjectPtr<AActor> Listener = nullptr;
+
+	/** How long the line takes to say, in seconds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (ClampMin = "0.2"))
+	float Duration = 3.f;
+
+	/** Silence after the line, in seconds. Reaction shots love this space. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (ClampMin = "0"))
+	float PauseAfter = 0.5f;
+
+	/** Dramatic weight of the line: 0 = small talk, 1 = the big reveal. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (ClampMin = "0", ClampMax = "1"))
+	float Intensity = 0.5f;
+
+	/** Override the director for the start of this line. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	bool bForceShot = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bForceShot"))
+	ECinemafyShotType ForcedShot = ECinemafyShotType::CloseUp;
+
+	/** The line itself, or a note. Shown in the list and the plan. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	FString Note;
+};
+
+/** A shot the director decided on. */
+USTRUCT(BlueprintType)
+struct FCinemafyPlannedShot
+{
+	GENERATED_BODY()
+
+	/** Seconds from the start of the scene. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float StartTime = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float Duration = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyShotType ShotType = ECinemafyShotType::MediumCloseUp;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	TObjectPtr<AActor> Subject = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	TObjectPtr<AActor> Counterpart = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyPrime Lens = ECinemafyPrime::Prime50;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyCameraFeel Feel = ECinemafyCameraFeel::Tripod;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool bIsReaction = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	int32 LineIndex = 0;
+
+	/** Why the director chose it, in plain words. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	FString Reason;
+};

@@ -11,4 +11,6 @@ public:
 
 private:
 	void RegisterMenus();
+
+	FDelegateHandle DirectorRequestHandle;
 };

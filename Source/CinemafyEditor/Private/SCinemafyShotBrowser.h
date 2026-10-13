@@ -48,6 +48,9 @@ public:
 
 	static const FName TabName;
 
+	/** Refreshes the open Shot Browser, if there is one (e.g. after the Director re-cuts a scene). */
+	static void RefreshActive();
+
 private:
 	void RebuildStrip();
 	TSharedRef<SWidget> MakeShotCard(const TSharedRef<FCinemafyShot>& Shot);
@@ -58,4 +61,6 @@ private:
 	TArray<TSharedRef<FCinemafyShot>> Shots;
 	TWeakObjectPtr<ULevelSequence> Sequence;
 	TSharedPtr<SHorizontalBox> Strip;
+
+	static TWeakPtr<SCinemafyShotBrowser> ActiveInstance;
 };

@@ -7,6 +7,7 @@
 
 class ACineCameraActor;
 class ACinemafyLightRig;
+class ACinemafySceneDirector;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -99,6 +100,22 @@ public:
 	/** Adds a Cinemafy Face component (if missing) to each selected character and sets its emotion. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 ApplyFaceEmotionToSelection(ECinemafyEmotion Emotion);
+
+	/**
+	 * Plans the director's scene and bakes it into the open Level Sequence from the playhead:
+	 * cameras (reused across takes, so your tweaks survive), lenses, camera feel and timed cuts.
+	 * Replaces this director's previous cuts. Returns the number of shots.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 DirectSceneInSequencer(ACinemafySceneDirector* Director);
+
+	/** Removes this director's camera cuts from the open sequence (cameras are kept). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 ClearDirectedShots(ACinemafySceneDirector* Director);
+
+	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static ACinemafySceneDirector* CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style);
 
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")

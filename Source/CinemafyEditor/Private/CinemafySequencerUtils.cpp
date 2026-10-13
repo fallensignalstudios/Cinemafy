@@ -54,6 +54,16 @@ namespace CinemafySequencer
 		return Binding;
 	}
 
+	FGuid FindBinding(ULevelSequence* Sequence, AActor* Actor)
+	{
+		const TSharedPtr<ISequencer> Sequencer = GetOpenSequencer();
+		if (Sequencer.IsValid() && Sequencer->GetFocusedMovieSceneSequence() == Sequence)
+		{
+			return Sequencer->GetHandleToObject(Actor, false);
+		}
+		return FGuid();
+	}
+
 	void NotifyChanged()
 	{
 		ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
