@@ -9,10 +9,11 @@
 - [x] Looks + letterbox + Look Preset assets
 
 ## 🎯 v0.2: Sequencer-native
-- [ ] "Create Shot" adds the camera straight into the open Level Sequence with a Camera Cut
+- [x] "Create Shot" adds the camera straight into the open Level Sequence with a Camera Cut
+- [x] 180° line checker (selected cameras vs. two characters)
+- [x] Operator moves: push, pull, truck, pedestal, crane, orbit, with eased / overshoot-and-settle curves
 - [ ] Shot browser: a thumbnail strip of every camera in the sequence
-- [ ] 180° / screen-direction checker that warns on bad cuts
-- [ ] Operator moves: eased push-in, dolly, crane reveal and orbit presets with overshoot and settle
+- [ ] Line checker v2: walk the camera cut track and check each actual cut, with animated cameras
 
 ## 💡 v0.3: Lighting
 - [ ] Character-attached lighting rigs (three-point, Rembrandt, rim, silhouette)

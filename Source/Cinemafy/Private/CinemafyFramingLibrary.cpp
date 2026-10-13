@@ -103,6 +103,34 @@ FVector UCinemafyFramingLibrary::GetEyePoint(const AActor* Actor)
 	return FVector(Origin.X, Origin.Y, Origin.Z + Extent.Z - 12.f);
 }
 
+FVector UCinemafyFramingLibrary::GetCanonicalLineDirection(const AActor* CharacterA, const AActor* CharacterB)
+{
+	if (!CharacterA || !CharacterB)
+	{
+		return FVector::ForwardVector;
+	}
+
+	// Order the pair by name so the line (and therefore "camera side") is stable.
+	const bool bSwap = CharacterB->GetName() < CharacterA->GetName();
+	const AActor* First = bSwap ? CharacterB : CharacterA;
+	const AActor* Second = bSwap ? CharacterA : CharacterB;
+
+	const FVector Dir = (GetEyePoint(Second) - GetEyePoint(First)).GetSafeNormal2D();
+	return Dir.IsNearlyZero() ? FVector::ForwardVector : Dir;
+}
+
+float UCinemafyFramingLibrary::GetSideOfLine(const FVector& Point, const AActor* CharacterA, const AActor* CharacterB)
+{
+	if (!CharacterA || !CharacterB)
+	{
+		return 0.f;
+	}
+
+	const FVector SideDir = FVector::CrossProduct(FVector::UpVector, GetCanonicalLineDirection(CharacterA, CharacterB));
+	const FVector Mid = 0.5f * (GetEyePoint(CharacterA) + GetEyePoint(CharacterB));
+	return FVector::DotProduct(Point - Mid, SideDir);
+}
+
 bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution)
 {
 	const AActor* Subject = Request.Subject;
@@ -133,12 +161,8 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 	}
 
 	// The line of action must be the same no matter which character the shot is on, or the
-	// "camera side" would flip between the A and B shots. Order the pair by name to make it stable.
-	FVector LineDir = LookDir;
-	if (Counterpart && Counterpart->GetName() < Subject->GetName())
-	{
-		LineDir = -LookDir;
-	}
+	// "camera side" would flip between the A and B shots.
+	const FVector LineDir = Counterpart ? GetCanonicalLineDirection(Subject, Counterpart) : LookDir;
 	const FVector SideDir = FVector::CrossProduct(Up, LineDir) * (Request.bFlipSide ? -1.f : 1.f);
 
 	ECinemafyPrime Lens = Request.bUseRecommendedLens ? GetRecommendedPrime(Request.ShotType) : Request.Lens;

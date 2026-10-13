@@ -3,6 +3,7 @@
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
+#include "CinemafyCameraMoveComponent.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
 #include "CineCameraActor.h"
@@ -11,6 +12,12 @@
 #include "Editor.h"
 #include "Selection.h"
 #include "ScopedTransaction.h"
+#include "Misc/MessageDialog.h"
+#include "LevelSequence.h"
+#include "LevelSequenceEditorBlueprintLibrary.h"
+#include "MovieScene.h"
+#include "MovieSceneObjectBindingID.h"
+#include "Tracks/MovieSceneCameraCutTrack.h"
 
 #define LOCTEXT_NAMESPACE "CinemafyEditor"
 
@@ -49,6 +56,30 @@ namespace
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: select at least one %s first."), What);
 	}
+
+	/** Sequencer's playhead, converted to the movie scene's tick resolution. */
+	FFrameNumber GetPlayheadTick(const UMovieScene* MovieScene)
+	{
+		const FFrameNumber DisplayFrame(ULevelSequenceEditorBlueprintLibrary::GetCurrentLocalTime());
+		return ConvertFrameTime(FFrameTime(DisplayFrame), MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).FloorToFrame();
+	}
+
+	/** A move size that reads well on screen without being showy. */
+	void ApplyDefaultMoveSize(UCinemafyCameraMoveComponent* MoveComp)
+	{
+		switch (MoveComp->Move)
+		{
+		case ECinemafyCameraMove::PushIn:
+		case ECinemafyCameraMove::PullOut:      MoveComp->Distance = 80.f; break;
+		case ECinemafyCameraMove::TruckLeft:
+		case ECinemafyCameraMove::TruckRight:   MoveComp->Distance = 120.f; break;
+		case ECinemafyCameraMove::PedestalUp:
+		case ECinemafyCameraMove::PedestalDown: MoveComp->Distance = 60.f; break;
+		case ECinemafyCameraMove::CraneUp:
+		case ECinemafyCameraMove::CraneDown:    MoveComp->Distance = 150.f; break;
+		default:                                MoveComp->OrbitAngle = 20.f; break;
+		}
+	}
 }
 
 TArray<AActor*> UCinemafyEditorLibrary::GetSelectedActorsInOrder()
@@ -61,7 +92,7 @@ TArray<AActor*> UCinemafyEditorLibrary::GetSelectedActorsInOrder()
 	return Actors;
 }
 
-ACineCameraActor* UCinemafyEditorLibrary::CreateShot(const FCinemafyShotRequest& Request)
+ACineCameraActor* UCinemafyEditorLibrary::CreateShot(const FCinemafyShotRequest& Request, bool bAddToOpenSequence)
 {
 	FCinemafyShotSolution Solution;
 	if (!GEditor || !UCinemafyFramingLibrary::SolveShot(Request, Solution))
@@ -96,6 +127,11 @@ ACineCameraActor* UCinemafyEditorLibrary::CreateShot(const FCinemafyShotRequest&
 
 	UCinemafyFocusComponent* Focus = FindOrAddComponent<UCinemafyFocusComponent>(CameraActor, TEXT("CinemafyFocus"));
 	Focus->FocusTarget = Request.Subject;
+
+	if (bAddToOpenSequence)
+	{
+		AddCameraToOpenSequence(CameraActor, true);
+	}
 
 	GEditor->SelectNone(false, true);
 	GEditor->SelectActor(CameraActor, true, true);
@@ -193,6 +229,164 @@ int32 UCinemafyEditorLibrary::ApplyPrimeToSelection(ECinemafyPrime Prime, float 
 		WarnNothingSelected(TEXT("Cine Camera"));
 	}
 	return Cameras.Num();
+}
+
+int32 UCinemafyEditorLibrary::ApplyCameraMoveToSelection(ECinemafyCameraMove Move)
+{
+	const FScopedTransaction Transaction(LOCTEXT("ApplyMove", "Cinemafy: Camera Move"));
+	int32 Count = 0;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (!UCinemafyCameraLibrary::FindCineCamera(Actor))
+		{
+			continue;
+		}
+
+		UCinemafyCameraMoveComponent* MoveComp = FindOrAddComponent<UCinemafyCameraMoveComponent>(Actor, TEXT("CinemafyMove"));
+		MoveComp->Move = Move;
+		ApplyDefaultMoveSize(MoveComp);
+		++Count;
+	}
+
+	if (Count == 0)
+	{
+		WarnNothingSelected(TEXT("Cine Camera"));
+	}
+	return Count;
+}
+
+bool UCinemafyEditorLibrary::AddCameraToOpenSequence(ACineCameraActor* CameraActor, bool bAddCameraCut)
+{
+	ULevelSequence* Sequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	if (!CameraActor || !MovieScene)
+	{
+		return false;
+	}
+
+	UWorld* World = CameraActor->GetWorld();
+	const FScopedTransaction Transaction(LOCTEXT("AddToSequence", "Cinemafy: Add Camera to Sequence"));
+	Sequence->Modify();
+	MovieScene->Modify();
+
+	FGuid Binding = Sequence->FindBindingFromObject(CameraActor, World);
+	if (!Binding.IsValid())
+	{
+		Binding = MovieScene->AddPossessable(CameraActor->GetActorLabel(), CameraActor->GetClass());
+		Sequence->BindPossessableObject(Binding, *CameraActor, World);
+	}
+
+	if (bAddCameraCut)
+	{
+		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
+		if (!Track)
+		{
+			Track = MovieScene->AddCameraCutTrack(UMovieSceneCameraCutTrack::StaticClass());
+		}
+
+		if (UMovieSceneCameraCutTrack* CutTrack = Cast<UMovieSceneCameraCutTrack>(Track))
+		{
+			CutTrack->Modify();
+			CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), GetPlayheadTick(MovieScene));
+		}
+	}
+
+	ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	return true;
+}
+
+int32 UCinemafyEditorLibrary::AddSelectedCamerasToSequence()
+{
+	if (!ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence())
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open a Level Sequence in Sequencer first."));
+		return 0;
+	}
+
+	int32 Count = 0;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (ACineCameraActor* CameraActor = Cast<ACineCameraActor>(Actor))
+		{
+			Count += AddCameraToOpenSequence(CameraActor, true) ? 1 : 0;
+		}
+	}
+
+	if (Count == 0)
+	{
+		WarnNothingSelected(TEXT("Cine Camera"));
+	}
+	return Count;
+}
+
+int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
+{
+	// Cameras that sit (almost) on the line are neutral: cutting through them is a legit way to cross.
+	constexpr float OnTheLineTolerance = 15.f;
+
+	TArray<AActor*> Characters;
+	TArray<AActor*> Cameras;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (UCinemafyCameraLibrary::FindCineCamera(Actor))
+		{
+			Cameras.Add(Actor);
+		}
+		else if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			Characters.Add(Actor);
+		}
+	}
+
+	if (Characters.Num() != 2 || Cameras.Num() == 0)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LineCheckSelection",
+			"Select exactly two characters (the line of action runs between them) and the cameras you want to check."));
+		return -1;
+	}
+
+	TArray<AActor*> PositiveSide;
+	TArray<AActor*> NegativeSide;
+	for (AActor* Camera : Cameras)
+	{
+		const FVector CameraLocation = UCinemafyCameraLibrary::FindCineCamera(Camera)->GetComponentLocation();
+		const float Side = UCinemafyFramingLibrary::GetSideOfLine(CameraLocation, Characters[0], Characters[1]);
+		if (Side > OnTheLineTolerance)
+		{
+			PositiveSide.Add(Camera);
+		}
+		else if (Side < -OnTheLineTolerance)
+		{
+			NegativeSide.Add(Camera);
+		}
+	}
+
+	const TArray<AActor*>& Offenders = (NegativeSide.Num() <= PositiveSide.Num()) ? NegativeSide : PositiveSide;
+	if (Offenders.Num() == 0)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckClean",
+			"All {0} cameras are on the same side of the line between {1} and {2}. Cut away!"),
+			Cameras.Num(), FText::FromString(Characters[0]->GetActorLabel()), FText::FromString(Characters[1]->GetActorLabel())));
+		return 0;
+	}
+
+	FString Names;
+	for (const AActor* Offender : Offenders)
+	{
+		Names += FString::Printf(TEXT("\n  - %s"), *Offender->GetActorLabel());
+	}
+
+	GEditor->SelectNone(false, true);
+	for (AActor* Offender : Offenders)
+	{
+		GEditor->SelectActor(Offender, true, false);
+	}
+	GEditor->NoteSelectionChange();
+
+	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckCrossed",
+		"{0} camera(s) are across the line from the rest (now selected). Cutting between the two sides will flip screen direction:{1}\n\nMove them across, or bridge the jump with a shot on the line or a camera move that crosses it on screen."),
+		Offenders.Num(), FText::FromString(Names)));
+	return Offenders.Num();
 }
 
 int32 UCinemafyEditorLibrary::AddGazeToSelection()

@@ -155,3 +155,28 @@ struct FCinemafyShotSolution
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	float FocusDistance = 300.f;
 };
+
+/** Classic operator moves, all relative to where the camera starts. */
+UENUM(BlueprintType)
+enum class ECinemafyCameraMove : uint8
+{
+	PushIn       UMETA(DisplayName = "Push In"),
+	PullOut      UMETA(DisplayName = "Pull Out"),
+	TruckLeft    UMETA(DisplayName = "Truck Left"),
+	TruckRight   UMETA(DisplayName = "Truck Right"),
+	PedestalUp   UMETA(DisplayName = "Pedestal Up"),
+	PedestalDown UMETA(DisplayName = "Pedestal Down"),
+	CraneUp      UMETA(DisplayName = "Crane Up (tilt to hold)"),
+	CraneDown    UMETA(DisplayName = "Crane Down (tilt to hold)"),
+	OrbitLeft    UMETA(DisplayName = "Orbit Left"),
+	OrbitRight   UMETA(DisplayName = "Orbit Right")
+};
+
+/** How a move accelerates. */
+UENUM(BlueprintType)
+enum class ECinemafyEase : uint8
+{
+	Linear         UMETA(DisplayName = "Linear (mechanical)"),
+	EaseInOut      UMETA(DisplayName = "Ease In/Out (dolly grip)"),
+	OperatorSettle UMETA(DisplayName = "Operator Settle (tiny overshoot)")
+};

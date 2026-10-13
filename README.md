@@ -27,7 +27,10 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 
 | Tool | What it does | Where |
 |---|---|---|
-| **Create Shot** | Select the subject, then who they're talking to, and pick a shot. You get a CineCamera that's framed (eyes on the upper third, lead room), lensed with the right prime, focused on the eyes, and **always on the same side of the 180° line**. | Tools → Cinemafy → Create Shot |
+| **Create Shot** | Select the subject, then who they're talking to, and pick a shot. You get a CineCamera that's framed (eyes on the upper third, lead room), lensed with the right prime, focused on the eyes, and **always on the same side of the 180° line**. If a Level Sequence is open, the camera is **added to it with a camera cut at the playhead**. | Tools → Cinemafy → Create Shot |
+| **Camera Move** | Push in, pull out, truck, pedestal, crane (it tilts to hold the subject) and orbit (around the focus point). Key `Progress` 0 → 1 in Sequencer; the easing is built in, including an "operator settle" with a tiny overshoot. Or call `Play()` from gameplay. | `Cinemafy Camera Move` component / Tools → Cinemafy → Camera Move |
+| **180° Line Check** | Select two characters and your cameras. Cameras across the line from the rest get flagged and selected. | Tools → Cinemafy → Check 180-Degree Line |
+| **Add Cameras to Sequence** | Adds the selected cameras to the open Level Sequence and cuts to them at the playhead. | Tools → Cinemafy → Add Cameras to Sequence |
 | **Lens Kit** | Real primes (18/24/35/50/85/135) with 11-blade round bokeh. No more random zoom values. | Tools → Cinemafy → Lens Kit |
 | **Camera Feel** | Tripod drift, shoulder rig, handheld or run-and-gun. Organic layered noise plus operator breathing. Seeded and repeatable. `Intensity` is **keyable in Sequencer**. | `Cinemafy Camera Feel` component |
 | **Eye Focus** | Focuses on MetaHuman **eye bones** using true focal-plane distance. Rack focus between two characters by keying `RackAlpha`, or call `RackFocusTo` from gameplay. Pulls blend in diopters, like a real follow-focus. | `Cinemafy Eye Focus` component |
@@ -49,7 +52,8 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
 4. Select **Voss**, then **Kara**, and make the same singles again. You now have matched reverse coverage, all on one side of the line.
 5. Select all the cameras: *Camera Feel → Shoulder Rig*, then *Look → Warm Epic*, then *Letterbox → 2.39*.
 6. Select both characters: *Add Gaze to Characters*. Set each one's `LookAtTarget` to the other.
-7. Add the cameras to your Level Sequence and cut. 🎬
+7. Before step 3, open your Level Sequence in Sequencer and move the playhead before each shot: every **Create Shot** drops a camera cut right there. 🎬
+8. Select both characters plus all the cameras, then run *Check 180-Degree Line* for peace of mind.
 
 > **Tip:** keep `bFlipSide` the same for every shot in a scene. That's what keeps you on one side of the line.
 
@@ -80,9 +84,9 @@ To switch who a character is looking at mid-cutscene, add a Sequencer **Event Tr
 
 ## Notes and gotchas
 
-- **Camera Feel** offsets the *camera component*, not the actor, so it stacks with Sequencer
-  transform keys, rails and cranes. If you key the camera *component's* transform directly, the
-  two will fight.
+- **Camera Feel** and **Camera Move** offset the *camera component*, not the actor, so they stack
+  with Sequencer transform keys, rails and cranes (and with each other: the shake rides on the move).
+  If you key the camera *component's* transform directly, they'll fight.
 - **Eye Focus** owns the camera's manual focus distance while it's active. To hand-key focus
   instead, disable the component.
 - For perfectly repeatable shake in renders, enable `bUseTimeOverride` on Camera Feel and key

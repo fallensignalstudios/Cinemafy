@@ -34,4 +34,15 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
 	static FVector GetEyePoint(const AActor* Actor);
+
+	/**
+	 * Which side of the line of action between two characters a point is on: > 0 is the side
+	 * SolveShot uses by default, < 0 is the flipped side. The line is ordered by actor name,
+	 * so the answer doesn't depend on which character you pass first. Returns signed distance in cm.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static float GetSideOfLine(const FVector& Point, const AActor* CharacterA, const AActor* CharacterB);
+
+	/** Horizontal line-of-action direction for a pair of characters, ordered by actor name. */
+	static FVector GetCanonicalLineDirection(const AActor* CharacterA, const AActor* CharacterB);
 };

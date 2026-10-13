@@ -19,6 +19,10 @@ public class CinemafyEditor : ModuleRules
 		{
 			"UnrealEd",
 			"ToolMenus",
+			"LevelSequence",
+			"LevelSequenceEditor",
+			"MovieScene",
+			"MovieSceneTracks",
 			"Slate",
 			"SlateCore"
 		});

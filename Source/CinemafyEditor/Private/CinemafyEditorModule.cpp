@@ -58,6 +58,12 @@ namespace
 		AddEnumEntries<ECinemafyCameraFeel>(Section, [](ECinemafyCameraFeel Feel) { UCinemafyEditorLibrary::ApplyCameraFeelToSelection(Feel); });
 	}
 
+	void FillMoveMenu(UToolMenu* Menu)
+	{
+		FToolMenuSection& Section = Menu->AddSection("Move", LOCTEXT("MoveSection", "Key Progress 0 -> 1 in Sequencer"));
+		AddEnumEntries<ECinemafyCameraMove>(Section, [](ECinemafyCameraMove Move) { UCinemafyEditorLibrary::ApplyCameraMoveToSelection(Move); });
+	}
+
 	void FillLookMenu(UToolMenu* Menu)
 	{
 		FToolMenuSection& Section = Menu->AddSection("Look", LOCTEXT("LookSection", "Look"));
@@ -103,9 +109,23 @@ void FCinemafyEditorModule::RegisterMenus()
 		LOCTEXT("FeelMenuTip", "Give the selected cameras an operator's touch."),
 		FNewToolMenuDelegate::CreateStatic(&FillFeelMenu));
 
+	Section.AddSubMenu("CinemafyMove", LOCTEXT("MoveMenu", "Camera Move"),
+		LOCTEXT("MoveMenuTip", "Give the selected cameras an eased operator move: push, truck, pedestal, crane or orbit."),
+		FNewToolMenuDelegate::CreateStatic(&FillMoveMenu));
+
 	Section.AddSubMenu("CinemafyLook", LOCTEXT("LookMenu", "Look & Letterbox"),
 		LOCTEXT("LookMenuTip", "Grade and frame the selected cameras."),
 		FNewToolMenuDelegate::CreateStatic(&FillLookMenu));
+
+	Section.AddMenuEntry("CinemafyAddToSequence", LOCTEXT("AddToSequenceMenu", "Add Cameras to Sequence"),
+		LOCTEXT("AddToSequenceMenuTip", "Add the selected cameras to the open Level Sequence and cut to them at the playhead."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::AddSelectedCamerasToSequence(); })));
+
+	Section.AddMenuEntry("CinemafyLineCheck", LOCTEXT("LineCheckMenu", "Check 180-Degree Line"),
+		LOCTEXT("LineCheckMenuTip", "Select two characters and your cameras. Flags cameras across the line of action."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::CheckLineOfActionForSelection(); })));
 
 	Section.AddMenuEntry("CinemafyGaze", LOCTEXT("GazeMenu", "Add Gaze to Characters"),
 		LOCTEXT("GazeMenuTip", "Add living eyes (saccades, head follow, blinks) to the selected characters."),

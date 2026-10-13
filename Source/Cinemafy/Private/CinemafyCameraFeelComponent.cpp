@@ -1,7 +1,4 @@
 #include "CinemafyCameraFeelComponent.h"
-#include "Camera/CameraComponent.h"
-#include "GameFramework/Actor.h"
-#include "Engine/World.h"
 
 namespace
 {
@@ -15,9 +12,6 @@ namespace
 
 UCinemafyCameraFeelComponent::UCinemafyCameraFeelComponent()
 {
-	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
-	bTickInEditor = true;
 	CustomSettings = GetPresetSettings(ECinemafyCameraFeel::Shoulder);
 }
 
@@ -70,49 +64,8 @@ void UCinemafyCameraFeelComponent::CopyPresetToCustom()
 	}
 }
 
-void UCinemafyCameraFeelComponent::OnRegister()
+FTransform UCinemafyCameraFeelComponent::EvaluateOffset(float DeltaTime)
 {
-	Super::OnRegister();
-
-	Camera = GetOwner() ? GetOwner()->FindComponentByClass<UCameraComponent>() : nullptr;
-	if (Camera.IsValid())
-	{
-		BaseRelativeTransform = Camera->GetRelativeTransform();
-	}
-}
-
-void UCinemafyCameraFeelComponent::OnUnregister()
-{
-	RestoreBaseTransform();
-	Camera.Reset();
-	Super::OnUnregister();
-}
-
-void UCinemafyCameraFeelComponent::RestoreBaseTransform()
-{
-	if (Camera.IsValid())
-	{
-		Camera->SetRelativeTransform(BaseRelativeTransform);
-	}
-}
-
-void UCinemafyCameraFeelComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
-{
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-	if (!Camera.IsValid())
-	{
-		return;
-	}
-
-	const UWorld* World = GetWorld();
-	const bool bIsEditorPreview = World && !World->IsGameWorld();
-	if (bIsEditorPreview && !bPreviewInEditor)
-	{
-		RestoreBaseTransform();
-		return;
-	}
-
 	ElapsedTime += DeltaTime;
 	const float T = bUseTimeOverride ? TimeOverride : ElapsedTime;
 	const FCinemafyFeelSettings S = (Feel == ECinemafyCameraFeel::Custom) ? CustomSettings : GetPresetSettings(Feel);
@@ -133,6 +86,5 @@ void UCinemafyCameraFeelComponent::TickComponent(float DeltaTime, ELevelTick Tic
 		OrganicNoise(T, S.LocationFrequency, O + 401.f) * S.LocationAmplitude.Y * K,
 		OrganicNoise(T, S.LocationFrequency, O + 503.f) * S.LocationAmplitude.Z * K + Breath * 0.5f * K);
 
-	const FTransform Offset(RotOffset, LocOffset);
-	Camera->SetRelativeTransform(Offset * BaseRelativeTransform);
+	return FTransform(RotOffset, LocOffset);
 }

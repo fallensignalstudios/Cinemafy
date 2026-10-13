@@ -1,21 +1,18 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Components/ActorComponent.h"
+#include "CinemafyCameraOffsetComponent.h"
 #include "CinemafyTypes.h"
 #include "CinemafyCameraFeelComponent.generated.h"
-
-class UCameraComponent;
 
 /**
  * Makes a camera feel operated by a human: layered organic drift, sway and breathing.
  * Drop it on a CineCameraActor. Key "Intensity" in Sequencer to ramp the shake with the drama.
  *
- * Works on the camera component's relative transform, so it stacks on top of whatever
- * Sequencer does to the actor (rails, cranes, keyframed moves).
+ * Stacks on top of Sequencer keys, rails, cranes and Cinemafy Camera Moves.
  */
 UCLASS(ClassGroup = (Cinemafy), meta = (BlueprintSpawnableComponent, DisplayName = "Cinemafy Camera Feel"))
-class CINEMAFY_API UCinemafyCameraFeelComponent : public UActorComponent
+class CINEMAFY_API UCinemafyCameraFeelComponent : public UCinemafyCameraOffsetComponent
 {
 	GENERATED_BODY()
 
@@ -47,26 +44,18 @@ public:
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Camera Feel|Timing", meta = (EditCondition = "bUseTimeOverride"))
 	float TimeOverride = 0.f;
 
-	/** Preview the feel in the editor viewport (while Sequencer is scrubbing, etc). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera Feel")
-	bool bPreviewInEditor = true;
-
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Camera Feel")
 	static FCinemafyFeelSettings GetPresetSettings(ECinemafyCameraFeel InFeel);
 
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Camera Feel")
 	void CopyPresetToCustom();
 
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	/** Shake rides on top of moves. */
+	virtual int32 GetStackOrder() const override { return 100; }
 
 protected:
-	virtual void OnRegister() override;
-	virtual void OnUnregister() override;
+	virtual FTransform EvaluateOffset(float DeltaTime) override;
 
 private:
-	void RestoreBaseTransform();
-
-	TWeakObjectPtr<UCameraComponent> Camera;
-	FTransform BaseRelativeTransform;
 	float ElapsedTime = 0.f;
 };
