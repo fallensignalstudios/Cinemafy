@@ -28,6 +28,7 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 | Tool | What it does | Where |
 |---|---|---|
 | **Create Shot** | Select the subject, then who they're talking to, and pick a shot. You get a CineCamera that's framed (eyes on the upper third, lead room), lensed with the right prime, focused on the eyes, and **always on the same side of the 180° line**. If a Level Sequence is open, the camera is **added to it with a camera cut at the playhead**. | Tools → Cinemafy → Create Shot |
+| **Shot Browser** | A dockable film strip of every camera cut in the open sequence. Each card shows a thumbnail rendered through that shot's camera at the first frame of its cut, the lens and aperture, and the duration with pacing warnings for flash cuts and overlong shots. The shot under the playhead lights up live, and clicking a card jumps there and selects its camera. | Tools → Cinemafy → Shot Browser |
 | **Camera Move** | Push in, pull out, truck, pedestal, crane (it tilts to hold the subject) and orbit (around the focus point). Key `Progress` 0 → 1 in Sequencer; the easing is built in, including an "operator settle" with a tiny overshoot. Or call `Play()` from gameplay. | `Cinemafy Camera Move` component / Tools → Cinemafy → Camera Move |
 | **180° Line Check** | Select two characters and your cameras. Cameras across the line from the rest get flagged and selected. | Tools → Cinemafy → Check 180-Degree Line |
 | **Add Cameras to Sequence** | Adds the selected cameras to the open Level Sequence and cuts to them at the playhead. | Tools → Cinemafy → Add Cameras to Sequence |
@@ -55,8 +56,9 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
 5. Select all the cameras: *Camera Feel → Shoulder Rig*, then *Look → Warm Epic*, then *Letterbox → 2.39*.
 6. Select both characters: *Add Gaze to Characters*. Set each one's `LookAtTarget` to the other.
 7. Before step 3, open your Level Sequence in Sequencer and move the playhead before each shot: every **Create Shot** drops a camera cut right there. 🎬
-8. Select both characters plus all the cameras, then run *Check 180-Degree Line* for peace of mind.
-9. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
+8. Open *Tools → Cinemafy → Shot Browser* and hit **Capture Thumbnails** to see your edit as a film strip.
+9. Select both characters plus all the cameras, then run *Check 180-Degree Line* for peace of mind.
+10. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
 
 > **Tip:** keep `bFlipSide` the same for every shot in a scene. That's what keeps you on one side of the line.
 

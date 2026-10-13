@@ -1,6 +1,10 @@
 #include "CinemafyEditorModule.h"
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyTypes.h"
+#include "SCinemafyShotBrowser.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Docking/TabManager.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "ToolMenus.h"
 #include "Framework/Commands/UIAction.h"
 #include "Textures/SlateIcon.h"
@@ -87,11 +91,28 @@ namespace
 
 void FCinemafyEditorModule::StartupModule()
 {
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyShotBrowser::TabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				[
+					SNew(SCinemafyShotBrowser)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("ShotBrowserTab", "Cinemafy Shot Browser"))
+		.SetTooltipText(LOCTEXT("ShotBrowserTabTip", "Film strip of every camera cut in the open Level Sequence."))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FCinemafyEditorModule::RegisterMenus));
 }
 
 void FCinemafyEditorModule::ShutdownModule()
 {
+	if (FSlateApplication::IsInitialized())
+	{
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyShotBrowser::TabName);
+	}
 	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(this);
 }
@@ -102,6 +123,11 @@ void FCinemafyEditorModule::RegisterMenus()
 
 	UToolMenu* ToolsMenu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");
 	FToolMenuSection& Section = ToolsMenu->AddSection("Cinemafy", LOCTEXT("CinemafySection", "Cinemafy"));
+
+	Section.AddMenuEntry("CinemafyShotBrowser", LOCTEXT("ShotBrowserMenu", "Shot Browser"),
+		LOCTEXT("ShotBrowserMenuTip", "Open a film strip of every camera cut in the open Level Sequence."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyShotBrowser::TabName); })));
 
 	Section.AddSubMenu("CinemafyShots", LOCTEXT("ShotsMenu", "Create Shot"),
 		LOCTEXT("ShotsMenuTip", "Spawn a framed, eye-focused camera. Select the subject first, then who they're talking to."),

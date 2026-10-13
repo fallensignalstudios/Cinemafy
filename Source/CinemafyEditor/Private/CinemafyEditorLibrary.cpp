@@ -1,5 +1,6 @@
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyModule.h"
+#include "CinemafySequencerUtils.h"
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
@@ -15,7 +16,6 @@
 #include "ScopedTransaction.h"
 #include "Misc/MessageDialog.h"
 #include "LevelSequence.h"
-#include "LevelSequenceEditorBlueprintLibrary.h"
 #include "MovieScene.h"
 #include "MovieSceneObjectBindingID.h"
 #include "Tracks/MovieSceneCameraCutTrack.h"
@@ -57,28 +57,6 @@ namespace
 	void WarnNothingSelected(const TCHAR* What)
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: select at least one %s first."), What);
-	}
-
-	/** Sequencer's playhead, converted to the movie scene's tick resolution. */
-	FFrameNumber GetPlayheadTick(const UMovieScene* MovieScene)
-	{
-		const FFrameNumber DisplayFrame(ULevelSequenceEditorBlueprintLibrary::GetCurrentLocalTime());
-		return ConvertFrameTime(FFrameTime(DisplayFrame), MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).FloorToFrame();
-	}
-
-	/** Finds or creates a possessable binding for an actor in a level sequence. */
-	FGuid BindActor(ULevelSequence* Sequence, AActor* Actor)
-	{
-		UWorld* World = Actor->GetWorld();
-		FGuid Binding = Sequence->FindBindingFromObject(Actor, World);
-		if (!Binding.IsValid())
-		{
-			Sequence->Modify();
-			Sequence->GetMovieScene()->Modify();
-			Binding = Sequence->GetMovieScene()->AddPossessable(Actor->GetActorLabel(), Actor->GetClass());
-			Sequence->BindPossessableObject(Binding, *Actor, World);
-		}
-		return Binding;
 	}
 
 	/** Sets manual ease-in on the earliest section and ease-out on the latest, clamped to half a section. */
@@ -315,7 +293,7 @@ int32 UCinemafyEditorLibrary::ApplyCameraMoveToSelection(ECinemafyCameraMove Mov
 
 bool UCinemafyEditorLibrary::AddCameraToOpenSequence(ACineCameraActor* CameraActor, bool bAddCameraCut)
 {
-	ULevelSequence* Sequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence();
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
 	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
 	if (!CameraActor || !MovieScene)
 	{
@@ -326,7 +304,7 @@ bool UCinemafyEditorLibrary::AddCameraToOpenSequence(ACineCameraActor* CameraAct
 	Sequence->Modify();
 	MovieScene->Modify();
 
-	const FGuid Binding = BindActor(Sequence, CameraActor);
+	const FGuid Binding = CinemafySequencer::BindActor(Sequence, CameraActor);
 
 	if (bAddCameraCut)
 	{
@@ -339,17 +317,17 @@ bool UCinemafyEditorLibrary::AddCameraToOpenSequence(ACineCameraActor* CameraAct
 		if (UMovieSceneCameraCutTrack* CutTrack = Cast<UMovieSceneCameraCutTrack>(Track))
 		{
 			CutTrack->Modify();
-			CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), GetPlayheadTick(MovieScene));
+			CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), CinemafySequencer::GetPlayheadTick(MovieScene));
 		}
 	}
 
-	ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	CinemafySequencer::NotifyChanged();
 	return true;
 }
 
 int32 UCinemafyEditorLibrary::AddSelectedCamerasToSequence()
 {
-	if (!ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence())
+	if (!CinemafySequencer::GetOpenSequence())
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open a Level Sequence in Sequencer first."));
 		return 0;
@@ -474,10 +452,10 @@ ACinemafyLightRig* UCinemafyEditorLibrary::CreateLightRig(AActor* Subject, AActo
 	Rig->ApplyCharacterChannels();
 	Rig->SolveRig();
 
-	if (ULevelSequence* Sequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence())
+	if (ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence())
 	{
-		BindActor(Sequence, Rig);
-		ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+		CinemafySequencer::BindActor(Sequence, Rig);
+		CinemafySequencer::NotifyChanged();
 	}
 
 	GEditor->SelectNone(false, true);
@@ -539,7 +517,7 @@ int32 UCinemafyEditorLibrary::ApplyLightingStyleToSelection(ECinemafyLightingSty
 
 bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeconds, float BlendOutSeconds, bool bIncludeAnimations)
 {
-	ULevelSequence* Sequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence();
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
 	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
 	UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
 	if (!CutTrack || CutTrack->GetAllSections().Num() == 0)
@@ -564,7 +542,9 @@ bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeco
 	int32 AnimTracks = 0;
 	if (bIncludeAnimations)
 	{
-		for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+		// Read-only access to the bindings; we only modify the tracks they own.
+		const UMovieScene* ConstMovieScene = MovieScene;
+		for (const FMovieSceneBinding& Binding : ConstMovieScene->GetBindings())
 		{
 			for (UMovieSceneTrack* Track : Binding.GetTracks())
 			{
@@ -578,7 +558,7 @@ bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeco
 		}
 	}
 
-	ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	CinemafySequencer::NotifyChanged();
 	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: gameplay blend set up (%.2fs in, %.2fs out, %d animation tracks)."), BlendInSeconds, BlendOutSeconds, AnimTracks);
 	return true;
 }

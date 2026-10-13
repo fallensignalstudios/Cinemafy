@@ -12,7 +12,7 @@
 - [x] "Create Shot" adds the camera straight into the open Level Sequence with a Camera Cut
 - [x] 180° line checker (selected cameras vs. two characters)
 - [x] Operator moves: push, pull, truck, pedestal, crane, orbit, with eased / overshoot-and-settle curves
-- [ ] Shot browser: a thumbnail strip of every camera in the sequence
+- [x] Shot browser: a film strip of every camera cut with thumbnails, lens info, pacing warnings and click-to-jump
 - [ ] Line checker v2: walk the camera cut track and check each actual cut, with animated cameras
 
 ## 💡 v0.3: Lighting
