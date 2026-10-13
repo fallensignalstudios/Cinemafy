@@ -132,6 +132,11 @@ void FCinemafyEditorModule::RegisterMenus()
 		FSlateIcon(),
 		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::AddSelectedCamerasToSequence(); })));
 
+	Section.AddMenuEntry("CinemafyGameplayBlend", LOCTEXT("GameplayBlendMenu", "Set Up Gameplay Blend"),
+		LOCTEXT("GameplayBlendMenuTip", "Make the open sequence blend in from and back out to the gameplay camera (1s each), easing character animation too. Play it with the Cinemafy Cutscene subsystem."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(1.f, 1.f, true); })));
+
 	Section.AddMenuEntry("CinemafyLineCheck", LOCTEXT("LineCheckMenu", "Check 180-Degree Line"),
 		LOCTEXT("LineCheckMenuTip", "Select two characters and your cameras. Flags cameras across the line of action."),
 		FSlateIcon(),

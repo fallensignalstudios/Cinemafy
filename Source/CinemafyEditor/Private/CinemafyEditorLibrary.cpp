@@ -19,6 +19,7 @@
 #include "MovieScene.h"
 #include "MovieSceneObjectBindingID.h"
 #include "Tracks/MovieSceneCameraCutTrack.h"
+#include "Tracks/MovieSceneSkeletalAnimationTrack.h"
 
 #define LOCTEXT_NAMESPACE "CinemafyEditor"
 
@@ -78,6 +79,47 @@ namespace
 			Sequence->BindPossessableObject(Binding, *Actor, World);
 		}
 		return Binding;
+	}
+
+	/** Sets manual ease-in on the earliest section and ease-out on the latest, clamped to half a section. */
+	template <typename TSectionArray>
+	void EaseFirstAndLastSections(const TSectionArray& Sections, int32 EaseInTicks, int32 EaseOutTicks)
+	{
+		UMovieSceneSection* First = nullptr;
+		UMovieSceneSection* Last = nullptr;
+		for (UMovieSceneSection* Section : Sections)
+		{
+			if (!Section || !Section->HasStartFrame() || !Section->HasEndFrame())
+			{
+				continue;
+			}
+			if (!First || Section->GetInclusiveStartFrame() < First->GetInclusiveStartFrame())
+			{
+				First = Section;
+			}
+			if (!Last || Section->GetExclusiveEndFrame() > Last->GetExclusiveEndFrame())
+			{
+				Last = Section;
+			}
+		}
+
+		auto HalfLength = [](const UMovieSceneSection* Section)
+		{
+			return (Section->GetExclusiveEndFrame() - Section->GetInclusiveStartFrame()).Value / 2;
+		};
+
+		if (First)
+		{
+			First->Modify();
+			First->Easing.bManualEaseIn = true;
+			First->Easing.ManualEaseInDuration = FMath::Min(EaseInTicks, HalfLength(First));
+		}
+		if (Last)
+		{
+			Last->Modify();
+			Last->Easing.bManualEaseOut = true;
+			Last->Easing.ManualEaseOutDuration = FMath::Min(EaseOutTicks, HalfLength(Last));
+		}
 	}
 
 	/** A move size that reads well on screen without being showy. */
@@ -493,6 +535,52 @@ int32 UCinemafyEditorLibrary::ApplyLightingStyleToSelection(ECinemafyLightingSty
 		WarnNothingSelected(TEXT("character or Light Rig"));
 	}
 	return Created;
+}
+
+bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeconds, float BlendOutSeconds, bool bIncludeAnimations)
+{
+	ULevelSequence* Sequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
+	if (!CutTrack || CutTrack->GetAllSections().Num() == 0)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoCuts", "Open a Level Sequence with a camera cut track first (Create Shot adds one for you)."));
+		return false;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("GameplayBlend", "Cinemafy: Set Up Gameplay Blend"));
+	MovieScene->Modify();
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+	const int32 EaseInTicks = TickResolution.AsFrameNumber(FMath::Max(BlendInSeconds, 0.f)).Value;
+	const int32 EaseOutTicks = TickResolution.AsFrameNumber(FMath::Max(BlendOutSeconds, 0.f)).Value;
+
+	// Camera: blend from the gameplay camera into the first cut, and from the last cut back out.
+	CutTrack->Modify();
+	CutTrack->bCanBlend = true;
+	EaseFirstAndLastSections(CutTrack->GetAllSections(), EaseInTicks, EaseOutTicks);
+
+	// Characters: ease their animation in and out so the pose blends with the Anim Blueprint.
+	int32 AnimTracks = 0;
+	if (bIncludeAnimations)
+	{
+		for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+		{
+			for (UMovieSceneTrack* Track : Binding.GetTracks())
+			{
+				if (UMovieSceneSkeletalAnimationTrack* AnimTrack = Cast<UMovieSceneSkeletalAnimationTrack>(Track))
+				{
+					AnimTrack->Modify();
+					EaseFirstAndLastSections(AnimTrack->GetAllSections(), EaseInTicks, EaseOutTicks);
+					++AnimTracks;
+				}
+			}
+		}
+	}
+
+	ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: gameplay blend set up (%.2fs in, %.2fs out, %d animation tracks)."), BlendInSeconds, BlendOutSeconds, AnimTracks);
+	return true;
 }
 
 int32 UCinemafyEditorLibrary::AddGazeToSelection()

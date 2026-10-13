@@ -205,3 +205,71 @@ enum class ECinemafyKeySide : uint8
 	CameraLeft UMETA(DisplayName = "Camera Left"),
 	CameraRight UMETA(DisplayName = "Camera Right")
 };
+
+/** Where a cutscene plays. */
+UENUM(BlueprintType)
+enum class ECinemafyCutsceneAnchor : uint8
+{
+	/** Plays exactly where it was authored. */
+	World       UMETA(DisplayName = "World (as authored)"),
+	/**
+	 * Re-anchors the whole cutscene to the player's feet and facing, so there's no teleport pop.
+	 * Author the sequence around the world origin, with the player's start mark at (0,0,0) facing +X.
+	 */
+	Player      UMETA(DisplayName = "Relative to Player"),
+	/** Re-anchors the cutscene to AnchorActor's transform. Same authoring rule as Player. */
+	AnchorActor UMETA(DisplayName = "Relative to Anchor Actor")
+};
+
+/** How a cutscene hands off with gameplay. */
+USTRUCT(BlueprintType)
+struct FCinemafyCutsceneSettings
+{
+	GENERATED_BODY()
+
+	/**
+	 * Read the blend times from the sequence's camera cut easing (set them with Tools > Cinemafy >
+	 * Set Up Gameplay Blend). If off, BlendInTime / BlendOutTime are used for the letterbox and alignment.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blend")
+	bool bUseSequenceBlendTimes = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blend", meta = (ClampMin = "0", EditCondition = "!bUseSequenceBlendTimes"))
+	float BlendInTime = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blend", meta = (ClampMin = "0", EditCondition = "!bUseSequenceBlendTimes"))
+	float BlendOutTime = 1.f;
+
+	/** Animate letterbox bars in and out with the camera blend. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Letterbox")
+	bool bAnimatedLetterbox = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Letterbox", meta = (ClampMin = "1", UIMax = "2.76", EditCondition = "bAnimatedLetterbox"))
+	float LetterboxAspectRatio = 2.39f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anchor")
+	ECinemafyCutsceneAnchor Anchor = ECinemafyCutsceneAnchor::World;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Anchor", meta = (EditCondition = "Anchor == ECinemafyCutsceneAnchor::AnchorActor"))
+	TObjectPtr<AActor> AnchorActor = nullptr;
+
+	/**
+	 * As the blend back to gameplay starts, turn the player's control rotation to match the cutscene's
+	 * final camera, so the gameplay camera lands facing the same way instead of whipping around.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Handoff")
+	bool bAlignPlayerToFinalCamera = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Handoff")
+	bool bDisableMovementInput = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Handoff")
+	bool bDisableLookInput = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Handoff")
+	bool bHidePlayer = false;
+
+	/** Hides the AHUD. For UMG HUDs, listen to OnCutsceneStarted / OnCutsceneFinished. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Handoff")
+	bool bHideHUD = true;
+};

@@ -36,6 +36,7 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 | **Eye Focus** | Focuses on MetaHuman **eye bones** using true focal-plane distance. Rack focus between two characters by keying `RackAlpha`, or call `RackFocusTo` from gameplay. Pulls blend in diopters, like a real follow-focus. | `Cinemafy Eye Focus` component |
 | **Gaze** | Living eyes: micro-saccades, a lazy head that carries part of the turn, natural blinks, double blinks and blink-on-gaze-shift. | `Cinemafy Gaze` component |
 | **Light Rig** | A gaffer in a box: key, fill, rim and eye light that place themselves around a character **relative to the shot's camera**. Styles: Three-Point, Loop, Rembrandt, Butterfly, Split, Noir and Silhouette. Short- or broad-side keying is picked automatically from where the face is turned. Intensities are in **lux at the face**, so moving lights never changes exposure. **Character Only** mode uses lighting channel 1, so cutscene cheats never touch the environment. In game it can re-light for every camera cut. `Intensity` is keyable. | Tools → Cinemafy → Light Rig / `Cinemafy Light Rig` actor |
+| **Gameplay ↔ Cutscene** | `UCinemafyCutsceneSubsystem::PlayCutscene` blends from the gameplay camera into the cutscene and back. Animated letterbox bars follow the blend, the cutscene can re-anchor to the player (no teleport pop), and the gameplay camera lands facing where the cutscene ended. Skips still blend out. | Tools → Cinemafy → Set Up Gameplay Blend + `Cinemafy Cutscene` subsystem |
 | **Looks** | Clean Cinema, Warm Epic, Teal & Orange, Bleach Bypass, Noir, Cold Steel. Applied on top of your existing post settings, with a strength slider. | Tools → Cinemafy → Look & Letterbox |
 | **Letterbox** | 2.39 scope or 1.85 flat. Real in-game bars through the camera's aspect constraint. | Tools → Cinemafy → Look & Letterbox |
 | **Look Presets** | `CinemafyLookPreset` data asset: save a grade and letterbox as a reusable "film stock". | Content Browser → Miscellaneous → Data Asset |
@@ -58,6 +59,35 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
 9. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
 
 > **Tip:** keep `bFlipSide` the same for every shot in a scene. That's what keeps you on one side of the line.
+
+---
+
+## Gameplay ↔ cutscene handoff
+
+1. Open the cutscene's Level Sequence and click *Tools → Cinemafy → Set Up Gameplay Blend*. This:
+   - turns on camera cut blending,
+   - eases the first cut in from the gameplay camera and the last cut back out to it (1s each), and
+   - eases each character's first and last animation section so their pose blends with the Anim Blueprint.
+     For that pose blend, the character binding needs to use the Anim Blueprint with a slot.
+2. Play it from Blueprint: **Get Cinemafy Cutscene Subsystem → Play Cutscene**, or from C++:
+   ```cpp
+   FCinemafyCutsceneSettings Settings;
+   Settings.Anchor = ECinemafyCutsceneAnchor::Player; // optional: no teleport pop
+   GetWorld()->GetSubsystem<UCinemafyCutsceneSubsystem>()->PlayCutscene(MySequence, Settings);
+   ```
+3. Bind **On Cutscene Started / Finished** to hide and restore your UMG HUD. Wire your skip button to **Skip Cutscene**.
+
+What you get out of the box:
+- **Animated letterbox bars** that ease in and out in time with the camera blend.
+- **Relative to Player:** the whole cutscene plays around wherever the player is standing.
+  Author it around the world origin, with the player's start mark at `(0,0,0)` facing +X.
+  This is best for cutscenes in open space; scenes tied to level geometry should stay *World*.
+- **Seamless return:** as the blend back to gameplay starts, the player's control rotation turns to match
+  the cutscene's last camera, so the gameplay camera picks up facing the same way.
+- **Skip** jumps to the start of the blend-out, so even skipped cutscenes hand back smoothly.
+
+> Tip: use the animated bars *or* camera letterboxing for a cutscene, not both. Camera
+> letterboxing pops on at the first frame.
 
 ---
 

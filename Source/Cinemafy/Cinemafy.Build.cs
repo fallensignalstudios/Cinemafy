@@ -11,7 +11,16 @@ public class Cinemafy : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"CinematicCamera"
+			"CinematicCamera",
+			"LevelSequence",
+			"MovieScene",
+			"MovieSceneTracks"
+		});
+
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			"Slate",
+			"SlateCore"
 		});
 	}
 }

@@ -80,6 +80,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static ACinemafyLightRig* CreateLightRig(AActor* Subject, AActor* TargetCamera, ECinemafyLightingStyle Style);
 
+	/**
+	 * Makes the open Level Sequence hand off smoothly with gameplay: turns on camera cut blending,
+	 * eases the first cut in from the gameplay camera and the last cut back out to it, and (optionally)
+	 * eases each character's first/last animation section so poses blend with their Anim Blueprint.
+	 * Returns false if no sequence is open or it has no camera cuts.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static bool SetUpGameplayBlendForOpenSequence(float BlendInSeconds = 1.f, float BlendOutSeconds = 1.f, bool bIncludeAnimations = true);
+
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 AddGazeToSelection();

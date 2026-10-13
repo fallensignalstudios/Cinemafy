@@ -24,9 +24,11 @@
 - [ ] Per-shot rig snapshots driven by camera cuts in Sequencer
 
 ## 🎭 v0.4: Performance and flow
-- [ ] Gameplay ↔ cutscene camera and character blend
+- [x] Gameplay ↔ cutscene camera and character blend (Set Up Gameplay Blend + Cutscene subsystem)
+- [x] Animated letterbox bars in/out, synced to the blend
+- [x] Play relative to player / anchor actor; align gameplay camera to the final cutscene camera
+- [x] Skip that still blends out
 - [ ] Listening-reaction idles during dialogue
-- [ ] Animated letterbox bars in/out (UMG) for gameplay transitions
 - [ ] Per-shot grade overrides + "match to reference shot"
 
 ## 🚀 Stretch
