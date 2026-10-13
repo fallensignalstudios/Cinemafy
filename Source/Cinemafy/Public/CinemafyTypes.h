@@ -180,3 +180,28 @@ enum class ECinemafyEase : uint8
 	EaseInOut      UMETA(DisplayName = "Ease In/Out (dolly grip)"),
 	OperatorSettle UMETA(DisplayName = "Operator Settle (tiny overshoot)")
 };
+
+/** Classic portrait lighting setups. */
+UENUM(BlueprintType)
+enum class ECinemafyLightingStyle : uint8
+{
+	ThreePoint UMETA(DisplayName = "Three-Point (clean, heroic)"),
+	Loop       UMETA(DisplayName = "Loop (natural, flattering)"),
+	Rembrandt  UMETA(DisplayName = "Rembrandt (dramatic triangle)"),
+	Butterfly  UMETA(DisplayName = "Butterfly (glamour, front-top)"),
+	Split      UMETA(DisplayName = "Split (half in shadow)"),
+	Noir       UMETA(DisplayName = "Noir (hard, high contrast)"),
+	Silhouette UMETA(DisplayName = "Silhouette (rim-lit)")
+};
+
+/** Which side of the face the key light sits on, as seen from the camera. */
+UENUM(BlueprintType)
+enum class ECinemafyKeySide : uint8
+{
+	/** Key on the side of the face turned away from camera. The cinematic default: moodier, more shape. */
+	ShortSide  UMETA(DisplayName = "Short Side (auto, moody)"),
+	/** Key on the side of the face turned toward camera. Brighter, more open. */
+	BroadSide  UMETA(DisplayName = "Broad Side (auto, open)"),
+	CameraLeft UMETA(DisplayName = "Camera Left"),
+	CameraRight UMETA(DisplayName = "Camera Right")
+};

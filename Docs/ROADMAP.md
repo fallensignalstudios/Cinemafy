@@ -16,9 +16,12 @@
 - [ ] Line checker v2: walk the camera cut track and check each actual cut, with animated cameras
 
 ## 💡 v0.3: Lighting
-- [ ] Character-attached lighting rigs (three-point, Rembrandt, rim, silhouette)
-- [ ] Eye-light (catchlight) helper
-- [ ] Cinematic-only lights (cutscene lighting cheats that don't touch gameplay lighting)
+- [x] Camera-relative light rigs: Three-Point, Loop, Rembrandt, Butterfly, Split, Noir, Silhouette
+- [x] Auto short/broad-side keying; lux-at-subject intensities
+- [x] Eye light (catchlight) built into every rig
+- [x] Character-only lighting via lighting channels
+- [ ] Practical-light matching (key from the nearest lamp or window direction)
+- [ ] Per-shot rig snapshots driven by camera cuts in Sequencer
 
 ## 🎭 v0.4: Performance and flow
 - [ ] Gameplay ↔ cutscene camera and character blend

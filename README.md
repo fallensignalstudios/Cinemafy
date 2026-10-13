@@ -35,6 +35,7 @@ You'll get a **Tools → Cinemafy** menu in the level editor.
 | **Camera Feel** | Tripod drift, shoulder rig, handheld or run-and-gun. Organic layered noise plus operator breathing. Seeded and repeatable. `Intensity` is **keyable in Sequencer**. | `Cinemafy Camera Feel` component |
 | **Eye Focus** | Focuses on MetaHuman **eye bones** using true focal-plane distance. Rack focus between two characters by keying `RackAlpha`, or call `RackFocusTo` from gameplay. Pulls blend in diopters, like a real follow-focus. | `Cinemafy Eye Focus` component |
 | **Gaze** | Living eyes: micro-saccades, a lazy head that carries part of the turn, natural blinks, double blinks and blink-on-gaze-shift. | `Cinemafy Gaze` component |
+| **Light Rig** | A gaffer in a box: key, fill, rim and eye light that place themselves around a character **relative to the shot's camera**. Styles: Three-Point, Loop, Rembrandt, Butterfly, Split, Noir and Silhouette. Short- or broad-side keying is picked automatically from where the face is turned. Intensities are in **lux at the face**, so moving lights never changes exposure. **Character Only** mode uses lighting channel 1, so cutscene cheats never touch the environment. In game it can re-light for every camera cut. `Intensity` is keyable. | Tools → Cinemafy → Light Rig / `Cinemafy Light Rig` actor |
 | **Looks** | Clean Cinema, Warm Epic, Teal & Orange, Bleach Bypass, Noir, Cold Steel. Applied on top of your existing post settings, with a strength slider. | Tools → Cinemafy → Look & Letterbox |
 | **Letterbox** | 2.39 scope or 1.85 flat. Real in-game bars through the camera's aspect constraint. | Tools → Cinemafy → Look & Letterbox |
 | **Look Presets** | `CinemafyLookPreset` data asset: save a grade and letterbox as a reusable "film stock". | Content Browser → Miscellaneous → Data Asset |
@@ -54,6 +55,7 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
 6. Select both characters: *Add Gaze to Characters*. Set each one's `LookAtTarget` to the other.
 7. Before step 3, open your Level Sequence in Sequencer and move the playhead before each shot: every **Create Shot** drops a camera cut right there. 🎬
 8. Select both characters plus all the cameras, then run *Check 180-Degree Line* for peace of mind.
+9. Select **Kara** plus her close-up camera: *Light Rig → Rembrandt*. Do the same for **Voss** with *Loop*. 💡
 
 > **Tip:** keep `bFlipSide` the same for every shot in a scene. That's what keeps you on one side of the line.
 
@@ -91,6 +93,11 @@ To switch who a character is looking at mid-cutscene, add a Sequencer **Event Tr
   instead, disable the component.
 - For perfectly repeatable shake in renders, enable `bUseTimeOverride` on Camera Feel and key
   `TimeOverride` linearly across the shot.
+- **Light Rig** intensities assume a fairly neutral exposure. If faces come out too hot or dark,
+  adjust `KeyIlluminance` once per scene (or lock your camera's exposure), and every style
+  stays balanced relative to it.
+- **Character Only** lighting turns on lighting channel 1 for the subject's meshes (body, face
+  and groom). Their normal channel 0 world lighting is left as it was.
 - Bone names default to MetaHuman (`FACIAL_L_Eye`, `FACIAL_R_Eye`, `head`) and fall back
   gracefully for other characters.
 

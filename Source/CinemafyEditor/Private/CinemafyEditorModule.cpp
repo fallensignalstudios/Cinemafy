@@ -64,6 +64,12 @@ namespace
 		AddEnumEntries<ECinemafyCameraMove>(Section, [](ECinemafyCameraMove Move) { UCinemafyEditorLibrary::ApplyCameraMoveToSelection(Move); });
 	}
 
+	void FillLightMenu(UToolMenu* Menu)
+	{
+		FToolMenuSection& Section = Menu->AddSection("Light", LOCTEXT("LightSection", "Select a character (+ camera), or Light Rigs to restyle"));
+		AddEnumEntries<ECinemafyLightingStyle>(Section, [](ECinemafyLightingStyle Style) { UCinemafyEditorLibrary::ApplyLightingStyleToSelection(Style); });
+	}
+
 	void FillLookMenu(UToolMenu* Menu)
 	{
 		FToolMenuSection& Section = Menu->AddSection("Look", LOCTEXT("LookSection", "Look"));
@@ -112,6 +118,10 @@ void FCinemafyEditorModule::RegisterMenus()
 	Section.AddSubMenu("CinemafyMove", LOCTEXT("MoveMenu", "Camera Move"),
 		LOCTEXT("MoveMenuTip", "Give the selected cameras an eased operator move: push, truck, pedestal, crane or orbit."),
 		FNewToolMenuDelegate::CreateStatic(&FillMoveMenu));
+
+	Section.AddSubMenu("CinemafyLight", LOCTEXT("LightMenu", "Light Rig"),
+		LOCTEXT("LightMenuTip", "Light the selected character for the selected camera: key, fill, rim and eye light that follow them."),
+		FNewToolMenuDelegate::CreateStatic(&FillLightMenu));
 
 	Section.AddSubMenu("CinemafyLook", LOCTEXT("LookMenu", "Look & Letterbox"),
 		LOCTEXT("LookMenuTip", "Grade and frame the selected cameras."),

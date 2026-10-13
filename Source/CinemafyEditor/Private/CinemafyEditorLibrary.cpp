@@ -6,6 +6,7 @@
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
+#include "CinemafyLightRig.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -62,6 +63,21 @@ namespace
 	{
 		const FFrameNumber DisplayFrame(ULevelSequenceEditorBlueprintLibrary::GetCurrentLocalTime());
 		return ConvertFrameTime(FFrameTime(DisplayFrame), MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).FloorToFrame();
+	}
+
+	/** Finds or creates a possessable binding for an actor in a level sequence. */
+	FGuid BindActor(ULevelSequence* Sequence, AActor* Actor)
+	{
+		UWorld* World = Actor->GetWorld();
+		FGuid Binding = Sequence->FindBindingFromObject(Actor, World);
+		if (!Binding.IsValid())
+		{
+			Sequence->Modify();
+			Sequence->GetMovieScene()->Modify();
+			Binding = Sequence->GetMovieScene()->AddPossessable(Actor->GetActorLabel(), Actor->GetClass());
+			Sequence->BindPossessableObject(Binding, *Actor, World);
+		}
+		return Binding;
 	}
 
 	/** A move size that reads well on screen without being showy. */
@@ -264,17 +280,11 @@ bool UCinemafyEditorLibrary::AddCameraToOpenSequence(ACineCameraActor* CameraAct
 		return false;
 	}
 
-	UWorld* World = CameraActor->GetWorld();
 	const FScopedTransaction Transaction(LOCTEXT("AddToSequence", "Cinemafy: Add Camera to Sequence"));
 	Sequence->Modify();
 	MovieScene->Modify();
 
-	FGuid Binding = Sequence->FindBindingFromObject(CameraActor, World);
-	if (!Binding.IsValid())
-	{
-		Binding = MovieScene->AddPossessable(CameraActor->GetActorLabel(), CameraActor->GetClass());
-		Sequence->BindPossessableObject(Binding, *CameraActor, World);
-	}
+	const FGuid Binding = BindActor(Sequence, CameraActor);
 
 	if (bAddCameraCut)
 	{
@@ -387,6 +397,102 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 		"{0} camera(s) are across the line from the rest (now selected). Cutting between the two sides will flip screen direction:{1}\n\nMove them across, or bridge the jump with a shot on the line or a camera move that crosses it on screen."),
 		Offenders.Num(), FText::FromString(Names)));
 	return Offenders.Num();
+}
+
+ACinemafyLightRig* UCinemafyEditorLibrary::CreateLightRig(AActor* Subject, AActor* TargetCamera, ECinemafyLightingStyle Style)
+{
+	UWorld* World = (GEditor && Subject) ? Subject->GetWorld() : nullptr;
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("CreateLightRig", "Cinemafy: Create Light Rig"));
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transactional;
+	ACinemafyLightRig* Rig = World->SpawnActor<ACinemafyLightRig>(UCinemafyFramingLibrary::GetEyePoint(Subject), FRotator::ZeroRotator, Params);
+	if (!Rig)
+	{
+		return nullptr;
+	}
+
+	const FString StyleName = StaticEnum<ECinemafyLightingStyle>()->GetNameStringByValue(static_cast<int64>(Style));
+	Rig->SetActorLabel(FString::Printf(TEXT("LIGHT_%s_%s"), *StyleName, *Subject->GetActorLabel()));
+	Rig->Subject = Subject;
+	Rig->TargetCamera = TargetCamera;
+	Rig->Style = Style;
+
+	// The rig turns on a lighting channel on the character's meshes, so record them for undo.
+	TInlineComponentArray<UPrimitiveComponent*> Primitives(Subject);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		Primitive->Modify();
+	}
+	Rig->ApplyCharacterChannels();
+	Rig->SolveRig();
+
+	if (ULevelSequence* Sequence = ULevelSequenceEditorBlueprintLibrary::GetCurrentLevelSequence())
+	{
+		BindActor(Sequence, Rig);
+		ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	}
+
+	GEditor->SelectNone(false, true);
+	GEditor->SelectActor(Rig, true, true);
+	return Rig;
+}
+
+int32 UCinemafyEditorLibrary::ApplyLightingStyleToSelection(ECinemafyLightingStyle Style)
+{
+	const TArray<AActor*> Selected = GetSelectedActorsInOrder();
+
+	// Restyle any selected rigs.
+	int32 Restyled = 0;
+	{
+		const FScopedTransaction Transaction(LOCTEXT("RestyleLightRig", "Cinemafy: Lighting Style"));
+		for (AActor* Actor : Selected)
+		{
+			if (ACinemafyLightRig* Rig = Cast<ACinemafyLightRig>(Actor))
+			{
+				Rig->Modify();
+				Rig->Style = Style;
+				Rig->SolveRig();
+				++Restyled;
+			}
+		}
+	}
+	if (Restyled > 0)
+	{
+		return Restyled;
+	}
+
+	// Otherwise light the selected character(s), designed for the selected camera if there is one.
+	AActor* Camera = nullptr;
+	TArray<AActor*> Characters;
+	for (AActor* Actor : Selected)
+	{
+		if (UCinemafyCameraLibrary::FindCineCamera(Actor))
+		{
+			Camera = Camera ? Camera : Actor;
+		}
+		else if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			Characters.Add(Actor);
+		}
+	}
+
+	int32 Created = 0;
+	for (AActor* Character : Characters)
+	{
+		Created += CreateLightRig(Character, Camera, Style) ? 1 : 0;
+	}
+
+	if (Created == 0)
+	{
+		WarnNothingSelected(TEXT("character or Light Rig"));
+	}
+	return Created;
 }
 
 int32 UCinemafyEditorLibrary::AddGazeToSelection()

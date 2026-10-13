@@ -6,6 +6,7 @@
 #include "CinemafyEditorLibrary.generated.h"
 
 class ACineCameraActor;
+class ACinemafyLightRig;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -66,6 +67,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 CheckLineOfActionForSelection();
+
+	/**
+	 * Light a shot. Select a character (and optionally the camera the shot is for), then pick a style.
+	 * If Light Rigs are selected instead, they're switched to the new style.
+	 * Returns the number of rigs created or restyled.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 ApplyLightingStyleToSelection(ECinemafyLightingStyle Style);
+
+	/** Spawns a light rig on a character, designed for a camera (optional). Added to the open sequence so its Intensity can be keyed. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static ACinemafyLightRig* CreateLightRig(AActor* Subject, AActor* TargetCamera, ECinemafyLightingStyle Style);
 
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
