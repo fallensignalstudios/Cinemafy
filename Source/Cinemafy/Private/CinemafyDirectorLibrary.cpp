@@ -684,7 +684,15 @@ TArray<AActor*> UCinemafyDirectorLibrary::GetCast(const TArray<FCinemafyLine>& L
 TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FCinemafyLine>& Lines, const FCinemafyDirectorStyle& Style, int32 Seed)
 {
 	FRandomStream Random(Seed);
-	const TArray<AActor*> SceneCast = GetCast(Lines);
+
+	// Each scene (cross-cut scenes are separate) has its own cast.
+	TMap<int32, TArray<AActor*>> CastByScene;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		TArray<AActor*>& SceneCast = CastByScene.FindOrAdd(Line.SceneId);
+		if (Line.Speaker) { SceneCast.AddUnique(Line.Speaker); }
+		if (Line.Listener) { SceneCast.AddUnique(Line.Listener); }
+	}
 	TArray<FCinemafyPlannedShot> Plan;
 	float Time = 0.f;
 
@@ -723,7 +731,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 		const bool bEstablish = bOpening || (bBreak && Transition != ECinemafyTransition::MatchCut);
 
 		TArray<FCinemafyPlannedShot> LineShots = PlanLine(PlannedLine, Index, Style, Random,
-			(Previous && !bBreak) ? &PreviousCopy : nullptr, bEstablish, Time, SceneCast);
+			(Previous && !bBreak) ? &PreviousCopy : nullptr, bEstablish, Time, CastByScene.FindRef(Line.SceneId));
 
 		if (LineShots.Num() > 0 && (bOpening || bBreak || Line.bOverrideTransition))
 		{

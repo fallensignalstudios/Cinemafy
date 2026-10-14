@@ -118,7 +118,50 @@ TArray<FCinemafyLine> ACinemafySceneDirector::GetEffectiveLines() const
 
 TArray<FCinemafyLine> ACinemafySceneDirector::GetDirectedLines() const
 {
-	return GetEffectiveLines();
+	TArray<FCinemafyLine> Mine = GetEffectiveLines();
+	if (!ParallelDirector || ParallelDirector == this)
+	{
+		return Mine;
+	}
+
+	TArray<FCinemafyLine> Theirs = ParallelDirector->GetEffectiveLines();
+	for (FCinemafyLine& Line : Theirs)
+	{
+		Line.SceneId = 1;
+	}
+
+	// Interleave in blocks; the blocks shrink as we go, so the cutting accelerates into the climax.
+	const int32 Block = FMath::Max(1, GetStyle().CrossCutLinesPerBlock);
+	const int32 Total = Mine.Num() + Theirs.Num();
+	TArray<FCinemafyLine> Merged;
+	int32 MineIndex = 0;
+	int32 TheirIndex = 0;
+	bool bMyTurn = true;
+	while (MineIndex < Mine.Num() || TheirIndex < Theirs.Num())
+	{
+		if ((bMyTurn && MineIndex >= Mine.Num()) || (!bMyTurn && TheirIndex >= Theirs.Num()))
+		{
+			bMyTurn = !bMyTurn;
+		}
+
+		const float Progress = static_cast<float>(Merged.Num()) / FMath::Max(Total, 1);
+		const int32 BlockSize = bAccelerateCrossCutting ? FMath::Max(1, FMath::RoundToInt(Block * (1.f - 0.7f * Progress))) : Block;
+
+		TArray<FCinemafyLine>& Source = bMyTurn ? Mine : Theirs;
+		int32& SourceIndex = bMyTurn ? MineIndex : TheirIndex;
+		for (int32 Taken = 0; Taken < BlockSize && SourceIndex < Source.Num(); ++Taken)
+		{
+			FCinemafyLine Line = Source[SourceIndex++];
+			if (Taken == 0 && Merged.Num() > 0)
+			{
+				// Every switch between the scenes is a scene break.
+				Line.bSceneBreak = true;
+			}
+			Merged.Add(Line);
+		}
+		bMyTurn = !bMyTurn;
+	}
+	return Merged;
 }
 
 TArray<FCinemafyPlannedShot> ACinemafySceneDirector::PlanDirectedLines(const TArray<FCinemafyLine>& InLines) const

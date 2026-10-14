@@ -717,6 +717,10 @@ struct FCinemafyLine
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
 	TArray<float> ImpactTimes;
 
+	/** Which scene this line belongs to when cross-cutting (set automatically). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line", AdvancedDisplay)
+	int32 SceneId = 0;
+
 	/** The characters are walking during this line (auto-detected from the sequence when directing). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
 	bool bMoving = false;

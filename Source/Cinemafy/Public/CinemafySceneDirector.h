@@ -53,6 +53,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Script", meta = (TitleProperty = "Note"))
 	TArray<FCinemafyLine> Lines;
 
+	/**
+	 * Cross-cut with another director's scene: blocks of lines alternate between the two, getting
+	 * shorter as the scenes build. Every switch is a scene break (the style's transition applies).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Cross-Cutting")
+	TObjectPtr<ACinemafySceneDirector> ParallelDirector = nullptr;
+
+	/** Shrink the blocks toward the end so the cutting accelerates into the climax. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Cross-Cutting")
+	bool bAccelerateCrossCutting = true;
+
 	/** Same seed = same edit. Re-roll picks a new one. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
 	int32 Seed = 1;

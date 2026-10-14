@@ -210,4 +210,74 @@ bool FCinemafyGroupTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyTransitionTest, "Cinemafy.Director.TransitionsAndHolds", CinemafyTests::Flags)
+bool FCinemafyTransitionTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(8);
+	Lines[4].bSceneBreak = true;
+
+	const FCinemafyDirectorStyle SpaceOpera = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::SpaceOpera);
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, SpaceOpera, 5);
+
+	TestEqual(TEXT("Space Opera opens with a wipe"), static_cast<int32>(Plan[0].TransitionIn), static_cast<int32>(ECinemafyTransition::Wipe));
+	const FCinemafyPlannedShot* BreakShot = Plan.FindByPredicate([](const FCinemafyPlannedShot& Shot) { return Shot.LineIndex == 4 && Shot.bLineStart; });
+	TestTrue(TEXT("The scene break gets a shot"), BreakShot != nullptr);
+	if (BreakShot)
+	{
+		TestEqual(TEXT("...and it wipes in"), static_cast<int32>(BreakShot->TransitionIn), static_cast<int32>(ECinemafyTransition::Wipe));
+	}
+	TestEqual(TEXT("Space Opera closes with a wipe"), static_cast<int32>(Plan.Last().TransitionOut), static_cast<int32>(ECinemafyTransition::Wipe));
+	for (const FCinemafyPlannedShot& Shot : Plan)
+	{
+		TestNotEqual(TEXT("Wipes always have a real direction"), static_cast<int32>(Shot.WipeDirection), static_cast<int32>(ECinemafyWipeDirection::Alternate));
+		for (const FCinemafyRackEvent& Rack : Shot.RackEvents)
+		{
+			TestTrue(TEXT("Rack focus only inside the shot"), Rack.Time > 0.f && Rack.Time < Shot.Duration);
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyActionTest, "Cinemafy.Director.ActionCutsOnImpacts", CinemafyTests::Flags)
+bool FCinemafyActionTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(1);
+	Lines[0].bAction = true;
+	Lines[0].Duration = 6.f;
+	Lines[0].PauseAfter = 0.f;
+	Lines[0].ImpactTimes = { 1.5f, 3.0f, 4.5f };
+
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines,
+		UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::KineticAction), 9);
+	TestEqual(TEXT("One shot per stretch between impacts"), Plan.Num(), 4);
+	for (int32 Index = 1; Index < Plan.Num(); ++Index)
+	{
+		const float Cut = Plan[Index].StartTime;
+		TestTrue(TEXT("Cuts land just before an impact"), Lines[0].ImpactTimes.ContainsByPredicate([Cut](float Impact) { return FMath::IsNearlyEqual(Impact - 0.08f, Cut, 0.01f); }));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyWalkTest, "Cinemafy.Director.WalkAndTalkTracks", CinemafyTests::Flags)
+bool FCinemafyWalkTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(3);
+	for (FCinemafyLine& Line : Lines)
+	{
+		Line.bMoving = true;
+	}
+	FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood);
+	Style.bEstablishingShot = false;
+	for (const FCinemafyPlannedShot& Shot : UCinemafyDirectorLibrary::PlanScene(Lines, Style, 2))
+	{
+		TestTrue(TEXT("Walking lines get tracking coverage"),
+			Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow);
+		TestFalse(TEXT("No push-ins while walking"), Shot.bMove);
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

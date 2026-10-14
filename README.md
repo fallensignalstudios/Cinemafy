@@ -153,6 +153,11 @@ so they show everywhere, including renders. Wipes and dissolves render live in P
 outgoing camera keeps rendering during the wipe). Space Opera Classic wipes, and alternates directions
 like the serials did.
 
+**Cross-cutting ✂️:** set a director's **Parallel Director** to another director and Direct the first.
+Blocks of lines alternate between the two scenes (`CrossCutLinesPerBlock`), shrinking as the scenes
+build so the cutting accelerates into the climax. Every switch is a scene break, so the style's
+transition applies (Mind-Bender match-cuts, Space Opera wipes). Each scene keeps its own cast.
+
 **Subtitles 💬:** fill in each line's **Text** (and optionally a **Speaker Name**). Subtitles show
 live during `StartConversation` / `DirectLine` (pass the text as `Subtitle`), and Direct keys the
 director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the game. Anything else can
