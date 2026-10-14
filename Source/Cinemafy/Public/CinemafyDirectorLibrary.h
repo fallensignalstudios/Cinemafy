@@ -51,6 +51,15 @@ public:
 	/** Moves the cut at the start of shot Index by DeltaSeconds (keeping both shots >= MinShotLength) and locks both shots. */
 	static bool NudgeCut(TArray<FCinemafyPlannedShot>& Plan, int32 Index, float DeltaSeconds, float MinShotLength = 0.3f);
 
+	/**
+	 * Reads the scene before cutting it: decides each line's Moment (reveal, silent beat, new exchange,
+	 * action, walk & talk, dialogue), and flags action lines whose audio is all hits and no talk.
+	 */
+	static void ReadMoments(TArray<FCinemafyLine>& Lines);
+
+	/** A plain-language account of the tools a plan uses ("2 wipes, 3 push-ins on emphasis..."). */
+	static FString SummarizeDecisions(const TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyLine>& Lines);
+
 	/** Everyone who speaks or is spoken to in a script. */
 	static TArray<AActor*> GetCast(const TArray<FCinemafyLine>& Lines);
 

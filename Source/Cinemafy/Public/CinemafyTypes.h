@@ -643,6 +643,21 @@ struct FCinemafyDirectorStyle
 	int32 CrossCutLinesPerBlock = 3;
 };
 
+/** What kind of moment a line is: the director reads this first, then picks its tools. */
+UENUM(BlueprintType)
+enum class ECinemafyMoment : uint8
+{
+	Dialogue    UMETA(DisplayName = "Dialogue"),
+	/** A sharp rise in drama (or a peak line): tighten, push in on the stressed word, hold the reaction. */
+	Reveal      UMETA(DisplayName = "Reveal"),
+	/** A long silence after the line: one held reaction, no busy cutting. */
+	SilentBeat  UMETA(DisplayName = "Silent Beat"),
+	/** A different pair starts talking: re-establish who's where. */
+	NewExchange UMETA(DisplayName = "New Exchange"),
+	Action      UMETA(DisplayName = "Action"),
+	WalkAndTalk UMETA(DisplayName = "Walk & Talk")
+};
+
 /** What Cinemafy heard in a line's dialogue audio. */
 USTRUCT(BlueprintType)
 struct FCinemafyAudioAnalysis
@@ -716,6 +731,10 @@ struct FCinemafyLine
 	/** Moments of impact (seconds from the line's start). Empty = taken from the audio's loudest hits. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
 	TArray<float> ImpactTimes;
+
+	/** How the director read this line (set automatically when directing). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
+	ECinemafyMoment Moment = ECinemafyMoment::Dialogue;
 
 	/** Which scene this line belongs to when cross-cutting (set automatically). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line", AdvancedDisplay)

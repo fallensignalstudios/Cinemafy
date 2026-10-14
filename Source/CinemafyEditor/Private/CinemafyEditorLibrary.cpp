@@ -1349,6 +1349,9 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	Director->Modify();
 	Director->LastPlan = NewPlan;
 	Director->LastDirectedLines = DirectedLines;
+	UCinemafyDirectorLibrary::ReadMoments(Director->LastDirectedLines);
+	Director->LastDecisionSummary = UCinemafyDirectorLibrary::SummarizeDecisions(NewPlan, Director->LastDirectedLines);
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Director->LastDecisionSummary);
 	return BakeDirectorPlan(Director, false);
 }
 

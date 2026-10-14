@@ -35,4 +35,4 @@ test or revert one at a time. Status is updated as work lands.
 | 21 | **Timeline editing:** lock shots, swap for an alternate, nudge cuts, save and compare takes, all from the Shot Browser | ✅ |
 | 22 | **Performance import:** auto-assign audio and anim takes from a folder, plus script import from CSV | ✅ |
 | 23 | **Subtitles v2:** reading-speed timing and smart splitting of long lines, working in any language | ✅ |
-| 24 | **The brain:** a decision layer that picks the right tool for each moment, with reasons and tests | ⏳ |
+| 24 | **The brain:** a decision layer that picks the right tool for each moment, with reasons and tests | ✅ |

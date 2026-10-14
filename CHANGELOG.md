@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0: "The Director grows up"
+- **Director style assets** and six archetype presets. **Space Opera Classic** is modeled on classic-trilogy
+  craft: locked-off classical coverage, two-shots held through exchanges, wipes, brisk action cutting,
+  almost no slow-mo, anamorphic.
+- **Transitions:** live wipes (the outgoing shot keeps playing), dissolves, fades through black (native Fade
+  track), match cuts, scene breaks.
+- **Hold-through with rack focus**, **walk-and-talk** tracking on a follow rig, and **action coverage** (cut on
+  impact, crash zooms, speed ramps).
+- **Cross-cutting** between two directors, and **music-aware cutting** (beat detection plus snapping).
+- **Timeline editing** in the Shot Browser (lock, alternate, nudge) and **takes**.
+- **Performance import:** CSV scripts and take auto-assignment.
+- **Subtitles v2:** reading-speed timing, smart chunking, localization-aware.
+- **The brain:** moment reading (reveal, silent beat, new exchange, action, walk & talk) drives tool choice,
+  with a plain-language decision report.
+- Plan/bake split. More automation tests (transitions, action, walking, beats, locks, subtitles, moments).
+
 ## 0.6.0: overnight build
 - **Smart camera placement:** avoids walls and occluders while keeping the 180° side.
 - **Cut on the breath:** in-line cuts snap to pauses, and push-ins land on stressed words.

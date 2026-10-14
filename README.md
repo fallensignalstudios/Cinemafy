@@ -6,7 +6,7 @@ Cinemafy packages the rules real DPs, focus pullers and colorists follow into on
 cinema lens kits, coverage shots that frame themselves, human camera feel, eye-tracked focus,
 living MetaHuman eyes and grading looks. It was built for *Sovereign Call*'s in-engine cutscenes.
 
-> Status: **v0.6 (beta)**. New here? Start with **[Getting Started](Docs/GETTING_STARTED.md)** (15 minutes to a
+> Status: **v0.7 (beta)**. New here? Start with **[Getting Started](Docs/GETTING_STARTED.md)** (15 minutes to a
 > directed scene). Also see the [changelog](CHANGELOG.md), [architecture](Docs/ARCHITECTURE.md),
 > [roadmap](Docs/ROADMAP.md) and [build notes](Docs/BUILD_NOTES.md).
 
@@ -82,6 +82,23 @@ Everything is also exposed to **Blueprint**, **Editor Utility Widgets** and **Py
    click **Direct** in its Details panel. Cameras and cuts appear, and the Shot Browser updates.
 4. Not feeling it? Click **Re-roll** for a new take, or switch styles and Direct again.
    Moved a camera by hand? The director reuses its cameras, so your tweak survives.
+
+**How it reads the scene first 🧠:** before choosing a single shot, the director decides what *kind* of
+moment each line is, and that picks its tools:
+
+| Moment | Detected from | Tools it reaches for |
+|---|---|---|
+| Reveal | a jump in intensity of 0.3 or more, or a peak line (0.85+) | a notch tighter, a push-in landing on the stressed word, a held reaction in the pause |
+| Silent Beat | 1.5 s or more of pause after the line | one held reaction shot, no busy cutting |
+| New Exchange | someone new starts talking | re-establish with a two-shot |
+| Action | the Action flag, or audio that's all hits and no talk | cut on impact, crash zoom, speed ramp |
+| Walk & Talk | movement in the sequence (or velocity, live) | lead / follow tracking on a follow rig |
+| Dialogue | everything else | coverage, shot-reverse-shot, hold-through with rack focus |
+
+After each Direct, **Last Decision Summary** (and the Shot Browser's summary tooltip) explains it in plain
+words, e.g. *"Read the scene as: 4 dialogue, 1 reveal, 1 silent beat. Cut it with: 11 shots over 31.5s,
+3 reactions, 2 transitions, 1 held two-shot with rack focus, 2 camera moves."* Every shot's reason is
+tagged with its moment.
 
 How it decides, per shot:
 - **Size follows drama:** wide when calm, tighter as intensity rises, with an extreme close-up only at the peak.

@@ -23,7 +23,8 @@
 
 ## Director pipeline
 ```
-Lines (+ audio analysis) ──► GetEffectiveLines ──► PlanScene ──► FCinemafyPlannedShot[]
+Lines (+ audio analysis) ──► GetEffectiveLines ──► (cross-cut merge) ──► ReadMoments ──► PlanScene
+                                                   ──► holds / transitions / beat snap / locks ──► FCinemafyPlannedShot[]
                                                               │
                      ┌────────────────────────────────────────┼─────────────────────────┐
                      ▼                                        ▼                         ▼

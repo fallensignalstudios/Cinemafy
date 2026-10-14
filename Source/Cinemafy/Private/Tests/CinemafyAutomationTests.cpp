@@ -362,4 +362,59 @@ bool FCinemafySubtitleTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyBrainTest, "Cinemafy.Director.BrainReadsMoments", CinemafyTests::Flags)
+bool FCinemafyBrainTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	AActor* Third = Scene.World->SpawnActor<AActor>();
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(6);
+	for (FCinemafyLine& Line : Lines)
+	{
+		Line.Intensity = 0.3f;
+	}
+	Lines[2].Intensity = 0.9f;          // reveal
+	Lines[3].PauseAfter = 2.f;          // silent beat
+	Lines[4].Speaker = Third;           // someone new joins
+	Lines[4].Listener = Scene.Kara;
+	Lines[5].bMoving = true;            // they walk
+
+	UCinemafyDirectorLibrary::ReadMoments(Lines);
+	TestEqual(TEXT("Big intensity jump reads as a reveal"), static_cast<int32>(Lines[2].Moment), static_cast<int32>(ECinemafyMoment::Reveal));
+	TestEqual(TEXT("Long pause reads as a silent beat"), static_cast<int32>(Lines[3].Moment), static_cast<int32>(ECinemafyMoment::SilentBeat));
+	TestEqual(TEXT("A new speaker reads as a new exchange"), static_cast<int32>(Lines[4].Moment), static_cast<int32>(ECinemafyMoment::NewExchange));
+	TestEqual(TEXT("Walking reads as walk & talk"), static_cast<int32>(Lines[5].Moment), static_cast<int32>(ECinemafyMoment::WalkAndTalk));
+
+	// Silent beats are held: the pause is covered by exactly one reaction shot.
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines,
+		UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood), 21);
+	float LineStart = 0.f;
+	for (int32 Index = 0; Index < 3; ++Index)
+	{
+		LineStart += Lines[Index].Duration + Lines[Index].PauseAfter;
+	}
+	const float PauseStart = LineStart + Lines[3].Duration;
+	const float PauseEnd = PauseStart + Lines[3].PauseAfter;
+	int32 ShotsInPause = 0;
+	for (const FCinemafyPlannedShot& Shot : Plan)
+	{
+		if (Shot.StartTime > PauseStart + 0.01f && Shot.StartTime < PauseEnd - 0.01f)
+		{
+			++ShotsInPause;
+		}
+	}
+	TestTrue(TEXT("No busy cutting inside a silent beat"), ShotsInPause <= 1);
+
+	// Audio that's all hits and no talk is an action beat.
+	TArray<FCinemafyLine> Fight = Scene.MakeConversation(1);
+	Fight[0].Analysis.bValid = true;
+	Fight[0].Analysis.ActiveRatio = 0.2f;
+	Fight[0].Analysis.LoudnessDb = -30.f;
+	Fight[0].Analysis.PeakDb = -8.f;
+	UCinemafyDirectorLibrary::ReadMoments(Fight);
+	TestTrue(TEXT("Hits without words become action"), Fight[0].bAction && Fight[0].Moment == ECinemafyMoment::Action);
+
+	TestFalse(TEXT("The decision report says something"), UCinemafyDirectorLibrary::SummarizeDecisions(Plan, Lines).IsEmpty());
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

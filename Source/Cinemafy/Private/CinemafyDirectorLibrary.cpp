@@ -434,8 +434,16 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		return Shots;
 	}
 
-	// Action plays hot regardless of the line's dialogue intensity.
-	const float Intensity = Line.bAction ? FMath::Max(FMath::Clamp(Line.Intensity, 0.f, 1.f), 0.8f) : FMath::Clamp(Line.Intensity, 0.f, 1.f);
+	// Action plays hot regardless of the line's dialogue intensity; a reveal plays a notch tighter.
+	float Intensity = FMath::Clamp(Line.Intensity, 0.f, 1.f);
+	if (Line.bAction)
+	{
+		Intensity = FMath::Max(Intensity, 0.8f);
+	}
+	else if (Line.Moment == ECinemafyMoment::Reveal)
+	{
+		Intensity = FMath::Min(Intensity + 0.15f, 1.f);
+	}
 	const FVector2D LengthRange = FMath::Lerp(Style.CalmShotLength, Style.IntenseShotLength, Intensity);
 	float Remaining = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 
@@ -506,8 +514,16 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 
 		// Later in a line (and especially in the pause after it), cut to the listener's reaction.
 		const bool bInPause = (Time - StartTime) >= Line.Duration;
+		// A silent beat is one held reaction: the whole pause in a single shot.
+		const bool bBeat = bInPause && Line.Listener && (Line.Moment == ECinemafyMoment::SilentBeat || Line.Moment == ECinemafyMoment::Reveal);
+		if (bBeat && Segment > 0)
+		{
+			Length = Remaining;
+			Shot.Duration = Length;
+		}
+
 		FString Why;
-		if (Line.Listener && Segment > 0 && Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f))
+		if (Line.Listener && Segment > 0 && (bBeat || Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f)))
 		{
 			Shot.Subject = Line.Listener;
 			Shot.Counterpart = Line.Speaker;
@@ -546,6 +562,12 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		{
 			Shot.ShotType = bGroupScene ? ECinemafyShotType::GroupShot : ECinemafyShotType::WideTwoShot;
 			Why = TEXT("establishing the space");
+		}
+		else if (Segment == 0 && Line.Moment == ECinemafyMoment::NewExchange && Line.Listener && !bGroupScene
+			&& Intensity < 0.7f && Random.FRand() < 0.6f && !(bHasLast && Last.ShotType == ECinemafyShotType::MediumTwoShot))
+		{
+			Shot.ShotType = ECinemafyShotType::MediumTwoShot;
+			Why = TEXT("new exchange, re-establishing");
 		}
 		else if (bNewExchange && Random.FRand() < 0.35f * (1.f - Intensity) && Last.ShotType != ECinemafyShotType::GroupShot)
 		{
@@ -594,6 +616,11 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			}
 
 			float MoveChance = Style.MoveChance * (bEstablishing ? 1.5f : FMath::Lerp(0.6f, 1.4f, Intensity));
+			if (Line.Moment == ECinemafyMoment::Reveal && Segment == 0)
+			{
+				// Reveals are where a director spends their camera moves.
+				MoveChance = FMath::Max(MoveChance * 2.f, 0.5f);
+			}
 			if (Emphasis >= 0.f && !Shot.bIsReaction)
 			{
 				MoveChance *= 1.5f;
@@ -658,8 +685,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		const float FeelRoll = FMath::Clamp((Intensity - 0.4f) / 0.3f, 0.f, 1.f);
 		Shot.Feel = Random.FRand() < FeelRoll ? Style.IntenseFeel : Style.CalmFeel;
 
-		Shot.Reason = FString::Printf(TEXT("Line %d: %s on %s (%s, intensity %.1f)"),
-			LineIndex + 1, *ShotName(Shot.ShotType), *ActorName(Shot.Subject), *Why, Intensity);
+		const FString MomentTag = Line.Moment == ECinemafyMoment::Dialogue ? FString()
+			: FString::Printf(TEXT("[%s] "), *StaticEnum<ECinemafyMoment>()->GetDisplayNameTextByValue(static_cast<int64>(Line.Moment)).ToString());
+		Shot.Reason = FString::Printf(TEXT("%sLine %d: %s on %s (%s, intensity %.1f)"),
+			*MomentTag, LineIndex + 1, *ShotName(Shot.ShotType), *ActorName(Shot.Subject), *Why, Intensity);
 
 		Shots.Add(Shot);
 		Last = Shot;
@@ -681,8 +710,12 @@ TArray<AActor*> UCinemafyDirectorLibrary::GetCast(const TArray<FCinemafyLine>& L
 	return SceneCast;
 }
 
-TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FCinemafyLine>& Lines, const FCinemafyDirectorStyle& Style, int32 Seed)
+TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FCinemafyLine>& InLines, const FCinemafyDirectorStyle& Style, int32 Seed)
 {
+	// Read the scene first: every tool choice below starts from what kind of moment each line is.
+	TArray<FCinemafyLine> Lines = InLines;
+	ReadMoments(Lines);
+
 	FRandomStream Random(Seed);
 
 	// Each scene (cross-cut scenes are separate) has its own cast.
@@ -1025,4 +1058,92 @@ bool UCinemafyDirectorLibrary::NudgeCut(TArray<FCinemafyPlannedShot>& Plan, int3
 		Shot->bLocked = true;
 	}
 	return true;
+}
+
+void UCinemafyDirectorLibrary::ReadMoments(TArray<FCinemafyLine>& Lines)
+{
+	for (int32 Index = 0; Index < Lines.Num(); ++Index)
+	{
+		FCinemafyLine& Line = Lines[Index];
+		const FCinemafyLine* Previous = Lines.IsValidIndex(Index - 1) ? &Lines[Index - 1] : nullptr;
+
+		// Audio that's all hits and no talk (and no written dialogue) is an action beat.
+		const FCinemafyAudioAnalysis& A = Line.Analysis;
+		if (!Line.bAction && A.bValid && Line.Text.IsEmpty() && A.ActiveRatio < 0.35f && (A.PeakDb - A.LoudnessDb) > 15.f)
+		{
+			Line.bAction = true;
+		}
+
+		if (Line.bAction)
+		{
+			Line.Moment = ECinemafyMoment::Action;
+		}
+		else if (Line.bMoving)
+		{
+			Line.Moment = ECinemafyMoment::WalkAndTalk;
+		}
+		else if (Line.Intensity >= 0.85f || (Previous && Line.Intensity - Previous->Intensity >= 0.3f))
+		{
+			Line.Moment = ECinemafyMoment::Reveal;
+		}
+		else if (Line.PauseAfter >= 1.5f)
+		{
+			Line.Moment = ECinemafyMoment::SilentBeat;
+		}
+		else if (Previous && !Line.bSceneBreak && Line.Speaker != Previous->Speaker && Line.Speaker != Previous->Listener)
+		{
+			// Someone new joins the conversation.
+			Line.Moment = ECinemafyMoment::NewExchange;
+		}
+		else
+		{
+			Line.Moment = ECinemafyMoment::Dialogue;
+		}
+	}
+}
+
+FString UCinemafyDirectorLibrary::SummarizeDecisions(const TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyLine>& Lines)
+{
+	TMap<ECinemafyMoment, int32> Moments;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		Moments.FindOrAdd(Line.Moment)++;
+	}
+
+	int32 Transitions = 0, Holds = 0, PushIns = 0, CrashZooms = 0, SlowMo = 0, Tracking = 0, Reactions = 0, OnBeat = 0, Locked = 0;
+	float Total = 0.f;
+	for (const FCinemafyPlannedShot& Shot : Plan)
+	{
+		Transitions += (Shot.TransitionIn != ECinemafyTransition::Cut ? 1 : 0) + (Shot.TransitionOut != ECinemafyTransition::Cut ? 1 : 0);
+		Holds += Shot.RackEvents.Num() > 0 ? 1 : 0;
+		PushIns += (Shot.bMove && Shot.Move != ECinemafyCameraMove::SnapZoomIn) ? 1 : 0;
+		CrashZooms += (Shot.bMove && Shot.Move == ECinemafyCameraMove::SnapZoomIn) ? 1 : 0;
+		SlowMo += Shot.bSlowMo ? 1 : 0;
+		Tracking += (Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow) ? 1 : 0;
+		Reactions += Shot.bIsReaction ? 1 : 0;
+		OnBeat += Shot.Reason.Contains(TEXT("cut on the beat")) ? 1 : 0;
+		Locked += Shot.bLocked ? 1 : 0;
+		Total += Shot.Duration;
+	}
+
+	FString Moment;
+	for (const TPair<ECinemafyMoment, int32>& Pair : Moments)
+	{
+		Moment += FString::Printf(TEXT("%s%d %s"), Moment.IsEmpty() ? TEXT("") : TEXT(", "), Pair.Value,
+			*StaticEnum<ECinemafyMoment>()->GetDisplayNameTextByValue(static_cast<int64>(Pair.Key)).ToString().ToLower());
+	}
+
+	FString Tools = FString::Printf(TEXT("%d shots over %.1fs (avg %.1fs), %d reactions"),
+		Plan.Num(), Total, Plan.Num() > 0 ? Total / Plan.Num() : 0.f, Reactions);
+	auto Add = [&Tools](int32 Count, const TCHAR* What) { if (Count > 0) { Tools += FString::Printf(TEXT(", %d %s"), Count, What); } };
+	Add(Transitions, TEXT("transitions"));
+	Add(Holds, TEXT("held two-shots with rack focus"));
+	Add(PushIns, TEXT("camera moves"));
+	Add(CrashZooms, TEXT("crash zooms"));
+	Add(SlowMo, TEXT("speed ramps"));
+	Add(Tracking, TEXT("tracking shots"));
+	Add(OnBeat, TEXT("cuts on the beat"));
+	Add(Locked, TEXT("locked shots"));
+
+	return FString::Printf(TEXT("Read the scene as: %s.\nCut it with: %s."), *Moment, *Tools);
 }

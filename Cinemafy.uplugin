@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 6,
-	"VersionName": "0.6.0",
+	"Version": 7,
+	"VersionName": "0.7.0",
 	"FriendlyName": "Cinemafy",
 	"Description": "Easy-to-use tools for premium, film-grade real-time cutscenes: lens kits, shot templates, procedural camera feel, eye-tracked focus, MetaHuman gaze and cinematic looks.",
 	"Category": "Cinematics",

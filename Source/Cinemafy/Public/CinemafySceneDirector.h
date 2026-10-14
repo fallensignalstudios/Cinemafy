@@ -150,6 +150,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", AdvancedDisplay)
 	TArray<TObjectPtr<ACineCameraActor>> LastPlanCameras;
 
+	/** How the director read the scene and which tools it used, in plain words. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", meta = (MultiLine = true))
+	FString LastDecisionSummary;
+
 	/** Saved versions of this scene's cut. Save and load them from the Shot Browser. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Takes")
 	TArray<FCinemafyTake> Takes;
@@ -205,6 +209,9 @@ public:
 	/** Everything that will be cut, in order (this director's lines, interleaved with a parallel scene if cross-cutting). */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
 	TArray<FCinemafyLine> GetDirectedLines() const;
+
+	/** The directed lines before the director reads them (own lines, interleaved with a parallel scene). */
+	TArray<FCinemafyLine> GatherDirectedLines() const;
 
 	/** Plans the given lines with this director's style and seed. */
 	TArray<FCinemafyPlannedShot> PlanDirectedLines(const TArray<FCinemafyLine>& InLines) const;

@@ -132,6 +132,13 @@ TArray<FCinemafyLine> ACinemafySceneDirector::GetEffectiveLines() const
 
 TArray<FCinemafyLine> ACinemafySceneDirector::GetDirectedLines() const
 {
+	TArray<FCinemafyLine> Directed = GatherDirectedLines();
+	UCinemafyDirectorLibrary::ReadMoments(Directed);
+	return Directed;
+}
+
+TArray<FCinemafyLine> ACinemafySceneDirector::GatherDirectedLines() const
+{
 	TArray<FCinemafyLine> Mine = GetEffectiveLines();
 	if (!ParallelDirector || ParallelDirector == this)
 	{

@@ -107,6 +107,13 @@ void SCinemafyShotBrowser::Construct(const FArguments& InArgs)
 			[
 				SNew(STextBlock)
 				.Text(this, &SCinemafyShotBrowser::GetSummaryText)
+				.ToolTipText_Lambda([this]()
+				{
+					const ACinemafySceneDirector* Director = GetActiveDirector();
+					return Director && !Director->LastDecisionSummary.IsEmpty()
+						? FText::FromString(Director->LastDecisionSummary)
+						: LOCTEXT("NoDecisions", "Direct a scene to see how the director read it.");
+				})
 				.ColorAndOpacity(FSlateColor(DimTextColor))
 			]
 			// Director controls.
