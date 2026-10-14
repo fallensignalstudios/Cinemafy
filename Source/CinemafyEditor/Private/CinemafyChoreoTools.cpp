@@ -532,10 +532,19 @@ namespace CinemafyChoreoTake
 					continue;
 				}
 
+				// Each take is its own package. (Takes aren't saved automatically, so an earlier take this session may only
+				// exist in memory, where CreateUniqueAssetName doesn't look; step past loaded names too. A clash makes the
+				// recorder show a modal "asset with same name exists" and record nothing.)
+				const FString BaseName = FString::Printf(TEXT("%s/%s_%s_Take"), TakeFolder, *PerformerLabel(Subject), *Mesh->GetName());
 				FString PackageName, AssetName;
-				AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("%s/%s_%s_Take"), TakeFolder, *PerformerLabel(Subject), *Mesh->GetName()),
-					TEXT(""), PackageName, AssetName);
-				if (FAnimationRecorderManager::Get().RecordAnimation(Mesh, FPackageName::GetLongPackagePath(PackageName), AssetName, Settings))
+				AssetTools.CreateUniqueAssetName(BaseName, TEXT(""), PackageName, AssetName);
+				for (int32 Suffix = 2; FindPackage(nullptr, *PackageName) != nullptr && Suffix < 1000; ++Suffix)
+				{
+					AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("%s_%d"), *BaseName, Suffix), TEXT(""), PackageName, AssetName);
+				}
+				// RecordAnimation's "AssetPath" is the package it creates, not a folder: passing the folder put every take
+				// inside one package named after it ("/Game/Cinemafy/Takes"), so the second take of a name always clashed.
+				if (FAnimationRecorderManager::Get().RecordAnimation(Mesh, PackageName, AssetName, Settings))
 				{
 					Into.Components.Add({ Mesh->GetFName(), Mesh, nullptr });
 				}
