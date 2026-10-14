@@ -91,9 +91,10 @@ namespace
 					// (pushing in tighter is the one move that reads as intentional).
 					if (Previous->ShotType == Type)
 					{
-						Weight *= 0.05f;
+						// Same framing on the same person is a jump cut. Never.
+						continue;
 					}
-					else if (FMath::Abs(Size - PreviousSize) < 1.f && Size <= PreviousSize)
+					if (FMath::Abs(Size - PreviousSize) < 1.f && Size <= PreviousSize)
 					{
 						Weight *= 0.2f;
 					}
