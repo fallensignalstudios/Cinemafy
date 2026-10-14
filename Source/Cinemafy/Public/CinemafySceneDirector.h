@@ -7,6 +7,7 @@
 
 class ACineCameraActor;
 class UCinemafyDirectorStyleAsset;
+class USoundBase;
 class ACinemafySceneDirector;
 
 /** What the editor should do for a director (the runtime module can't talk to Sequencer itself). */
@@ -71,6 +72,25 @@ public:
 	/** How much each line's heard intensity overrides its manual Intensity (lines with audio and Auto Intensity). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio", meta = (ClampMin = "0", ClampMax = "1"))
 	float AudioIntensityWeight = 0.8f;
+
+	/** Score for the scene: laid into the sequence, and (with Cut To Music) cuts land on its beats. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Music")
+	TObjectPtr<USoundBase> Music = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Music")
+	bool bCutToMusic = true;
+
+	/** Where the music starts, in seconds from the start of the scene (can be negative to start mid-track). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Music")
+	float MusicOffset = 0.f;
+
+	/** The tempo and beats heard in Music (filled in when directing). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Music")
+	FCinemafyMusicAnalysis MusicAnalysis;
+
+	/** Which sound MusicAnalysis was made from (re-analyzed when Music changes). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Music", AdvancedDisplay)
+	TObjectPtr<USoundBase> MusicAnalyzedFrom = nullptr;
 
 	/** Lay each line's body / face animation clips onto the speaker when directing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")

@@ -31,7 +31,7 @@ test or revert one at a time. Status is updated as work lands.
 | 17 | **Walk-and-talk:** tracking-lead and follow shots on a Steadicam-style follow rig, with moving lines auto-detected | ✅ |
 | 18 | **Action coverage:** cut on impact, crash (snap) zooms, speed ramps; impacts auto-found from audio | ✅ |
 | 19 | **Cross-cutting:** interleave two directors' scenes, accelerating toward the climax | ✅ |
-| 20 | **Music-aware cutting:** beat detection, with cuts snapped to the beat | ⏳ |
+| 20 | **Music-aware cutting:** beat detection, with cuts snapped to the beat | ✅ |
 | 21 | **Timeline editing:** lock shots, swap for an alternate, nudge cuts, save and compare takes, all from the Shot Browser | ⏳ |
 | 22 | **Performance import:** auto-assign audio and anim takes from a folder, plus script import from CSV | ⏳ |
 | 23 | **Subtitles v2:** reading-speed timing and smart splitting of long lines, working in any language | ⏳ |

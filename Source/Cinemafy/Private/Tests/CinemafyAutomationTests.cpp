@@ -280,4 +280,32 @@ bool FCinemafyWalkTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyBeatTest, "Cinemafy.Director.CutsLandOnTheBeat", CinemafyTests::Flags)
+bool FCinemafyBeatTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	const TArray<FCinemafyLine> Lines = Scene.MakeConversation(6);
+	TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines,
+		UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::KineticAction), 4);
+
+	TArray<float> Beats;
+	for (float Beat = 0.f; Beat < 60.f; Beat += 0.5f) // 120 BPM
+	{
+		Beats.Add(Beat);
+	}
+	const float Total = Plan.Last().StartTime + Plan.Last().Duration;
+	UCinemafyDirectorLibrary::SnapPlanToBeats(Plan, Lines, Beats);
+
+	for (int32 Index = 1; Index < Plan.Num(); ++Index)
+	{
+		const float Cut = Plan[Index].StartTime;
+		const float Offset = FMath::Abs(Cut - FMath::RoundToFloat(Cut * 2.f) / 2.f);
+		TestTrue(TEXT("Every cut is on a beat (no dialogue audio to protect here)"), Offset < 0.01f);
+		TestTrue(TEXT("Shots stay back to back"), FMath::IsNearlyEqual(Plan[Index - 1].StartTime + Plan[Index - 1].Duration, Cut, 0.001f));
+		TestTrue(TEXT("No shot gets crushed"), Plan[Index - 1].Duration >= 0.499f);
+	}
+	TestTrue(TEXT("The scene keeps its length"), FMath::IsNearlyEqual(Plan.Last().StartTime + Plan.Last().Duration, Total, 0.001f));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

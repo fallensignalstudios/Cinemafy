@@ -786,6 +786,23 @@ struct FCinemafyLine
 	FString Note;
 };
 
+/** The beat grid Cinemafy heard in a piece of music. */
+USTRUCT(BlueprintType)
+struct FCinemafyMusicAnalysis
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Music")
+	bool bValid = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Music")
+	float BeatsPerMinute = 0.f;
+
+	/** Beat times in seconds from the start of the music. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Music")
+	TArray<float> Beats;
+};
+
 /** A focus pull inside a shot, e.g. a held two-shot racking to whoever starts talking. */
 USTRUCT(BlueprintType)
 struct FCinemafyRackEvent

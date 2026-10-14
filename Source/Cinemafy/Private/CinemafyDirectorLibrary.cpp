@@ -797,3 +797,67 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 	}
 	return Plan;
 }
+
+void UCinemafyDirectorLibrary::SnapPlanToBeats(TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyLine>& Lines, const TArray<float>& Beats, float MinShotLength)
+{
+	if (Beats.Num() < 2 || Plan.Num() < 2)
+	{
+		return;
+	}
+
+	const float BeatPeriod = (Beats.Last() - Beats[0]) / (Beats.Num() - 1);
+	const float Tolerance = BeatPeriod / 3.f;
+
+	for (int32 Index = 1; Index < Plan.Num(); ++Index)
+	{
+		FCinemafyPlannedShot& Before = Plan[Index - 1];
+		FCinemafyPlannedShot& After = Plan[Index];
+
+		// Dialogue owns its own timing: never move the cut that starts a spoken line.
+		if (After.bLineStart && Lines.IsValidIndex(After.LineIndex) && Lines[After.LineIndex].Audio)
+		{
+			continue;
+		}
+
+		const float Cut = After.StartTime;
+		float Best = Cut;
+		float BestDistance = Tolerance;
+		for (const float Beat : Beats)
+		{
+			const float Distance = FMath::Abs(Beat - Cut);
+			if (Distance < BestDistance && Beat - Before.StartTime >= MinShotLength && (After.StartTime + After.Duration) - Beat >= MinShotLength)
+			{
+				Best = Beat;
+				BestDistance = Distance;
+			}
+		}
+		if (Best == Cut)
+		{
+			continue;
+		}
+
+		const float Shift = Best - Cut;
+		Before.Duration += Shift;
+		After.StartTime = Best;
+		After.Duration -= Shift;
+
+		// The second shot now starts at a different time: its internal timings shift with it.
+		for (FCinemafyRackEvent& Rack : After.RackEvents)
+		{
+			Rack.Time -= Shift;
+		}
+		After.MoveStart -= Shift;
+		After.MoveEnd -= Shift;
+		After.SlowMoTime -= Shift;
+
+		// Keep everything timed inside the shots inside them.
+		for (FCinemafyPlannedShot* Shot : { &Before, &After })
+		{
+			Shot->MoveStart = FMath::Clamp(Shot->MoveStart, 0.f, Shot->Duration);
+			Shot->MoveEnd = FMath::Clamp(Shot->MoveEnd, Shot->MoveStart, Shot->Duration);
+			Shot->SlowMoTime = FMath::Clamp(Shot->SlowMoTime, 0.f, Shot->Duration);
+			Shot->RackEvents.RemoveAll([Shot](const FCinemafyRackEvent& Rack) { return Rack.Time <= 0.f || Rack.Time >= Shot->Duration; });
+		}
+		Before.Reason += TEXT(", cut on the beat");
+	}
+}

@@ -1182,6 +1182,30 @@ namespace
 		}
 	}
 
+	const FText MusicTrackName = NSLOCTEXT("CinemafyEditor", "MusicTrack", "Cinemafy Music");
+
+	void PlaceMusic(UMovieScene* MovieScene, USoundBase* Music, FFrameNumber Start)
+	{
+		TArray<UMovieSceneTrack*> OldTracks;
+		for (UMovieSceneTrack* Track : MovieScene->GetTracks())
+		{
+			if (Track && Track->IsA<UMovieSceneAudioTrack>() && Track->GetDisplayName().EqualTo(MusicTrackName))
+			{
+				OldTracks.Add(Track);
+			}
+		}
+		for (UMovieSceneTrack* Track : OldTracks)
+		{
+			MovieScene->RemoveTrack(*Track);
+		}
+		if (Music)
+		{
+			UMovieSceneAudioTrack* Track = MovieScene->AddTrack<UMovieSceneAudioTrack>();
+			Track->SetDisplayName(MusicTrackName);
+			Track->AddNewSoundOnRow(Music, Start, 0);
+		}
+	}
+
 	const FText SpeedRampTrackName = NSLOCTEXT("CinemafyEditor", "SpeedRampTrack", "Cinemafy Speed Ramps");
 
 	/** Speed ramps around slowed impacts, as a native Play Rate track: ramp down into the hit, hold, ramp back. */
@@ -1284,7 +1308,27 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		Sequencer->ForceEvaluate();
 	}
 
-	const TArray<FCinemafyPlannedShot> NewPlan = Director->PlanDirectedLines(DirectedLines);
+	TArray<FCinemafyPlannedShot> NewPlan = Director->PlanDirectedLines(DirectedLines);
+
+	// Music: find the beat, then let cuts land on it.
+	if (Director->Music)
+	{
+		if (!Director->MusicAnalysis.bValid || Director->MusicAnalyzedFrom != Director->Music)
+		{
+			Director->Modify();
+			Director->MusicAnalysis = AnalyzeMusic(Cast<USoundWave>(Director->Music));
+			Director->MusicAnalyzedFrom = Director->Music;
+		}
+		if (Director->bCutToMusic && Director->MusicAnalysis.bValid)
+		{
+			TArray<float> SceneBeats;
+			for (const float Beat : Director->MusicAnalysis.Beats)
+			{
+				SceneBeats.Add(Beat + Director->MusicOffset);
+			}
+			UCinemafyDirectorLibrary::SnapPlanToBeats(NewPlan, DirectedLines, SceneBeats);
+		}
+	}
 	if (NewPlan.Num() == 0)
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
@@ -1434,6 +1478,7 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	}
 
 	BakeTransitions(Sequence, MovieScene, Director, Plan, SceneStart, SceneEnd);
+	PlaceMusic(MovieScene, Director->Music, SceneStart + MovieScene->GetTickResolution().AsFrameNumber(Director->MusicOffset));
 	BakeSpeedRamps(MovieScene, Plan, SceneStart);
 
 	// Light the cast in the style's look: restyle their rigs, or give them one.
@@ -1938,6 +1983,96 @@ FCinemafyAudioAnalysis UCinemafyEditorLibrary::AnalyzeDialogueSound(USoundWave* 
 	const float SpeechSeconds = SpeechDb.Num() * 0.02f;
 	Result.SyllablesPerSecond = SpeechSeconds > 0.f ? Bursts / SpeechSeconds : 0.f;
 	Result.bValid = true;
+	return Result;
+}
+
+FCinemafyMusicAnalysis UCinemafyEditorLibrary::AnalyzeMusic(USoundWave* Sound)
+{
+	FCinemafyMusicAnalysis Result;
+	TArray<uint8> RawPCM;
+	uint32 SampleRate = 0;
+	uint16 NumChannels = 0;
+	if (!Sound || !Sound->GetImportedSoundWaveData(RawPCM, SampleRate, NumChannels) || SampleRate == 0 || NumChannels == 0)
+	{
+		return Result;
+	}
+
+	const int16* Samples = reinterpret_cast<const int16*>(RawPCM.GetData());
+	const int32 NumFrames = RawPCM.Num() / (sizeof(int16) * NumChannels);
+	const int32 Hop = FMath::Max(1, static_cast<int32>(SampleRate / 100)); // 10 ms
+	const float HopSeconds = static_cast<float>(Hop) / SampleRate;
+
+	// Onset strength: how much louder each 10 ms gets than the one before (notes and drums starting).
+	TArray<float> Onsets;
+	float PreviousDb = -100.f;
+	for (int32 Start = 0; Start + Hop <= NumFrames; Start += Hop)
+	{
+		double SumSquares = 0.0;
+		for (int32 Frame = Start; Frame < Start + Hop; ++Frame)
+		{
+			float Mono = 0.f;
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				Mono += Samples[Frame * NumChannels + Channel] / 32768.f;
+			}
+			Mono /= NumChannels;
+			SumSquares += Mono * Mono;
+		}
+		const float Db = 10.f * FMath::LogX(10.f, static_cast<float>(SumSquares / Hop) + 1e-12f);
+		Onsets.Add(FMath::Max(0.f, Db - PreviousDb));
+		PreviousDb = Db;
+	}
+	if (Onsets.Num() < 400)
+	{
+		return Result; // Under ~4 s: not enough to find a tempo.
+	}
+
+	// Tempo: the lag at which the onset pattern best repeats, gently preferring 80-160 BPM.
+	const int32 MinLag = FMath::RoundToInt(60.f / 180.f / HopSeconds);
+	const int32 MaxLag = FMath::RoundToInt(60.f / 60.f / HopSeconds);
+	int32 BestLag = MinLag;
+	double BestScore = -1.0;
+	for (int32 Lag = MinLag; Lag <= MaxLag; ++Lag)
+	{
+		double Score = 0.0;
+		for (int32 Index = 0; Index + Lag < Onsets.Num(); ++Index)
+		{
+			Score += Onsets[Index] * Onsets[Index + Lag];
+		}
+		const float Bpm = 60.f / (Lag * HopSeconds);
+		const float Preference = FMath::Exp(-FMath::Square(FMath::Log2(Bpm / 120.f)) / (2.f * 0.5f * 0.5f));
+		Score *= Preference;
+		if (Score > BestScore)
+		{
+			BestScore = Score;
+			BestLag = Lag;
+		}
+	}
+
+	// Phase: the offset where onsets line up best with that grid.
+	int32 BestPhase = 0;
+	double BestPhaseScore = -1.0;
+	for (int32 Phase = 0; Phase < BestLag; ++Phase)
+	{
+		double Score = 0.0;
+		for (int32 Index = Phase; Index < Onsets.Num(); Index += BestLag)
+		{
+			Score += Onsets[Index];
+		}
+		if (Score > BestPhaseScore)
+		{
+			BestPhaseScore = Score;
+			BestPhase = Phase;
+		}
+	}
+
+	Result.BeatsPerMinute = 60.f / (BestLag * HopSeconds);
+	for (int32 Index = BestPhase; Index < Onsets.Num(); Index += BestLag)
+	{
+		Result.Beats.Add(Index * HopSeconds);
+	}
+	Result.bValid = Result.Beats.Num() >= 2;
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: %s is about %.0f BPM (%d beats)."), *Sound->GetName(), Result.BeatsPerMinute, Result.Beats.Num());
 	return Result;
 }
 

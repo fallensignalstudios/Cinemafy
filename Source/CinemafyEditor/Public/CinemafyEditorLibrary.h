@@ -129,6 +129,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 LearnDirectorStyleFromSequence(ACinemafySceneDirector* Director);
 
+	/** Finds a piece of music's tempo and beat grid. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static FCinemafyMusicAnalysis AnalyzeMusic(USoundWave* Sound);
+
 	/** Measures a dialogue recording: speech loudness, peaks, speech rate and how much of it is talking. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static FCinemafyAudioAnalysis AnalyzeDialogueSound(USoundWave* Sound);

@@ -158,6 +158,10 @@ Blocks of lines alternate between the two scenes (`CrossCutLinesPerBlock`), shri
 build so the cutting accelerates into the climax. Every switch is a scene break, so the style's
 transition applies (Mind-Bender match-cuts, Space Opera wipes). Each scene keeps its own cast.
 
+**Music 🎵:** give the director a **Music** track. Cinemafy finds its tempo and beat grid, lays it into
+the sequence (*Cinemafy Music*, with `MusicOffset`), and with **Cut To Music** slides cuts onto the
+nearest beat. Cuts that start a spoken line stay put, so dialogue stays in sync. Great for montages and trailers.
+
 **Subtitles 💬:** fill in each line's **Text** (and optionally a **Speaker Name**). Subtitles show
 live during `StartConversation` / `DirectLine` (pass the text as `Subtitle`), and Direct keys the
 director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the game. Anything else can

@@ -32,6 +32,13 @@ public:
 		FRandomStream& Random, const FCinemafyPlannedShot* Previous, bool bOpensScene, float StartTime,
 		const TArray<AActor*>& SceneCast = TArray<AActor*>());
 
+	/**
+	 * Slides cuts onto the nearest beat (within a third of a beat), keeping every shot at least
+	 * MinShotLength long. Cuts that start a spoken line (lines with audio) stay put so dialogue stays in sync.
+	 * Beats are in seconds from the start of the scene.
+	 */
+	static void SnapPlanToBeats(TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyLine>& Lines, const TArray<float>& Beats, float MinShotLength = 0.5f);
+
 	/** Everyone who speaks or is spoken to in a script. */
 	static TArray<AActor*> GetCast(const TArray<FCinemafyLine>& Lines);
 
