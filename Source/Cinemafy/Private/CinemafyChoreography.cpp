@@ -1399,6 +1399,13 @@ namespace CinemafyLines
 		static TMap<TWeakObjectPtr<const AActor>, double> Ends;
 		return Ends;
 	}
+
+	/** How many lines each character has started in the take. */
+	TMap<TWeakObjectPtr<const AActor>, int32>& SpokenLineCounts()
+	{
+		static TMap<TWeakObjectPtr<const AActor>, int32> Counts;
+		return Counts;
+	}
 }
 
 bool ACinemafyChoreography::IsCueReady() const
@@ -1410,6 +1417,14 @@ bool ACinemafyChoreography::IsCueReady() const
 		return true;
 	}
 	const double* End = CinemafyLines::SpokenLineEnds().Find(TWeakObjectPtr<const AActor>(Cue));
+	const int32 Number = Beats.IsValidIndex(CurrentBeat) ? Beats[CurrentBeat].WaitForLineNumber : 0;
+	if (Number > 0)
+	{
+		// A specific line: done once they've finished that many lines (however long ago that was).
+		const int32 Started = CinemafyLines::SpokenLineCounts().FindRef(TWeakObjectPtr<const AActor>(Cue));
+		const int32 Finished = Started - (End && World->GetTimeSeconds() < *End ? 1 : 0);
+		return Finished >= Number;
+	}
 	// A line that was still running when we started waiting counts: wait for its last word.
 	return End && *End > CueAfterWorldTime - 0.25 && World->GetTimeSeconds() >= *End;
 }
@@ -1458,6 +1473,7 @@ void ACinemafyChoreography::StartLine()
 	if (World)
 	{
 		CinemafyLines::SpokenLineEnds().Add(TWeakObjectPtr<const AActor>(Performer.Get()), World->GetTimeSeconds() + Seconds);
+		CinemafyLines::SpokenLineCounts().FindOrAdd(TWeakObjectPtr<const AActor>(Performer.Get())) += 1;
 	}
 	AddEvent(ECinemafyPerformanceEventKind::LineStart, Beat.DialogueAudio == nullptr, Text.ToString());
 }

@@ -8,6 +8,7 @@
 class ACinemafyMark;
 class ACinemafySceneDirector;
 class ACinemafyChoreography;
+class ULevelSequence;
 
 /**
  * The storyteller's tools: casting and sets, staging a scene straight from the script, the story board,
@@ -36,6 +37,21 @@ public:
 	/** Puts each cast member in the scene in the state the script says they arrive in (props, injuries, costume). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 ApplySceneContinuity(UCinemafyScriptProject* Project, const FString& SceneId);
+
+	// --- Previs ----------------------------------------------------------------------------------------------------
+
+	/**
+	 * Stages a scene straight from the script: puts the cast on set (spawning from Cast & Sets where needed),
+	 * dresses them for continuity, turns the action and dialogue into a choreography per character (marks
+	 * for places, cues between lines), makes the scene's Level Sequence and Scene Director, and (bRecord)
+	 * performs, records and cuts it. Returns a report: what was staged, and what wasn't.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString PrevisScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bRecord = true);
+
+	/** The scene's Level Sequence (/Game/Cinemafy/Scenes/SC_<id>_<place>), made if it doesn't exist yet, opened in Sequencer. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static ULevelSequence* OpenSceneSequence(UCinemafyScriptProject* Project, const FString& SceneId);
 
 	/** The actor playing a script character in a world: the cast entry's label, else a matching character label. */
 	static AActor* FindCastActor(const UCinemafyScriptProject* Project, const FString& ScriptName, UWorld* World);

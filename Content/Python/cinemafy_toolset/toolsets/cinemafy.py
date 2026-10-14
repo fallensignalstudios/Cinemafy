@@ -738,6 +738,57 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return _lib.set_script_scene_status(project, scene_id, status)
 
+    # --- Cast, sets and previs ----------------------------------------------------------------
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def build_cast_and_sets(project: unreal.CinemafyScriptProject) -> str:
+        """Adds a cast entry for every speaking character and a set for every location of a script project, matching
+        characters to actors in the open level by label. Fill in Character Class / looks / voices afterwards.
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            How many entries were added, and the cast as matched.
+        """
+        added = unreal.CinemafyStoryLibrary.build_cast_and_sets(project)
+        cast = ['{} -> {}'.format(m.get_editor_property('script_name'), m.get_editor_property('actor_label') or '(no actor)')
+                for m in project.get_editor_property('cast_members')]
+        return '{} entr(ies) added. Cast: {}'.format(added, '; '.join(cast))
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def place_mark(mark_name: str, set_name: str = '') -> unreal.CinemafyMark:
+        """Drops a named Cinemafy Mark where the viewport is looking. Previs sends characters to marks named the way
+        the script talks ("Kade walks to the console" -> the mark named "console").
+
+        Args:
+            mark_name: What the script calls the spot ("console", "lift").
+            set_name: The script location it belongs to (optional).
+
+        Returns:
+            The mark.
+        """
+        return unreal.CinemafyStoryLibrary.place_mark(mark_name, set_name)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def previs_scene(project: unreal.CinemafyScriptProject, scene_id: str, record: bool = True) -> str:
+        """Stages a scene straight from the script: cast on set, continuity applied, a choreography per character
+        from the action and dialogue (marks for places, cues between lines), the scene's sequence and director, and
+        (record) a performed, recorded and directed take. Recording runs in play-in-editor and finishes on its own.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("1.1.1") or running number.
+            record: Perform, record and cut it now.
+
+        Returns:
+            The previs report: what was staged, what wasn't, and what's missing (marks, cast).
+        """
+        return unreal.CinemafyStoryLibrary.previs_scene(project, scene_id, record)
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
     @toolset_registry.tool_call

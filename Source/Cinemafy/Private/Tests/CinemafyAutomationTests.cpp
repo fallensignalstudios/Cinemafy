@@ -7,6 +7,7 @@
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyScript.h"
+#include "CinemafyPrevis.h"
 #include "GameFramework/Pawn.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
@@ -1050,6 +1051,53 @@ bool FCinemafyScriptBreakdownTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Act Two opens after the fade out"), Inferred[1].Chapters[0].Scenes[0].Number, 4);
 		TestEqual(TEXT("Act Three opens on the time jump"), Inferred[2].Chapters[0].Scenes[0].Number, 10);
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyPrevisStagingTest, "Cinemafy.Previs.StagesScenesFromTheScript", CinemafyTests::Flags)
+bool FCinemafyPrevisStagingTest::RunTest(const FString& Parameters)
+{
+	const FString Script = TEXT(
+		"INT. BRIDGE - NIGHT\n"
+		"\n"
+		"Kade steps off the lift. She draws her pistol.\n"
+		"\n"
+		"KADE\n"
+		"Stand down, Admiral.\n"
+		"\n"
+		"ADMIRAL THANE\n"
+		"Make me.\n"
+		"\n"
+		"Kade walks to the console. Thane turns to Kade.\n"
+		"\n"
+		"KADE\n"
+		"Last chance.\n"
+		"\n"
+		"Thane vaults the railing, Kade shoots Thane.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = UCinemafyScriptLibrary::BreakDownScript(Script, true, 5, Title, Report);
+	if (!TestTrue(TEXT("One scene"), Acts.Num() == 1 && Acts[0].Chapters.Num() == 1 && Acts[0].Chapters[0].Scenes.Num() == 1))
+	{
+		return true;
+	}
+	TArray<FString> NotStaged;
+	const TArray<FCinemafyStagedBeat> Beats = UCinemafyPrevisLibrary::StageScene(Acts[0].Chapters[0].Scenes[0], NotStaged);
+	auto Find = [&Beats](const TCHAR* Who, const TCHAR* Prompt) { return Beats.FindByPredicate([Who, Prompt](const FCinemafyStagedBeat& B) { return B.Character == Who && B.Prompt == Prompt; }); };
+
+	const FCinemafyStagedBeat* Steps = Find(TEXT("KADE"), TEXT("walk"));
+	TestTrue(TEXT("Kade steps off the lift: a walk to the lift"), Steps && Steps->Place == TEXT("lift"));
+	TestNotNull(TEXT("She draws her pistol (pronoun -> Kade)"), Find(TEXT("KADE"), TEXT("pistol")));
+	const FCinemafyStagedBeat* Answer = Find(TEXT("ADMIRAL THANE"), TEXT("say"));
+	TestTrue(TEXT("Thane's answer waits for Kade's first line"), Answer && Answer->WaitFor == TEXT("KADE") && Answer->WaitForLineNumber == 1 && Answer->Target == TEXT("KADE"));
+	const FCinemafyStagedBeat* Console = Beats.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("KADE") && B.Prompt == TEXT("walk") && B.Place == TEXT("console"); });
+	TestTrue(TEXT("Walking to the console waits for Thane's line"), Console && Console->WaitFor == TEXT("ADMIRAL THANE"));
+	TestTrue(TEXT("...and carries her next line (walk and talk)"), Console && Console->Line == TEXT("Last chance."));
+	const FCinemafyStagedBeat* Turn = Find(TEXT("ADMIRAL THANE"), TEXT("look"));
+	TestTrue(TEXT("Thane turns to Kade: a look at her"), Turn && Turn->Target == TEXT("KADE"));
+	const FCinemafyStagedBeat* Vault = Find(TEXT("ADMIRAL THANE"), TEXT("vault"));
+	TestTrue(TEXT("Thane vaults the railing"), Vault && Vault->Place == TEXT("railing"));
+	const FCinemafyStagedBeat* Shot = Beats.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("KADE") && B.Prompt == TEXT("shoot"); });
+	TestTrue(TEXT("Kade shoots Thane"), Shot && Shot->Target == TEXT("ADMIRAL THANE"));
 	return true;
 }
 

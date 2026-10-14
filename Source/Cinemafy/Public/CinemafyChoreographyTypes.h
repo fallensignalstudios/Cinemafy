@@ -368,6 +368,10 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
 	TObjectPtr<AActor> WaitForLineFrom = nullptr;
 
+	/** Wait for exactly this line of theirs (1 = their first line in the take); 0 = the next line they finish. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line", meta = (ClampMin = "0"))
+	int32 WaitForLineNumber = 0;
+
 	/** Seconds into the last take when the line started, and how long it ran (-1 = no line). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
 	float LineStartTime = -1.f;
