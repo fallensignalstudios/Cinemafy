@@ -1118,20 +1118,20 @@ FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObje
 
 	// Its top: drop down onto it from above anything climbable.
 	const float CeilingProbe = FloorZ + FMath::Max(Envelope.MaxMantleHeight, Envelope.MaxJumpHeight) + 150.f;
-	const FVector InsideFront = Check.FrontPoint + Direction * 8.f;
+	const FVector InsideFront = Check.FrontPoint + Direction * 4.f;
 	float TopZ = FloorZ;
-	if (World->LineTraceSingleByChannel(Hit, FVector(InsideFront.X, InsideFront.Y, CeilingProbe), FVector(InsideFront.X, InsideFront.Y, FloorZ - 5.f), ECC_Visibility, Params))
+	const bool bTopHit = World->LineTraceSingleByChannel(Hit, FVector(InsideFront.X, InsideFront.Y, CeilingProbe), FVector(InsideFront.X, InsideFront.Y, FloorZ - 5.f), ECC_Visibility, Params);
+	// A line that starts inside a tall wall may not report the overlap: it just finds nothing, or the floor beyond.
+	// The top can't be lower than where the face was hit, so either case means the wall is taller than the probe.
+	if (!bTopHit || Hit.bStartPenetrating || Hit.ImpactPoint.Z < Check.FrontPoint.Z - 5.f)
 	{
-		if (Hit.bStartPenetrating)
-		{
-			// Solid all the way up past anything climbable: a wall.
-			Check.Height = CeilingProbe - FloorZ;
-			Check.Verdict = ECinemafyTraversalVerdict::TooTall;
-			Check.Reason = FString::Printf(TEXT("A wall over %.0f cm tall"), Check.Height);
-			return Check;
-		}
-		TopZ = Hit.ImpactPoint.Z;
+		// Solid all the way up past anything climbable: a wall (or something too thin to find a top on).
+		Check.Height = CeilingProbe - FloorZ;
+		Check.Verdict = ECinemafyTraversalVerdict::TooTall;
+		Check.Reason = FString::Printf(TEXT("No top found below %.0f cm: a wall, or too thin to climb"), Check.Height);
+		return Check;
 	}
+	TopZ = Hit.ImpactPoint.Z;
 	Check.Height = TopZ - FloorZ;
 
 	// Its depth: walk across the top until it drops away.
@@ -1208,7 +1208,7 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 	// The scene starts at 0; a line can't (its audio would land early), so a quiet moment leads into it.
 	if (Pieces.Num() > 0 && Pieces[0].bLine && Pieces[0].Start > 0.05f)
 	{
-		Pieces.Insert({ 0.f, Pieces[0].Beat, false }, 0);
+		Pieces.Insert(FPiece{ 0.f, Pieces[0].Beat, false }, 0);
 	}
 
 	// The last listener a line went to: who a later line without one is said to.

@@ -975,7 +975,9 @@ namespace CinemafyChoreoTake
 						Beat.TraversalCheck = Choreo->MeasureTraversal(Index);
 					}
 					const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
-					if (Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked && !Check.bPossible)
+					// Same rule as the take: only beats it will refuse are listed (NoObstacle still gets tried).
+					if (Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked
+						&& Check.Verdict != ECinemafyTraversalVerdict::NoObstacle && !Check.bPossible)
 					{
 						WontWork.Add(FString::Printf(TEXT("%s, beat %d \"%s\": %s"), *GetNameSafe(Choreo->Performer), Index + 1, *Beat.Prompt, *Check.Reason));
 					}

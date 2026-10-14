@@ -412,7 +412,8 @@ void ACinemafyChoreography::ResolveBeat(int32 BeatIndex)
 		return;
 	}
 
-	if (Kind == ECinemafyActionKind::Traverse && !Beat.TraversalCheck.bPossible && Beat.TraversalCheck.Verdict != ECinemafyTraversalVerdict::NotChecked)
+	if (Kind == ECinemafyActionKind::Traverse && !Beat.TraversalCheck.bPossible && Beat.TraversalCheck.Verdict != ECinemafyTraversalVerdict::NotChecked
+		&& Beat.TraversalCheck.Verdict != ECinemafyTraversalVerdict::NoObstacle)
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Choreography: beat %d \"%s\" won't work: %s"), BeatIndex + 1, *Beat.Prompt, *Beat.TraversalCheck.Reason);
 	}
@@ -2395,7 +2396,9 @@ void ACinemafyChoreography::RefreshLabels()
 		}
 		// Before a take, traversal beats say what they measured: red if it can't work, so you know before you hit record.
 		const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
-		const bool bWontWork = Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked && !Check.bPossible;
+		// Nothing measured (no obstacle found, or no run-up) isn't a refusal: the take still tries it, so only warn in text.
+		const bool bWontWork = Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked
+			&& Check.Verdict != ECinemafyTraversalVerdict::NoObstacle && !Check.bPossible;
 		if (Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked && !bProblem && !bFallback)
 		{
 			Text += TEXT("\n") + Check.Reason;

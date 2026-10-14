@@ -12,6 +12,7 @@ void UCinemafyPerformerProfile::ApplyPreset(ECinemafyPerformerPreset Preset)
 	WalkProperty.Reset();
 	OverlayProperty.Reset();
 	OverlayValues.Reset();
+	Notes.Reset();
 	Traversal = FCinemafyTraversalEnvelope();
 	SkipRecordingComponents = { FName(TEXT("Face")) };
 
