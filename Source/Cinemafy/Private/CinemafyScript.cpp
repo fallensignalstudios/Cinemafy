@@ -3,6 +3,12 @@
 #include "LevelSequence.h"
 #include "Sound/SoundBase.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Dom/JsonObject.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Misc/Crc.h"
 #include "Engine/World.h"
 
@@ -1626,14 +1632,24 @@ TArray<const FCinemafyScriptScene*> UCinemafyScriptProject::GetAllScenes() const
 
 FCinemafyScriptScene* UCinemafyScriptProject::FindScene(const FString& SceneId)
 {
+	int32 Insert = 0;
+	const FString Base = UCinemafyScriptLibrary::SplitInsertId(SceneId, Insert);
 	for (FCinemafyScriptScene* Scene : GetAllScenes())
 	{
-		if (Scene->Id == SceneId || FString::FromInt(Scene->Number) == SceneId)
+		if (Scene->Id == Base || FString::FromInt(Scene->Number) == Base)
 		{
 			return Scene;
 		}
 	}
 	return nullptr;
+}
+
+FCinemafySceneInsert* UCinemafyScriptProject::FindInsert(const FString& SceneId)
+{
+	int32 Insert = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, Insert);
+	FCinemafyScriptScene* Scene = Insert > 0 ? FindScene(SceneId) : nullptr;
+	return Scene && Scene->Inserts.IsValidIndex(Insert - 1) ? &Scene->Inserts[Insert - 1] : nullptr;
 }
 
 void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
@@ -1680,7 +1696,47 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 	}
 
 	FString FoundTitle;
-	Acts = UCinemafyScriptLibrary::BreakDownScript(ScriptText, bInferActs, ScenesPerChapter, FoundTitle, BreakdownReport);
+	if (UCinemafyScriptLibrary::IsScriptBible(ScriptText))
+	{
+		// A game's cutscene bible. A JSON one takes its acts from the Markdown bible beside it (or Act Map File).
+		FString ActMap;
+		if (ScriptText.Left(4096).TrimStart().StartsWith(TEXT("{")))
+		{
+			if (!ActMapFile.FilePath.IsEmpty())
+			{
+				FFileHelper::LoadFileToString(ActMap, *ActMapFile.FilePath);
+			}
+			else if (!ScriptFile.FilePath.IsEmpty())
+			{
+				const FString Folder = FPaths::GetPath(ScriptFile.FilePath);
+				FString FirstId;
+				const int32 At = ScriptText.Find(TEXT("\"scene_id\""));
+				if (At != INDEX_NONE)
+				{
+					const int32 Open = ScriptText.Find(TEXT("\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, ScriptText.Find(TEXT(":"), ESearchCase::CaseSensitive, ESearchDir::FromStart, At));
+					const int32 Close = Open == INDEX_NONE ? INDEX_NONE : ScriptText.Find(TEXT("\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, Open + 1);
+					FirstId = Close > Open ? ScriptText.Mid(Open + 1, Close - Open - 1) : FString();
+				}
+				TArray<FString> Candidates;
+				IFileManager::Get().FindFiles(Candidates, *(Folder / TEXT("*.md")), true, false);
+				for (const FString& Candidate : Candidates)
+				{
+					FString Text;
+					if (FFileHelper::LoadFileToString(Text, *(Folder / Candidate)) && Text.Contains(TEXT("### Act")) && (FirstId.IsEmpty() || Text.Contains(FirstId)))
+					{
+						ActMap = MoveTemp(Text);
+						ActMapFile.FilePath = Folder / Candidate;
+						break;
+					}
+				}
+			}
+		}
+		Acts = UCinemafyScriptLibrary::BreakDownScriptBible(ScriptText, ActMap, FoundTitle, BreakdownReport);
+	}
+	else
+	{
+		Acts = UCinemafyScriptLibrary::BreakDownScript(ScriptText, bInferActs, ScenesPerChapter, FoundTitle, BreakdownReport);
+	}
 
 	// Line ids: speaker initials + a hash of who says what; repeats get a suffix.
 	TSet<FString> UsedIds;
@@ -1688,11 +1744,12 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 	{
 		for (FCinemafyScriptLine& Line : Scene->Lines)
 		{
-			if (Line.Kind != ECinemafyScriptLineKind::Dialogue)
+			// Spoken lines and on-screen text get ids (voice-over, subtitles and localization key on them).
+			if (Line.Kind != ECinemafyScriptLineKind::Dialogue && Line.Kind != ECinemafyScriptLineKind::Display)
 			{
 				continue;
 			}
-			FString Initials;
+			FString Initials = Line.Kind == ECinemafyScriptLineKind::Display ? FString(TEXT("OSD")) : FString();
 			TArray<FString> Words;
 			Line.Speaker.ParseIntoArrayWS(Words);
 			for (const FString& Word : Words)
@@ -1729,12 +1786,17 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 	{
 		const FString Key = KeyFor(*Scene);
 		const FString Heading = CinemafyScriptText::Normalize(Scene->Heading);
-		FKept* Match = Kept.FindByPredicate([&Key](const FKept& K) { return !K.bUsed && K.Key == Key; });
-		if (!Match)
+		// A script bible's ids are permanent: same id, same scene.
+		FKept* Match = Scene->bFixedId ? Kept.FindByPredicate([Scene](const FKept& K) { return !K.bUsed && K.Scene.bFixedId && K.Scene.Id == Scene->Id; }) : nullptr;
+		if (!Match && !Scene->bFixedId)
+		{
+			Match = Kept.FindByPredicate([&Key](const FKept& K) { return !K.bUsed && K.Key == Key; });
+		}
+		if (!Match && !Scene->bFixedId)
 		{
 			Match = Kept.FindByPredicate([&Heading](const FKept& K) { return !K.bUsed && !Heading.IsEmpty() && K.Heading == Heading; });
 		}
-		if (!Match)
+		if (!Match && !Scene->bFixedId)
 		{
 			Match = Kept.FindByPredicate([Scene](const FKept& K) { return !K.bUsed && K.Scene.ContentHash == Scene->ContentHash; });
 		}
@@ -1760,6 +1822,11 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		Scene->DailiesFolder = Old.DailiesFolder;
 		Scene->StagedHash = Old.StagedHash;
 		Scene->GeneratedPrints = Old.GeneratedPrints;
+		// Insert sequences follow their insert (by position) when the bridge still splits the same way.
+		for (int32 Index = 0; Index < Scene->Inserts.Num() && Index < Old.Inserts.Num(); ++Index)
+		{
+			Scene->Inserts[Index].Sequence = Old.Inserts[Index].Sequence;
+		}
 		Scene->Revision = Old.ContentHash == Scene->ContentHash ? ECinemafySceneRevision::Unchanged : ECinemafySceneRevision::Rewritten;
 		++Carried;
 		if (Scene->Revision != ECinemafySceneRevision::Rewritten)
@@ -2475,4 +2542,775 @@ bool UCinemafyScriptLibrary::ReadTransition(const FString& Text, ECinemafyTransi
 		return false;
 	}
 	return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Script bibles: a game's cutscene bible (JSON, or the Markdown it's written in)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace CinemafyBible
+{
+	using namespace CinemafyScriptText;
+
+	/** A scene as the bible has it, and the mission (chapter) it belongs to. */
+	struct FBibleScene
+	{
+		FCinemafyScriptScene Data;
+		FString Mission;
+	};
+
+	/** Acts from the bible's scene map: which act each scene is in, and the missions' titles. */
+	struct FActMap
+	{
+		TArray<FString> Titles;
+		TMap<FString, int32> SceneAct;
+		TMap<FString, FString> MissionTitles;
+
+		bool IsEmpty() const { return Titles.Num() == 0; }
+	};
+
+	const TCHAR* Arrow = TEXT("\u2192");
+	const TCHAR* MiddleDot = TEXT("\u00B7");
+
+	ECinemafyPresentation PresentationFor(const FString& Mode)
+	{
+		const FString Upper = Mode.ToUpper();
+		if (Upper.Contains(TEXT("BRIDGE"))) { return ECinemafyPresentation::GameplayBridge; }
+		if (Upper.Contains(TEXT("RADIO")) || Upper.Contains(TEXT("HOLO"))) { return ECinemafyPresentation::Radio; }
+		if (Upper.Contains(TEXT("MONTAGE"))) { return ECinemafyPresentation::Montage; }
+		if (Upper.Contains(TEXT("RECORD")) || Upper.Contains(TEXT("WITNESS"))) { return ECinemafyPresentation::Record; }
+		if (Upper.Contains(TEXT("DIALOGUE"))) { return ECinemafyPresentation::Dialogue; }
+		if (Upper.Contains(TEXT("LOCKED")) || Upper.Contains(TEXT("CINEMATIC"))) { return ECinemafyPresentation::Locked; }
+		return ECinemafyPresentation::Dialogue;
+	}
+
+	/** "2:40" -> 160. */
+	float ClockSeconds(const FString& Text)
+	{
+		FString Minutes, Seconds;
+		if (Text.Split(TEXT(":"), &Minutes, &Seconds))
+		{
+			return FCString::Atof(*Minutes.TrimStartAndEnd()) * 60.f + FCString::Atof(*Seconds.Left(2));
+		}
+		return 0.f;
+	}
+
+	/** "GOOD KING (RECORD)" -> "GOOD KING" and "(RECORD)". */
+	void SplitSpeaker(const FString& Cue, FString& OutName, FString& OutDirection)
+	{
+		int32 Paren = INDEX_NONE;
+		if (Cue.FindChar(TEXT('('), Paren) && Paren > 0)
+		{
+			OutName = Cue.Left(Paren).TrimStartAndEnd().ToUpper();
+			OutDirection = Cue.Mid(Paren).TrimStartAndEnd();
+			return;
+		}
+		OutName = Cue.TrimStartAndEnd().ToUpper();
+		OutDirection.Reset();
+	}
+
+	void AddLine(FCinemafyScriptScene& Scene, const FString& Type, const FString& Speaker, const FString& Text, const FString& Origin, const FString& Source)
+	{
+		FCinemafyScriptLine& Line = Scene.Lines.AddDefaulted_GetRef();
+		Line.Text = Text.TrimStartAndEnd();
+		Line.Origin = Origin;
+		Line.SourceRef = Source;
+		if (Type == TEXT("action"))
+		{
+			Line.Kind = ECinemafyScriptLineKind::Action;
+		}
+		else if (Type == TEXT("display") || Speaker.ToUpper().StartsWith(TEXT("ON-SCREEN")))
+		{
+			Line.Kind = ECinemafyScriptLineKind::Display;
+		}
+		else
+		{
+			Line.Kind = ECinemafyScriptLineKind::Dialogue;
+			SplitSpeaker(Speaker, Line.Speaker, Line.Direction);
+		}
+	}
+
+	/** The bible's scene map: "### Act 1: Title" (and Prologue / Epilogue) over tables of "[SCOR-01-CS01 ...](...)". */
+	FActMap ReadActMap(const FString& Markdown)
+	{
+		FActMap Map;
+		TArray<FString> Lines;
+		Markdown.ParseIntoArrayLines(Lines, false);
+		bool bInMap = false;
+		int32 Act = INDEX_NONE;
+		for (const FString& Raw : Lines)
+		{
+			const FString Line = Raw.TrimStartAndEnd();
+			if (Line.StartsWith(TEXT("## ")))
+			{
+				// The map section, and (later) the scripts section's mission headings.
+				bInMap = Line.Contains(TEXT("scene map"), ESearchCase::IgnoreCase);
+				continue;
+			}
+			if (Line.StartsWith(TEXT("### ")))
+			{
+				const FString Heading = Line.Mid(4).TrimStartAndEnd();
+				if (bInMap)
+				{
+					FString Number, Title;
+					if (Heading.StartsWith(TEXT("Act "), ESearchCase::IgnoreCase) && Heading.Split(TEXT(":"), &Number, &Title))
+					{
+						Map.Titles.Add(Title.TrimStartAndEnd());
+					}
+					else
+					{
+						Map.Titles.Add(Heading);
+					}
+					Act = Map.Titles.Num() - 1;
+					continue;
+				}
+				// "### SCOR-01 - The Mantle" / "### PROLOGUE": a mission's title.
+				FString Mission, Title;
+				if (Heading.Split(MiddleDot, &Mission, &Title))
+				{
+					Map.MissionTitles.Add(Mission.TrimStartAndEnd(), Title.TrimStartAndEnd());
+				}
+				else if (!Heading.Contains(TEXT(" ")))
+				{
+					Map.MissionTitles.Add(Heading, Heading.Left(1).ToUpper() + Heading.Mid(1).ToLower());
+				}
+				continue;
+			}
+			if (bInMap && Act != INDEX_NONE && Line.StartsWith(TEXT("| [")))
+			{
+				const int32 Start = 3;
+				int32 End = Line.Find(TEXT(" "), ESearchCase::CaseSensitive, ESearchDir::FromStart, Start);
+				const int32 Bracket = Line.Find(TEXT("]"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Start);
+				End = End == INDEX_NONE ? Bracket : (Bracket == INDEX_NONE ? End : FMath::Min(End, Bracket));
+				if (End > Start)
+				{
+					Map.SceneAct.Add(Line.Mid(Start, End - Start), Act);
+				}
+			}
+		}
+		return Map;
+	}
+
+	/** The JSON bible: { title, scenes: [ { scene_id, mission_id, title, mode, ..., script: [ {type, speaker, origin, text} ] } ] }. */
+	bool ReadJson(const FString& Text, FString& OutTitle, TArray<FBibleScene>& OutScenes, FString& OutError)
+	{
+		TSharedPtr<FJsonObject> Root;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+		if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+		{
+			OutError = TEXT("The JSON doesn't parse: ") + Reader->GetErrorMessage();
+			return false;
+		}
+		Root->TryGetStringField(TEXT("title"), OutTitle);
+		const TArray<TSharedPtr<FJsonValue>>* Scenes = nullptr;
+		if (!Root->TryGetArrayField(TEXT("scenes"), Scenes))
+		{
+			OutError = TEXT("The JSON has no \"scenes\" list.");
+			return false;
+		}
+		auto Str = [](const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
+		{
+			FString Value;
+			Object->TryGetStringField(Field, Value);
+			return Value;
+		};
+		auto Strings = [](const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
+		{
+			TArray<FString> Values;
+			Object->TryGetStringArrayField(Field, Values);
+			return Values;
+		};
+		for (const TSharedPtr<FJsonValue>& Value : *Scenes)
+		{
+			const TSharedPtr<FJsonObject> Object = Value.IsValid() ? Value->AsObject() : nullptr;
+			if (!Object.IsValid())
+			{
+				continue;
+			}
+			FBibleScene& Bible = OutScenes.AddDefaulted_GetRef();
+			FCinemafyScriptScene& Scene = Bible.Data;
+			Scene.Id = Str(Object, TEXT("scene_id"));
+			Bible.Mission = Str(Object, TEXT("mission_id"));
+			Scene.Heading = Str(Object, TEXT("title"));
+			Scene.Synopsis = Str(Object, TEXT("source_sequence"));
+			FCinemafyGameContract& Game = Scene.Game;
+			Game.Presentation = PresentationFor(Str(Object, TEXT("mode")));
+			Game.Trigger = Str(Object, TEXT("trigger"));
+			Game.EntryState = Str(Object, TEXT("entry_state"));
+			Game.LocationDetail = Str(Object, TEXT("location"));
+			Game.CastNotes = Strings(Object, TEXT("cast"));
+			Game.ControlBefore = Str(Object, TEXT("control_before"));
+			Game.ControlAfter = Str(Object, TEXT("control_after"));
+			Game.CameraNotes = Str(Object, TEXT("camera_staging"));
+			Game.RequiredBeats = Strings(Object, TEXT("required_beats"));
+			Game.ExitState = Strings(Object, TEXT("exit_state"));
+			Game.Handoff = Str(Object, TEXT("handoff"));
+			Game.ContinuityNotes = Str(Object, TEXT("continuity_notes"));
+			const TArray<FString> Chapters = Strings(Object, TEXT("source_chapters"));
+			Game.SourceRef = Chapters.Num() > 0 ? TEXT("Chapter ") + FString::Join(Chapters, TEXT(", ")) : FString();
+			double Seconds = 0.0;
+			if (Object->TryGetNumberField(TEXT("planning_seconds"), Seconds) || Object->TryGetNumberField(TEXT("estimated_seconds"), Seconds))
+			{
+				Game.TargetSeconds = static_cast<float>(Seconds);
+			}
+			const TSharedPtr<FJsonObject>* Skip = nullptr;
+			if (Object->TryGetObjectField(TEXT("skip_policy"), Skip) && Skip && Skip->IsValid())
+			{
+				(*Skip)->TryGetBoolField(TEXT("presentation_skippable"), Game.bSkippable);
+				(*Skip)->TryGetBoolField(TEXT("interleaved_gameplay"), Game.bInterleavedGameplay);
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Script = nullptr;
+			if (Object->TryGetArrayField(TEXT("script"), Script))
+			{
+				for (const TSharedPtr<FJsonValue>& Entry : *Script)
+				{
+					const TSharedPtr<FJsonObject> Line = Entry.IsValid() ? Entry->AsObject() : nullptr;
+					if (Line.IsValid())
+					{
+						const FString Chapter = Str(Line, TEXT("source_chapter"));
+						AddLine(Scene, Str(Line, TEXT("type")), Str(Line, TEXT("speaker")), Str(Line, TEXT("text")), Str(Line, TEXT("origin")),
+							Chapter.IsEmpty() ? FString() : TEXT("Chapter ") + Chapter);
+					}
+				}
+			}
+		}
+		return true;
+	}
+
+	/** The Markdown bible: "#### <id>", a bold title, "**Key:** value" lines, then the performance script. */
+	void ReadMarkdown(const FString& Text, FString& OutTitle, TArray<FBibleScene>& OutScenes)
+	{
+		TArray<FString> Lines;
+		Text.ParseIntoArrayLines(Lines, false);
+		FString Mission;
+		FBibleScene* Current = nullptr;
+		bool bInScript = false;
+		bool bInExit = false;
+		for (const FString& Raw : Lines)
+		{
+			const FString Line = Raw.TrimStartAndEnd();
+			if (OutTitle.IsEmpty() && Line.StartsWith(TEXT("# ")))
+			{
+				OutTitle = Line.Mid(2).TrimStartAndEnd();
+				continue;
+			}
+			if (Line.StartsWith(TEXT("## ")))
+			{
+				Current = nullptr;
+				continue;
+			}
+			if (Line.StartsWith(TEXT("### ")))
+			{
+				const FString Heading = Line.Mid(4).TrimStartAndEnd();
+				FString Name, Title;
+				Mission = Heading.Split(MiddleDot, &Name, &Title) ? Name.TrimStartAndEnd() : Heading;
+				Current = nullptr;
+				continue;
+			}
+			if (Line.StartsWith(TEXT("#### ")))
+			{
+				Current = &OutScenes.AddDefaulted_GetRef();
+				Current->Data.Id = Line.Mid(5).TrimStartAndEnd();
+				Current->Mission = Mission;
+				bInScript = false;
+				bInExit = false;
+				continue;
+			}
+			if (!Current || Line.IsEmpty() || Line == TEXT("---"))
+			{
+				continue;
+			}
+			FCinemafyScriptScene& Scene = Current->Data;
+			FCinemafyGameContract& Game = Scene.Game;
+
+			// "**Key:** value", and dialogue "**SPEAKER [M - Chapter 1]:** line".
+			if (Line.StartsWith(TEXT("**")))
+			{
+				const int32 Close = Line.Find(TEXT(":**"));
+				if (Close == INDEX_NONE)
+				{
+					const FString Bold = Line.Replace(TEXT("*"), TEXT("")).TrimStartAndEnd();
+					if (Bold.Equals(TEXT("Performance script"), ESearchCase::IgnoreCase))
+					{
+						bInScript = true;
+						bInExit = false;
+					}
+					else if (Scene.Heading.IsEmpty())
+					{
+						Scene.Heading = Bold;
+					}
+					continue;
+				}
+				const FString Key = Line.Mid(2, Close - 2).TrimStartAndEnd();
+				const FString Value = Line.Mid(Close + 3).TrimStartAndEnd();
+				if (Key.Contains(TEXT("[")))
+				{
+					// A spoken (or displayed) line, with its origin tag.
+					FString Speaker, Tag;
+					Key.Split(TEXT("["), &Speaker, &Tag);
+					Tag = Tag.Replace(TEXT("]"), TEXT("")).TrimStartAndEnd();
+					FString Origin, Source;
+					if (!Tag.Split(MiddleDot, &Origin, &Source))
+					{
+						Origin = Tag;
+					}
+					AddLine(Scene, Speaker.TrimStartAndEnd().StartsWith(TEXT("ON-SCREEN")) ? TEXT("display") : TEXT("dialogue"), Speaker.TrimStartAndEnd(), Value,
+						Origin.TrimStartAndEnd(), Source.TrimStartAndEnd());
+					continue;
+				}
+				bInExit = Key.StartsWith(TEXT("Canonical completion state"));
+				if (Key == TEXT("Source")) { Game.SourceRef = Value; }
+				else if (Key.StartsWith(TEXT("Type")))
+				{
+					FString Mode, Time;
+					Value.Split(TEXT("/"), &Mode, &Time, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+					Game.Presentation = PresentationFor(Mode.IsEmpty() ? Value : Mode);
+					Game.TargetSeconds = ClockSeconds(Time);
+					Game.bInterleavedGameplay = Game.Presentation == ECinemafyPresentation::GameplayBridge;
+				}
+				else if (Key.StartsWith(TEXT("Location")))
+				{
+					FString Where, Who;
+					if (!Value.Split(TEXT(";"), &Where, &Who))
+					{
+						Where = Value;
+					}
+					Game.LocationDetail = Where.TrimStartAndEnd();
+					Who.ParseIntoArray(Game.CastNotes, TEXT(","), true);
+					for (FString& Name : Game.CastNotes)
+					{
+						Name.TrimStartAndEndInline();
+						Name.RemoveFromEnd(TEXT("."));
+					}
+				}
+				else if (Key == TEXT("Trigger")) { Game.Trigger = Value; }
+				else if (Key == TEXT("Entry state")) { Game.EntryState = Value; }
+				else if (Key == TEXT("Control"))
+				{
+					FString Before, After;
+					if (Value.Split(Arrow, &Before, &After))
+					{
+						Game.ControlBefore = Before.TrimStartAndEnd();
+						Game.ControlAfter = After.TrimStartAndEnd();
+						Game.ControlAfter.RemoveFromEnd(TEXT("."));
+					}
+				}
+				else if (Key.StartsWith(TEXT("Camera"))) { Game.CameraNotes = Value; }
+				else if (Key.StartsWith(TEXT("Required"))) { Value.ParseIntoArray(Game.RequiredBeats, TEXT(";"), true); for (FString& Beat : Game.RequiredBeats) { Beat.TrimStartAndEndInline(); Beat.RemoveFromEnd(TEXT(".")); } }
+				else if (Key.StartsWith(TEXT("Return to play"))) { Game.Handoff = Value; bInScript = false; }
+				else if (Key.StartsWith(TEXT("Continuity"))) { Game.ContinuityNotes = Value; bInScript = false; }
+				continue;
+			}
+			if (bInExit && Line.StartsWith(TEXT("- ")))
+			{
+				Game.ExitState.Add(Line.Mid(2).TrimStartAndEnd());
+				continue;
+			}
+			if (bInScript && Line.StartsWith(TEXT("*")))
+			{
+				FString Action = Line;
+				while (Action.StartsWith(TEXT("*")) || Action.StartsWith(TEXT("_"))) { Action = Action.Mid(1); }
+				while (Action.EndsWith(TEXT("*")) || Action.EndsWith(TEXT("_"))) { Action = Action.LeftChop(1); }
+				AddLine(Scene, TEXT("action"), FString(), Action, FString(), FString());
+			}
+		}
+		if (OutScenes.Num() > 0)
+		{
+			// The bible's own synopsis is its source sequence: "Source: Chapter 1; printed p. 4. <what happens>".
+			for (FBibleScene& Bible : OutScenes)
+			{
+				FString Chapters, What;
+				if (Bible.Data.Game.SourceRef.Split(TEXT(". "), &Chapters, &What, ESearchCase::CaseSensitive, ESearchDir::FromEnd) && What.Len() > 12)
+				{
+					Bible.Data.Synopsis = What;
+				}
+			}
+		}
+	}
+
+	/** A direction in an action line that gives the player control: the end of an insert. */
+	bool HandsControl(const FString& Action)
+	{
+		const FString Lower = Action.ToLower();
+		if (Lower.Contains(TEXT("playable")) || Lower.Contains(TEXT("gameplay resumes")) || Lower.Contains(TEXT("the player resolves"))
+			|| Lower.Contains(TEXT("player crawl")) || Lower.Contains(TEXT("resume play")) || Lower.Contains(TEXT("returns to play")))
+		{
+			return true;
+		}
+		return Lower.Contains(TEXT("control")) && (Lower.Contains(TEXT("player")) || Lower.Contains(TEXT("give")) || Lower.Contains(TEXT("hand"))
+			|| Lower.Contains(TEXT("resume")) || Lower.Contains(TEXT("restore")) || Lower.Contains(TEXT("return")));
+	}
+
+	/** Camera directions from the notes and the staging prose become Shot lines before the line they're for. */
+	int32 AddCamera(FCinemafyScriptScene& Scene)
+	{
+		int32 Calls = 0;
+		TArray<FCinemafyScriptLine> Out;
+		auto Sentences = [](const FString& Text)
+		{
+			TArray<FString> Parts;
+			Text.Replace(TEXT("; "), TEXT(". ")).ParseIntoArray(Parts, TEXT(". "), true);
+			return Parts;
+		};
+		auto Emit = [&Out, &Calls](const FString& Sentence)
+		{
+			FCinemafyShotCall Call;
+			if (UCinemafyScriptLibrary::ReadCameraProse(Sentence, Call))
+			{
+				FCinemafyScriptLine& Shot = Out.AddDefaulted_GetRef();
+				Shot.Kind = ECinemafyScriptLineKind::Shot;
+				Shot.Text = Sentence.TrimStartAndEnd();
+				Shot.Shot = Call;
+				++Calls;
+				return true;
+			}
+			return false;
+		};
+		// The notes set up the opening shot (their first camera sentence).
+		for (const FString& Sentence : Sentences(Scene.Game.CameraNotes))
+		{
+			if (Emit(Sentence))
+			{
+				break;
+			}
+		}
+		for (const FCinemafyScriptLine& Line : Scene.Lines)
+		{
+			Out.Add(Line);
+			if (Line.Kind == ECinemafyScriptLineKind::Action)
+			{
+				for (const FString& Sentence : Sentences(Line.Text))
+				{
+					Emit(Sentence);
+				}
+			}
+		}
+		Scene.Lines = MoveTemp(Out);
+		return Calls;
+	}
+
+	/** A gameplay bridge in pieces: an insert ends where a direction gives the player control. */
+	void SplitInserts(FCinemafyScriptScene& Scene)
+	{
+		Scene.Inserts.Reset();
+		if (!Scene.Game.bInterleavedGameplay && Scene.Game.Presentation != ECinemafyPresentation::GameplayBridge)
+		{
+			return;
+		}
+		TArray<FCinemafySceneInsert> Inserts;
+		int32 First = 0;
+		for (int32 Index = 0; Index < Scene.Lines.Num(); ++Index)
+		{
+			const FCinemafyScriptLine& Line = Scene.Lines[Index];
+			if (Line.Kind != ECinemafyScriptLineKind::Action || !HandsControl(Line.Text) || Index + 1 >= Scene.Lines.Num())
+			{
+				continue;
+			}
+			// Nothing said since the last hand-over: it's still the same stretch of play.
+			bool bSpoken = false;
+			for (int32 Between = First; Between <= Index; ++Between)
+			{
+				bSpoken |= Scene.Lines[Between].Kind == ECinemafyScriptLineKind::Dialogue;
+			}
+			if (!bSpoken && Inserts.Num() > 0)
+			{
+				Inserts.Last().LastLine = Index;
+				First = Index + 1;
+				continue;
+			}
+			FCinemafySceneInsert& Insert = Inserts.AddDefaulted_GetRef();
+			Insert.FirstLine = First;
+			Insert.LastLine = Index;
+			Insert.HandsControl = Line.Text;
+			First = Index + 1;
+		}
+		if (Inserts.Num() == 0)
+		{
+			return;
+		}
+		FCinemafySceneInsert& Last = Inserts.AddDefaulted_GetRef();
+		Last.FirstLine = First;
+		Last.LastLine = Scene.Lines.Num() - 1;
+		Scene.Inserts = MoveTemp(Inserts);
+	}
+
+	/** Everything the rest of Cinemafy reads from a scene: cast, counts, length, place, camera, inserts. */
+	int32 Finish(FCinemafyScriptScene& Scene)
+	{
+		Scene.bFixedId = true;
+		int32 Words = 0;
+		FString Action;
+		for (const FCinemafyScriptLine& Line : Scene.Lines)
+		{
+			if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+			{
+				++Scene.DialogueLines;
+				Words += CountWords(Line.Text);
+				Scene.Characters.AddUnique(Line.Speaker);
+			}
+			else if (Line.Kind == ECinemafyScriptLineKind::Action)
+			{
+				Action += (Action.IsEmpty() ? TEXT("") : TEXT(" ")) + Line.Text;
+			}
+		}
+		Scene.EstimatedSeconds = Scene.Game.TargetSeconds > 0.f ? Scene.Game.TargetSeconds : FMath::Max(5.f, Words / 2.6f + CountWords(Action) / 3.f);
+		Scene.bHasAction = DescribesAction(Action);
+		FString Place;
+		if (!Scene.Game.LocationDetail.Split(TEXT(","), &Place, nullptr))
+		{
+			Place = Scene.Game.LocationDetail;
+		}
+		Scene.Location = Place.TrimStartAndEnd().ToUpper();
+		if (Scene.Synopsis.IsEmpty())
+		{
+			Scene.Synopsis = Scene.Game.RequiredBeats.Num() > 0 ? Scene.Game.RequiredBeats[0] : FirstSentences(Action, 220);
+		}
+		const int32 Calls = AddCamera(Scene);
+		SplitInserts(Scene);
+		return Calls;
+	}
+}
+
+FString UCinemafyScriptLibrary::SplitInsertId(const FString& SceneId, int32& OutInsert)
+{
+	FString Base, Index;
+	if (SceneId.Split(TEXT("#"), &Base, &Index, ESearchCase::CaseSensitive, ESearchDir::FromEnd) && Index.IsNumeric())
+	{
+		OutInsert = FCString::Atoi(*Index);
+		return Base;
+	}
+	OutInsert = 0;
+	return SceneId;
+}
+
+bool UCinemafyScriptLibrary::IsScriptBible(const FString& Text)
+{
+	const FString Start = Text.Left(4096).TrimStart();
+	if (Start.StartsWith(TEXT("{")))
+	{
+		return Text.Contains(TEXT("\"scene_id\"")) && Text.Contains(TEXT("\"script\""));
+	}
+	return Text.Contains(TEXT("**Performance script**")) && Text.Contains(TEXT("\n#### "));
+}
+
+bool UCinemafyScriptLibrary::ReadCameraProse(const FString& Sentence, FCinemafyShotCall& OutCall)
+{
+	FString Upper = Sentence.ToUpper().TrimStartAndEnd().Replace(TEXT("POINT OF VIEW"), TEXT("POV")).Replace(TEXT("TWO-SHOT"), TEXT("TWO SHOT"))
+		.Replace(TEXT("OVER-THE-SHOULDER"), TEXT("OVER THE SHOULDER")).Replace(TEXT("CLOSE-UP"), TEXT("CLOSEUP")).Replace(TEXT("\u2019"), TEXT("'"));
+	if (Upper.IsEmpty())
+	{
+		return false;
+	}
+	// A direction opening the sentence reads as one ("Close on the seal", "Slow push in as she signs"), when it opens
+	// with a camera word; words that are also ordinary English ("wide", "close", "following") need a camera word after them.
+	TArray<FString> Words;
+	Upper.ParseIntoArrayWS(Words);
+	static const TSet<FString> CameraWords = { TEXT("CLOSER"), TEXT("CLOSEUP"), TEXT("EXTREME"), TEXT("MEDIUM"), TEXT("TIGHT"), TEXT("ANGLE"),
+		TEXT("LOW"), TEXT("TWO"), TEXT("OVER"), TEXT("SLOW"), TEXT("PUSH"), TEXT("PULL"), TEXT("DOLLY"), TEXT("CRANE"), TEXT("BOOM"), TEXT("ARC"),
+		TEXT("CRASH"), TEXT("SNAP"), TEXT("ECU"), TEXT("MCU"), TEXT("CU"), TEXT("POV"), TEXT("TRACKING") };
+	static const TSet<FString> Ambiguous = { TEXT("WIDE"), TEXT("WIDER"), TEXT("CLOSE"), TEXT("INSERT"), TEXT("ESTABLISHING") };
+	static const TSet<FString> Joins = { TEXT("ON"), TEXT("SHOT"), TEXT("ANGLE"), TEXT("-"), TEXT(":") };
+	const FString First = Words.Num() > 0 ? Words[0].Replace(TEXT(":"), TEXT("")) : FString();
+	const bool bOpensOnCamera = CameraWords.Contains(First)
+		|| (Ambiguous.Contains(First) && (Words.Num() <= 4 || (Words.Num() > 1 && Joins.Contains(Words[1])) || Words[0].EndsWith(TEXT(":"))));
+	FCinemafyShotCall Call;
+	if (bOpensOnCamera && ReadShotCall(Upper.Left(120), Call) && (Call.bFraming || Call.bMove) && !Call.bBackToScene)
+	{
+		// Only the words up to the first comma name the subject.
+		FString Lead;
+		if (Upper.Split(TEXT(","), &Lead, nullptr))
+		{
+			ReadShotCall(Lead, Call);
+		}
+		Call.Subject = Call.Subject.Left(40);
+		OutCall = Call;
+		return true;
+	}
+	// Unmistakable camera words anywhere in it.
+	OutCall = FCinemafyShotCall();
+	int32 At = Upper.Find(TEXT("'S POV"));
+	if (At != INDEX_NONE)
+	{
+		int32 Start = At;
+		while (Start > 0 && Upper[Start - 1] != TEXT(' ') && Upper[Start - 1] != TEXT(','))
+		{
+			--Start;
+		}
+		OutCall.bFraming = true;
+		OutCall.ShotType = ECinemafyShotType::POV;
+		OutCall.Subject = Upper.Mid(Start, At - Start);
+		return !OutCall.Subject.IsEmpty();
+	}
+	struct FPhrase { const TCHAR* Words; ECinemafyShotType Type; };
+	static const FPhrase Phrases[] = { { TEXT("EXTREME CLOSE"), ECinemafyShotType::ExtremeCloseUp }, { TEXT("TWO SHOT"), ECinemafyShotType::MediumTwoShot },
+		{ TEXT("OVER THE SHOULDER"), ECinemafyShotType::OverTheShoulder }, { TEXT("CLOSEUP"), ECinemafyShotType::CloseUp },
+		{ TEXT("LOW ANGLE"), ECinemafyShotType::LowHero }, { TEXT("WIDE SHOT"), ECinemafyShotType::WideTwoShot }, { TEXT("ESTABLISHING SHOT"), ECinemafyShotType::WideTwoShot } };
+	for (const FPhrase& Phrase : Phrases)
+	{
+		if (Upper.Contains(Phrase.Words))
+		{
+			OutCall.bFraming = true;
+			OutCall.ShotType = Phrase.Type;
+			break;
+		}
+	}
+	if (Upper.Contains(TEXT("PUSH IN")) || Upper.Contains(TEXT("PUSHES IN")) || Upper.Contains(TEXT("SLOW PUSH")))
+	{
+		OutCall.bMove = true;
+		OutCall.Move = ECinemafyCameraMove::PushIn;
+		OutCall.bFraming |= !OutCall.bFraming;
+		OutCall.ShotType = OutCall.bFraming && OutCall.ShotType != ECinemafyShotType::CloseUp ? OutCall.ShotType : ECinemafyShotType::MediumCloseUp;
+	}
+	else if (Upper.Contains(TEXT("PULL BACK")) || Upper.Contains(TEXT("PULLS BACK")))
+	{
+		OutCall.bMove = true;
+		OutCall.Move = ECinemafyCameraMove::PullOut;
+		if (!OutCall.bFraming)
+		{
+			OutCall.bFraming = true;
+			OutCall.ShotType = ECinemafyShotType::WideTwoShot;
+		}
+	}
+	if (Upper.Contains(TEXT("HANDHELD")) || Upper.Contains(TEXT("HAND-HELD")))
+	{
+		OutCall.bFeel = true;
+		OutCall.Feel = ECinemafyCameraFeel::Handheld;
+	}
+	return OutCall.bFraming || OutCall.bMove || OutCall.bFeel;
+}
+
+TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScriptBible(const FString& Text, const FString& ActMapText, FString& OutTitle, FString& OutReport)
+{
+	using namespace CinemafyBible;
+	TArray<FCinemafyScriptAct> Acts;
+	TArray<FBibleScene> Scenes;
+	FString Error;
+	const bool bJson = Text.Left(4096).TrimStart().StartsWith(TEXT("{"));
+	if (bJson)
+	{
+		if (!ReadJson(Text, OutTitle, Scenes, Error))
+		{
+			OutReport = Error;
+			return Acts;
+		}
+	}
+	else
+	{
+		ReadMarkdown(Text, OutTitle, Scenes);
+	}
+	if (Scenes.Num() == 0)
+	{
+		OutReport = TEXT("No scenes found in the script bible.");
+		return Acts;
+	}
+
+	// Acts: the bible's scene map (the Markdown itself, or the one passed in for a JSON bible).
+	FActMap Map = ReadActMap(bJson ? ActMapText : Text);
+	int32 Calls = 0, Dialogue = 0, Displays = 0, Inserts = 0;
+	TSet<FString> Speakers;
+	TMap<ECinemafyPresentation, int32> Modes;
+	for (FBibleScene& Bible : Scenes)
+	{
+		Calls += Finish(Bible.Data);
+		Dialogue += Bible.Data.DialogueLines;
+		Inserts += Bible.Data.Inserts.Num();
+		Modes.FindOrAdd(Bible.Data.Game.Presentation) += 1;
+		for (const FCinemafyScriptLine& Line : Bible.Data.Lines)
+		{
+			Displays += Line.Kind == ECinemafyScriptLineKind::Display ? 1 : 0;
+			if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+			{
+				Speakers.Add(Line.Speaker);
+			}
+		}
+	}
+
+	auto ActIndexFor = [&Map](const FBibleScene& Bible) -> int32
+	{
+		if (const int32* Found = Map.SceneAct.Find(Bible.Data.Id))
+		{
+			return *Found;
+		}
+		if (Map.IsEmpty())
+		{
+			const FString Mission = Bible.Mission.ToUpper();
+			return Mission.Contains(TEXT("PRO")) ? 0 : (Mission.Contains(TEXT("EPI")) ? 2 : 1);
+		}
+		return INDEX_NONE;
+	};
+	TArray<FString> ActTitles = Map.IsEmpty() ? TArray<FString>({ TEXT("Prologue"), TEXT("Campaign"), TEXT("Epilogue") }) : Map.Titles;
+	ActTitles.Add(TEXT("Not in the scene map"));
+	const int32 Unmapped = ActTitles.Num() - 1;
+	for (int32 ActIndex = 0; ActIndex < ActTitles.Num(); ++ActIndex)
+	{
+		FCinemafyScriptAct Act;
+		Act.Title = ActTitles[ActIndex];
+		const FString Lower = Act.Title.ToLower();
+		Act.Id = Lower.StartsWith(TEXT("prologue")) ? FString(TEXT("P")) : (Lower.StartsWith(TEXT("epilogue")) ? FString(TEXT("E")) : FString());
+		Act.bInferred = Map.IsEmpty();
+		Act.Why = Map.IsEmpty() ? TEXT("no scene map: add the Markdown bible beside the JSON for its acts") : TEXT("the bible's scene map");
+		for (FBibleScene& Bible : Scenes)
+		{
+			const int32 Index = ActIndexFor(Bible);
+			if ((Index == INDEX_NONE ? Unmapped : Index) != ActIndex)
+			{
+				continue;
+			}
+			if (Act.Chapters.Num() == 0 || Act.Chapters.Last().Id != Bible.Mission)
+			{
+				FCinemafyScriptChapter& Chapter = Act.Chapters.AddDefaulted_GetRef();
+				Chapter.Id = Bible.Mission;
+				const FString* Title = Map.MissionTitles.Find(Bible.Mission);
+				Chapter.Title = Title ? *Title : Bible.Mission;
+				Chapter.Why = TEXT("a mission of the bible");
+			}
+			Act.Chapters.Last().Scenes.Add(Bible.Data);
+		}
+		if (Act.Chapters.Num() > 0)
+		{
+			Acts.Add(MoveTemp(Act));
+		}
+	}
+	// Numbered acts in order (Prologue P, Epilogue E), and running scene numbers.
+	int32 ActNumber = 0, Number = 0;
+	for (FCinemafyScriptAct& Act : Acts)
+	{
+		if (Act.Id.IsEmpty())
+		{
+			Act.Id = FString::FromInt(++ActNumber);
+		}
+		for (FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			for (FCinemafyScriptScene& Scene : Chapter.Scenes)
+			{
+				Scene.Number = ++Number;
+			}
+		}
+	}
+
+	TrackContinuity(Acts);
+	ResolveStoryTargets(Acts);
+
+	TArray<FString> Report;
+	Report.Add(FString::Printf(TEXT("Script bible (%s): %d scene(s), %d act(s), %d dialogue line(s), %d on-screen display line(s), %d speaker(s)."),
+		bJson ? TEXT("JSON") : TEXT("Markdown"), Number, Acts.Num(), Dialogue, Displays, Speakers.Num()));
+	Report.Add(FString::Printf(TEXT("%d camera direction(s) read from the notes and staging; %d gameplay-bridge insert(s)."), Calls, Inserts));
+	const UEnum* Enum = StaticEnum<ECinemafyPresentation>();
+	for (const TPair<ECinemafyPresentation, int32>& Mode : Modes)
+	{
+		Report.Add(FString::Printf(TEXT("  %s: %d"), *Enum->GetDisplayNameTextByValue(static_cast<int64>(Mode.Key)).ToString(), Mode.Value));
+	}
+	Report.Add(Map.IsEmpty() ? TEXT("No scene map: acts are Prologue / Campaign / Epilogue. Put the Markdown bible beside the JSON (or set Act Map File) for the real acts.")
+		: FString::Printf(TEXT("Acts and mission titles from the bible's scene map (%d act(s))."), Map.Titles.Num()));
+	for (const FCinemafyScriptAct& Act : Acts)
+	{
+		int32 Count = 0;
+		for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			Count += Chapter.Scenes.Num();
+		}
+		Report.Add(FString::Printf(TEXT("%s %s: %d mission(s), %d scene(s)"), *Act.Id, *Act.Title, Act.Chapters.Num(), Count));
+	}
+	OutReport = FString::Join(Report, TEXT("\n"));
+	return Acts;
 }

@@ -3309,7 +3309,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptWithDialog()
 	TArray<FString> Files;
 	const void* Parent = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 	if (!Desktop->OpenFileDialog(Parent, TEXT("Import a script"), FPaths::ProjectDir(), FString(),
-		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md)|*.fountain;*.fdx;*.txt;*.md"), EFileDialogFlags::None, Files) || Files.Num() == 0)
+		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md;*.json)|*.fountain;*.fdx;*.txt;*.md;*.json"), EFileDialogFlags::None, Files) || Files.Num() == 0)
 	{
 		return nullptr;
 	}

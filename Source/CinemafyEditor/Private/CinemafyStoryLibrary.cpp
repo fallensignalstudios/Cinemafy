@@ -861,7 +861,7 @@ bool UCinemafyStoryLibrary::MoveScene(UCinemafyScriptProject* Project, const FSt
 					for (int32 S = 0; S < Scenes.Num(); ++S)
 					{
 						const FString NewId = FString::Printf(TEXT("%d.%d.%d"), A + 1, C + 1, S + 1);
-						if (Scenes[S].Id != NewId)
+						if (!Scenes[S].bFixedId && Scenes[S].Id != NewId)
 						{
 							Renamed.Add(Scenes[S].Id, NewId);
 							Scenes[S].Id = NewId;

@@ -27,7 +27,8 @@ public class Cinemafy : ModuleRules
 			"DeveloperSettings",
 			"InputCore",
 			"AIModule",
-			"Projects"
+			"Projects",
+			"Json"
 		});
 	}
 }
