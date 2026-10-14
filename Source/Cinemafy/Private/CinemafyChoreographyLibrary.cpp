@@ -302,6 +302,36 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 			continue;
 		}
 
+		// How the target answers. These words shape the reaction; they never search animation names.
+		if (IsOneOf(Word, { TEXT("kill"), TEXT("finish"), TEXT("slay"), TEXT("execute"), TEXT("finisher") }))
+		{
+			bAttack = true;
+			Reading.Reaction = ECinemafyReaction::Death;
+			continue;
+		}
+		if (IsOneOf(Word, { TEXT("knock"), TEXT("knockdown"), TEXT("launch"), TEXT("floor"), TEXT("flatten"), TEXT("sweep") }))
+		{
+			bAttack = true;
+			Reading.Reaction = ECinemafyReaction::Knockdown;
+			continue;
+		}
+		if (IsOneOf(Word, { TEXT("blocked"), TEXT("parried"), TEXT("deflected"), TEXT("guarded") }))
+		{
+			Reading.Reaction = ECinemafyReaction::Block;
+			continue;
+		}
+		if (IsOneOf(Word, { TEXT("dodged"), TEXT("evaded"), TEXT("missed"), TEXT("whiffed"), TEXT("sidestepped") }))
+		{
+			Reading.Reaction = ECinemafyReaction::Dodge;
+			continue;
+		}
+		if (IsOneOf(Word, { TEXT("feint"), TEXT("fake") }))
+		{
+			bAttack = true;
+			Reading.Reaction = ECinemafyReaction::None;
+			continue;
+		}
+
 		const FString Weapon = WeaponForWord(Word);
 		if (!Weapon.IsEmpty())
 		{
@@ -380,10 +410,15 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	}
 
 	// Decide the action. Attacks and traversal win over gait words ("sprint vault", "charge attack").
-	if (bAttack)
+	if (bAttack || (Reading.Reaction != ECinemafyReaction::Hit && Others.Num() == 0 && !bTraverse))
 	{
+		// "blocked" / "dodged" alone still means an attack (that the target answers).
 		Reading.Kind = ECinemafyActionKind::Attack;
 		Reading.Repeat = FMath::Clamp(Number > 0 ? Number : 1, 1, 6);
+		if (Reading.Reaction == ECinemafyReaction::Hit && Others.Contains(TEXT("heavy")))
+		{
+			Reading.Reaction = ECinemafyReaction::Knockdown;
+		}
 	}
 	else if (bTraverse)
 	{
@@ -424,11 +459,18 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	case ECinemafyActionKind::Attack:
 	{
 		bool bHasSpecific = false;
+		TArray<FString> Modifiers;
 		for (const FString& Word : Others)
 		{
 			// Specific verbs ("kick", "punch", "shoot", "cast") narrow the search; generic ones fold into "attack".
 			if (IsOneOf(Word, { TEXT("attack"), TEXT("atk"), TEXT("strike"), TEXT("swing"), TEXT("combo") }))
 			{
+				continue;
+			}
+			// Modifiers ("heavy", "light", "spin") prefer matching clips; they never replace the action itself.
+			if (IsOneOf(Word, { TEXT("heavy"), TEXT("power"), TEXT("strong"), TEXT("light"), TEXT("quick"), TEXT("spin"), TEXT("spinning"), TEXT("whirl") }))
+			{
+				Modifiers.Add(Concept(Word));
 				continue;
 			}
 			Reading.Keywords.Add(Concept(Word));
@@ -438,6 +480,7 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 		{
 			Reading.Keywords.Insert(Concept(TEXT("attack")), 0);
 		}
+		Reading.Keywords.Append(Modifiers);
 		break;
 	}
 	case ECinemafyActionKind::Traverse:
@@ -474,6 +517,10 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	if (Reading.Repeat > 1)
 	{
 		Summary += FString::Printf(TEXT(" x%d"), Reading.Repeat);
+	}
+	if (Reading.Kind == ECinemafyActionKind::Attack && Reading.Reaction != ECinemafyReaction::Hit)
+	{
+		Summary += FString::Printf(TEXT(" -> target %s"), *StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reading.Reaction)).ToString());
 	}
 	if (Reading.Seconds > 0.f)
 	{
@@ -798,6 +845,57 @@ float UCinemafyChoreographyLibrary::ScoreOverlayName(const FString& Weapon, cons
 		Best = FMath::Max(Best, Score - Index * 0.5f);
 	}
 	return Best;
+}
+
+FString UCinemafyChoreographyLibrary::ReactionDirection(float RelativeYaw)
+{
+	const float Yaw = FRotator::NormalizeAxis(RelativeYaw);
+	if (FMath::Abs(Yaw) <= 45.f)
+	{
+		return TEXT("front");
+	}
+	if (FMath::Abs(Yaw) >= 135.f)
+	{
+		return TEXT("back");
+	}
+	return Yaw > 0.f ? TEXT("right") : TEXT("left");
+}
+
+FCinemafyPromptReading UCinemafyChoreographyLibrary::MakeReactionReading(ECinemafyReaction Reaction, float RelativeYaw)
+{
+	FCinemafyPromptReading Reading;
+	Reading.Kind = ECinemafyActionKind::Perform;
+	switch (Reaction)
+	{
+	case ECinemafyReaction::Knockdown:
+		Reading.Keywords.Add(TEXT("knockdown|knock|knocked|fall|falldown|down|launch|launched"));
+		break;
+	case ECinemafyReaction::Death:
+		Reading.Keywords.Add(Concept(TEXT("die")));
+		break;
+	case ECinemafyReaction::Block:
+		Reading.Keywords.Add(Concept(TEXT("block")));
+		break;
+	case ECinemafyReaction::Dodge:
+		Reading.Keywords.Add(Concept(TEXT("dodge")));
+		break;
+	default:
+		Reading.Keywords.Add(Concept(TEXT("hit")));
+		break;
+	}
+
+	// Where the blow comes from is a preference, not a requirement (it's scored, never required).
+	const FString Side = ReactionDirection(RelativeYaw);
+	static const TMap<FString, FString> Sides = {
+		{ TEXT("front"), TEXT("front|forward|fwd") }, { TEXT("back"), TEXT("back|backward|behind|bwd|rear") },
+		{ TEXT("left"), TEXT("left|lft") }, { TEXT("right"), TEXT("right|rgt") } };
+	if (Reaction != ECinemafyReaction::Block)
+	{
+		Reading.Keywords.Add(Sides.FindRef(Side));
+	}
+	Reading.Summary = FString::Printf(TEXT("%s from the %s"),
+		*StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *Side);
+	return Reading;
 }
 
 ECinemafyArrival UCinemafyChoreographyLibrary::ResolveArrival(const TArray<FCinemafyChoreoBeat>& Beats, int32 BeatIndex)

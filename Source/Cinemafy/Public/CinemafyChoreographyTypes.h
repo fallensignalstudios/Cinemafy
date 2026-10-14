@@ -77,7 +77,9 @@ enum class ECinemafyPerformanceEventKind : uint8
 	Landing     UMETA(DisplayName = "Landing"),
 	/** A strike landing. Estimated unless the clip has a hit/impact/contact notify. */
 	Contact     UMETA(DisplayName = "Contact"),
-	ActionEnd   UMETA(DisplayName = "Action End")
+	ActionEnd   UMETA(DisplayName = "Action End"),
+	/** The target started reacting to a strike (synchronized so its impact meets the contact). */
+	Reaction    UMETA(DisplayName = "Reaction")
 };
 
 /** One moment in a take: what, when (take seconds), where, and whether it was observed or estimated. */
@@ -101,6 +103,24 @@ struct CINEMAFY_API FCinemafyPerformanceEvent
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Event")
 	FString Note;
+};
+
+/** How the target of an attack answers it. */
+UENUM(BlueprintType)
+enum class ECinemafyReaction : uint8
+{
+	/** Flinch from the hit, from the side it came from. */
+	Hit        UMETA(DisplayName = "Hit React"),
+	/** Off their feet ("heavy attack", "smash", "knock down"). */
+	Knockdown  UMETA(DisplayName = "Knockdown"),
+	/** "kill", "finish": dies and stays down. */
+	Death      UMETA(DisplayName = "Death"),
+	/** "attack blocked", "parried". */
+	Block      UMETA(DisplayName = "Block"),
+	/** "attack dodged", "missed". */
+	Dodge      UMETA(DisplayName = "Dodge"),
+	/** No reaction (the target does its own thing). */
+	None       UMETA(DisplayName = "None")
 };
 
 /** How the director brain read a one- or two-word prompt. */
@@ -134,6 +154,10 @@ struct CINEMAFY_API FCinemafyPromptReading
 	/** "wait 2" -> 2 seconds. 0 = default. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
 	float Seconds = 0.f;
+
+	/** Attacks: how the target answers the final strike (earlier strikes in a combo get hit reacts, or blocks). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
+	ECinemafyReaction Reaction = ECinemafyReaction::Hit;
 
 	/** "combo" / "attack x3" -> how many animations to chain. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
@@ -173,6 +197,21 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	/** Stable identity (survives reordering and renaming). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat", AdvancedDisplay)
 	FGuid Id;
+
+	/** Attacks on a character: make the target react, synchronized to the contact. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction")
+	bool bTargetReacts = true;
+
+	/** Attacks: how the target answers, instead of what the prompt implies. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction", meta = (EditCondition = "bTargetReacts"))
+	bool bOverrideReaction = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction", meta = (EditCondition = "bOverrideReaction"))
+	ECinemafyReaction Reaction = ECinemafyReaction::Hit;
+
+	/** Use this clip for the target's reaction instead of the one the director picks. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction", meta = (EditCondition = "bTargetReacts"))
+	TObjectPtr<UAnimSequenceBase> ReactionOverride = nullptr;
 
 	/** Play-rate for the beat's animation. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat", meta = (ClampMin = "0.1", ClampMax = "3.0"))

@@ -57,6 +57,48 @@ A strike's contact time is:
 It is only published if the montage is **still playing** when that time arrives. An interrupted
 swing doesn't hit.
 
+## Interactions: attacker and defender
+
+An attack beat on a character makes that character **answer the strike, synchronized on the contact**:
+
+- **Timing:** for every strike, Cinemafy knows when it lands (authored contact notify, or a labeled estimate).
+  The defender's reaction starts early enough that **its own impact frame lands on that moment**:
+  - Its own hit notify sets the lead when there is one.
+  - Otherwise: about 0.06s for hits, knockdowns and deaths, 0.25s for blocks (the guard comes up first),
+    0.3s for dodges.
+- **Choice:**
+  - The prompt decides the reaction: hit by default, `kill` / `finish` for death, `heavy` / `knock down`
+    for a knockdown, `blocked` / `parried` for a block, `dodged` / `missed` for a dodge, `feint` for none.
+  - Earlier strikes in a combo get hit reacts, and the last one gets the big reaction.
+  - Clips are picked by name from the defender's own skeleton, preferring the side the blow comes from
+    (front, back, left or right). A missing knockdown or death falls back to a hit react (logged). A block or
+    dodge never quietly becomes a hit.
+- **Alignment:**
+  - A defender facing roughly toward the blow (within `DefenderTurnLimit`) turns into it during the wind-up.
+    Otherwise it takes the hit from the side or back.
+  - The defender stops moving for the exchange.
+  - The attacker's warp target is the stand-off spot in front of the defender.
+- **Honesty:**
+  - A swing cut off before contact causes no reaction.
+  - A defender busy with its own action isn't overridden. That's recorded as an event, and a missing
+    reaction makes the beat a Fallback.
+  - Deaths and knockdowns hold their final pose and don't react again.
+- **Recording:** defenders without their own choreography are recorded with the attacker's take and baked
+  onto their own bindings. A defender with its own choreography performs it, and reacts only when it isn't
+  busy.
+- **Per-beat controls:** `bTargetReacts`, `Reaction` (override) and `ReactionOverride` (a specific clip).
+
+### Contextual Animation (later, as an adapter)
+
+Epic's **Contextual Animation** plugin is designed for exactly this: clips authored as a pair, roles, and
+alignment sections with motion warping. Cinemafy doesn't depend on it yet because:
+- It's marked experimental, and its API has moved between engine versions.
+- It needs **paired** content, while most combat packs ship independent attacks and hit reacts.
+
+The interaction model above (roles, a shared contact moment, an alignment target) maps one-to-one onto a
+Contextual Animation scene. When paired scene assets are present, an adapter can play the scene for
+both roles instead of picking two independent clips, keeping the same events, outcomes and recording.
+
 ## Bake-space contract
 
 - **Actor (capsule) transform** goes on the performer's transform track, sampled at the open
@@ -88,8 +130,9 @@ These are real and worth doing. They're bigger than a patch:
   fed through the performer's own trajectory inputs.
 - **Validated move definitions:** promote name-matched candidates into curated entries with contact
   markers, entry windows, body masks and root-motion policy (Move Library is the start of this).
-- **Synchronized interactions:** attacker/defender solved together on a shared contact marker,
-  paired content, reserved space; evaluate Contextual Animation behind an adapter.
+- **Contextual Animation adapter** for paired content (the native synchronized interactions are in).
+- **Weapon-path contact checks:** verify the blade actually reaches the defender through the swing,
+  not just at one instant.
 - **Hand occupancy and stow/draw performances;** action-aware gaze and IK reduction during contact
   windows.
 - **Fixed-time contact constraints** ("the hit lands at 4.2s"), resolved explicitly rather than by

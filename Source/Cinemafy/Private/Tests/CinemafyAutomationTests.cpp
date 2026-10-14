@@ -579,4 +579,35 @@ bool FCinemafyChoreoArrivalTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoReactionTest, "Cinemafy.Choreography.TargetsReact", CinemafyTests::Flags)
+bool FCinemafyChoreoReactionTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+
+	TestEqual(TEXT("A sword attack makes the target flinch"), Lib::ReadPrompt(TEXT("sword attack")).Reaction, ECinemafyReaction::Hit);
+	TestEqual(TEXT("kill means death"), Lib::ReadPrompt(TEXT("kill")).Reaction, ECinemafyReaction::Death);
+	TestEqual(TEXT("...and is still an attack"), Lib::ReadPrompt(TEXT("kill")).Kind, ECinemafyActionKind::Attack);
+	TestEqual(TEXT("A heavy attack knocks down"), Lib::ReadPrompt(TEXT("heavy attack")).Reaction, ECinemafyReaction::Knockdown);
+	TestTrue(TEXT("...and still looks for attacks (heavy only refines)"), Lib::ReadPrompt(TEXT("heavy attack")).Keywords[0].StartsWith(TEXT("attack")));
+	TestEqual(TEXT("attack blocked is blocked"), Lib::ReadPrompt(TEXT("attack blocked")).Reaction, ECinemafyReaction::Block);
+	TestEqual(TEXT("attack dodged is dodged"), Lib::ReadPrompt(TEXT("attack dodged")).Reaction, ECinemafyReaction::Dodge);
+	TestEqual(TEXT("A reaction word doesn't search attack names"), Lib::ReadPrompt(TEXT("attack blocked")).Keywords.Num(), 1);
+
+	TestEqual(TEXT("Straight ahead is the front"), Lib::ReactionDirection(10.f), FString(TEXT("front")));
+	TestEqual(TEXT("Behind is the back"), Lib::ReactionDirection(-170.f), FString(TEXT("back")));
+	TestEqual(TEXT("Positive yaw is the right"), Lib::ReactionDirection(90.f), FString(TEXT("right")));
+	TestEqual(TEXT("Negative yaw is the left"), Lib::ReactionDirection(-90.f), FString(TEXT("left")));
+
+	const FCinemafyPromptReading FromBehind = Lib::MakeReactionReading(ECinemafyReaction::Hit, 180.f);
+	const float Back = Lib::ScoreAnimation(FromBehind, Lib::TokenizeName(TEXT("/Game/Combat/Hit/AM_HitReact_Back")));
+	const float Front = Lib::ScoreAnimation(FromBehind, Lib::TokenizeName(TEXT("/Game/Combat/Hit/AM_HitReact_Front")));
+	TestTrue(TEXT("A blow from behind prefers a back hit react"), Back > Front);
+	TestTrue(TEXT("...but a front one still qualifies"), Front > 0.f);
+	TestTrue(TEXT("An attack is never a reaction"), Lib::ScoreAnimation(FromBehind, Lib::TokenizeName(TEXT("/Game/Combat/AM_Sword_Attack_01"))) < 0.f);
+	TestTrue(TEXT("A death reaction finds deaths"),
+		Lib::ScoreAnimation(Lib::MakeReactionReading(ECinemafyReaction::Death, 0.f), Lib::TokenizeName(TEXT("/Game/Combat/Die/AM_Death_Front"))) > 0.f);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

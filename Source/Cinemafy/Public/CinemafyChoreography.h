@@ -40,6 +40,19 @@ struct FCinemafyPendingContact
 	FString Note;
 };
 
+/** A target's reaction, timed so its impact lands on the attacker's contact. */
+struct FCinemafyPendingReaction
+{
+	int32 BeatIndex = INDEX_NONE;
+	TWeakObjectPtr<ACharacter> Defender;
+	/** Take seconds: when the reaction clip starts, and when the strike lands. */
+	float StartTime = 0.f;
+	float ContactTime = 0.f;
+	TWeakObjectPtr<UAnimSequenceBase> Clip;
+	TWeakObjectPtr<UAnimMontage> AttackMontage;
+	ECinemafyReaction Reaction = ECinemafyReaction::Hit;
+};
+
 /** Hooks into a performer (gait, traversal, overlay, crouch), found by reflection once per performance. */
 struct FCinemafyPerformerRig
 {
@@ -159,6 +172,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Wiring", AdvancedDisplay)
 	FName OverlayFunction;
 
+	/** Defenders turn to face an incoming strike when it comes from within this many degrees of their front; beyond it they take it from behind or the side. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Interaction", meta = (ClampMin = "0", ClampMax = "180"))
+	float DefenderTurnLimit = 120.f;
+
 	/** Max walk speed per gait when the character has no gait wiring of its own (cm/s). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Wiring", AdvancedDisplay)
 	FVector FallbackSpeeds = FVector(180.f, 400.f, 650.f);
@@ -251,6 +268,13 @@ public:
 	TArray<float> RecordedTimes;
 	TArray<FTransform> RecordedTransforms;
 
+	/** Characters this performance acts on that have no choreography of their own (they're recorded with this take). */
+	UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Choreography|Take")
+	TArray<TObjectPtr<ACharacter>> Partners;
+
+	/** Each partner's transform at every RecordedTimes sample. */
+	TArray<TArray<FTransform>> PartnerTransforms;
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
@@ -326,6 +350,19 @@ private:
 	FString ShortfallReason;
 	FString FallbackReason;
 	TArray<FCinemafyPendingContact> PendingContacts;
+	TArray<FCinemafyPendingReaction> PendingReactions;
+	/** Montages we started on defenders (so a combo's next reaction may cut in on the last one). */
+	TArray<TWeakObjectPtr<UAnimMontage>> ReactionMontages;
+	/** Defenders who died or went down, with the montage whose last pose they hold; they don't react again. */
+	TArray<TPair<TWeakObjectPtr<ACharacter>, TWeakObjectPtr<UAnimMontage>>> HeldPoses;
+	bool IsDowned(const ACharacter* Character) const;
+	TMap<FString, TArray<FCinemafyMoveCandidate>> PartnerCandidates;
+
+	/** Schedules the target's answer to a strike that lands at ContactTime (take seconds). */
+	void ScheduleReaction(int32 BeatIndex, UAnimMontage* AttackMontage, float ContactTime, bool bFinalStrike);
+	void UpdateReactions(float DeltaSeconds);
+	/** Picks a reaction clip for a defender; OutLead = how long before contact it has to start. */
+	UAnimSequenceBase* PickReaction(ACharacter* Defender, ECinemafyReaction Reaction, float RelativeYaw, float& OutLead);
 	TSet<FSoftObjectPath> UsedAnimations;
 
 	UPROPERTY(Transient)

@@ -447,6 +447,10 @@ namespace CinemafyChoreoTake
 		bool bFinished = false;
 		/** Body and transform samples share this rate: the open sequence's display rate when there is one. */
 		FFrameRate SampleRate = FFrameRate(30, 1);
+		/** A character this choreography acted on (a defender with no choreography of its own), not the performer. */
+		bool bPartner = false;
+		int32 PartnerIndex = INDEX_NONE;
+		FName ActorName;
 	};
 
 	TArray<FRecording> Recordings;
@@ -477,8 +481,15 @@ namespace CinemafyChoreoTake
 			return;
 		}
 		Recording.Times = Choreo->RecordedTimes;
-		Recording.Transforms = Choreo->RecordedTransforms;
-		Recording.Beats = Choreo->Beats;
+		if (Recording.bPartner)
+		{
+			Recording.Transforms = Choreo->PartnerTransforms.IsValidIndex(Recording.PartnerIndex) ? Choreo->PartnerTransforms[Recording.PartnerIndex] : TArray<FTransform>();
+		}
+		else
+		{
+			Recording.Transforms = Choreo->RecordedTransforms;
+			Recording.Beats = Choreo->Beats;
+		}
 		Recording.Duration = Choreo->RecordedTimes.Num() > 0 ? Choreo->RecordedTimes.Last() : 0.f;
 	}
 
@@ -493,6 +504,7 @@ namespace CinemafyChoreoTake
 		{
 			return;
 		}
+		Recording.ActorName = Performer->GetFName();
 
 		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
 		FAnimationRecordingSettings Settings;
@@ -508,25 +520,51 @@ namespace CinemafyChoreoTake
 		Settings.bRemoveRootAnimation = false;
 		Settings.bAutoSaveAsset = false;
 
-		TArray<USkeletalMeshComponent*> Meshes;
-		Performer->GetComponents(Meshes);
-		for (USkeletalMeshComponent* Mesh : Meshes)
+		auto RecordMeshes = [&](FRecording& Into, ACharacter* Subject)
 		{
-			// Followers copy their leader's pose and faces are Cinemafy Face's job: record the bodies that animate.
-			if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->SkipRecordingComponents.Contains(Mesh->GetFName()))
+			TArray<USkeletalMeshComponent*> Meshes;
+			Subject->GetComponents(Meshes);
+			for (USkeletalMeshComponent* Mesh : Meshes)
+			{
+				// Followers copy their leader's pose and faces are Cinemafy Face's job: record the bodies that animate.
+				if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->SkipRecordingComponents.Contains(Mesh->GetFName()))
+				{
+					continue;
+				}
+
+				FString PackageName, AssetName;
+				AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("%s/%s_%s_Take"), TakeFolder, *PerformerLabel(Subject), *Mesh->GetName()),
+					TEXT(""), PackageName, AssetName);
+				if (FAnimationRecorderManager::Get().RecordAnimation(Mesh, FPackageName::GetLongPackagePath(PackageName), AssetName, Settings))
+				{
+					Into.Components.Add({ Mesh->GetFName(), Mesh, nullptr });
+				}
+			}
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Take: recording %s (%d mesh(es))."), *PerformerLabel(Subject), Into.Components.Num());
+		};
+
+		RecordMeshes(Recording, Performer);
+
+		// Defenders this performance acts on (with no choreography of their own) are recorded with it, once.
+		const FFrameRate Rate = Recording.SampleRate;
+		for (int32 Index = 0; Index < Choreo->Partners.Num(); ++Index)
+		{
+			ACharacter* Partner = Choreo->Partners[Index];
+			if (!Partner || Recordings.ContainsByPredicate([Partner](const FRecording& R) { return R.ActorName == Partner->GetFName(); }))
 			{
 				continue;
 			}
-
-			FString PackageName, AssetName;
-			AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("%s/%s_%s_Take"), TakeFolder, *PerformerLabel(Performer), *Mesh->GetName()),
-				TEXT(""), PackageName, AssetName);
-			if (FAnimationRecorderManager::Get().RecordAnimation(Mesh, FPackageName::GetLongPackagePath(PackageName), AssetName, Settings))
-			{
-				Recording.Components.Add({ Mesh->GetFName(), Mesh, nullptr });
-			}
+			// (Adding to Recordings can move it: don't touch the performer's Recording reference after this.)
+			FRecording PartnerRecording;
+			PartnerRecording.ChoreographyName = Choreo->GetFName();
+			PartnerRecording.Live = Choreo;
+			PartnerRecording.bPartner = true;
+			PartnerRecording.PartnerIndex = Index;
+			PartnerRecording.ActorName = Partner->GetFName();
+			PartnerRecording.SampleRate = Rate;
+			RecordMeshes(PartnerRecording, Partner);
+			Recordings.Add(MoveTemp(PartnerRecording));
 		}
-		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Take: recording %s (%d mesh(es))."), *PerformerLabel(Performer), Recording.Components.Num());
 	}
 
 	void HandlePerformance(ACinemafyChoreography* Choreo, bool bStarted)
@@ -543,14 +581,16 @@ namespace CinemafyChoreoTake
 			return;
 		}
 
-		FRecording* Recording = Recordings.FindByPredicate([Choreo](const FRecording& R) { return R.Live.Get() == Choreo; });
-		if (!Recording)
+		// The performer and any defenders it recorded.
+		for (FRecording& Recording : Recordings)
 		{
-			return;
+			if (Recording.Live.Get() == Choreo && !Recording.bFinished)
+			{
+				CopyResults(Recording, Choreo);
+				StopComponents(Recording);
+				Recording.bFinished = true;
+			}
 		}
-		CopyResults(*Recording, Choreo);
-		StopComponents(*Recording);
-		Recording->bFinished = true;
 
 		if (!Recordings.ContainsByPredicate([](const FRecording& R) { return !R.bFinished; }))
 		{
@@ -751,7 +791,7 @@ namespace CinemafyChoreoTake
 		for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
 		{
 			It->bPerformOnNextPlay = false;
-			if (const FRecording* Recording = Recordings.FindByPredicate([&It](const FRecording& R) { return R.ChoreographyName == It->GetFName(); }))
+			if (const FRecording* Recording = Recordings.FindByPredicate([&It](const FRecording& R) { return !R.bPartner && R.ChoreographyName == It->GetFName(); }))
 			{
 				Matched.Add({ *It, Recording });
 				if (It->GetFName() == PrimaryName)
@@ -819,6 +859,24 @@ namespace CinemafyChoreoTake
 			Choreo->TakeSequence = Sequence;
 			Choreo->RefreshLabels();
 			++Baked;
+		}
+
+		// Defenders recorded alongside: their motion and reactions go on their own bindings.
+		for (const FRecording& Recording : Recordings)
+		{
+			if (!Recording.bPartner || Recording.Times.Num() < 2)
+			{
+				continue;
+			}
+			for (TActorIterator<ACharacter> It(World); It; ++It)
+			{
+				if (It->GetFName() == Recording.ActorName)
+				{
+					BakeTransform(Sequence, MovieScene, *It, Recording, Start);
+					BakeAnimations(Sequence, MovieScene, *It, Recording, Start);
+					break;
+				}
+			}
 		}
 
 		// Make room for the take.

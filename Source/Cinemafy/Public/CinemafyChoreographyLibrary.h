@@ -47,6 +47,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
 	static ECinemafyArrival ResolveArrival(const TArray<FCinemafyChoreoBeat>& Beats, int32 BeatIndex);
 
+	/**
+	 * What a defender should look for to answer a strike: a hit react from the side it came from, a knockdown,
+	 * a death, a block or a dodge. RelativeYaw is where the attacker is, seen from the defender (0 = in front, + = right).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
+	static FCinemafyPromptReading MakeReactionReading(ECinemafyReaction Reaction, float RelativeYaw);
+
+	/** "front", "back", "left" or "right" for where a blow comes from. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
+	static FString ReactionDirection(float RelativeYaw);
+
 	/** Builds the lines the Scene Director cuts from: one per recorded beat, timed to the take. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
 	static TArray<FCinemafyLine> BuildDirectorLines(const TArray<FCinemafyChoreoBeat>& Beats, AActor* Performer, float TakeDuration);

@@ -505,7 +505,9 @@ class CinemafyTools(unreal.ToolsetDefinition):
                               target: unreal.Actor = None) -> str:
         """Appends a beat: the performer goes to the location and does what the prompt says. Prompts are
         one or two words: walk, run, sprint, sneak, vault, climb, jump, sword attack, combo, shoot, taunt,
-        wave, look, wait 2, pistols, holster. Unknown words are searched for in animation names.
+        wave, look, wait 2, pistols, holster. Attacks on a character make it react on the hit; shape the
+        reaction with kill (death), heavy attack (knockdown), attack blocked, attack dodged or feint.
+        Unknown words are searched for in animation names.
 
         Args:
             choreography: The choreography to add to.

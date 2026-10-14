@@ -18,6 +18,7 @@
 #include "NavigationPath.h"
 #include "NavigationSystem.h"
 #include "UObject/UnrealType.h"
+#include "EngineUtils.h"
 
 FCinemafyChoreoEditorRequest ACinemafyChoreography::OnEditorRequest;
 FCinemafyChoreoPerformanceEvent ACinemafyChoreography::OnPerformanceEvent;
@@ -686,6 +687,36 @@ void ACinemafyChoreography::Perform()
 		Beat.OutcomeReason.Reset();
 	}
 	PendingContacts.Reset();
+	PendingReactions.Reset();
+	ReactionMontages.Reset();
+	HeldPoses.Reset();
+
+	// Characters we act on who have no choreography of their own in this take: we drive their reactions and they're
+	// recorded with us.
+	Partners.Reset();
+	for (const FCinemafyChoreoBeat& Beat : Beats)
+	{
+		ACharacter* Target = Cast<ACharacter>(Beat.Target);
+		if (!Target || Target == Performer || Beat.Reading.Kind != ECinemafyActionKind::Attack || !Beat.bTargetReacts)
+		{
+			continue;
+		}
+		bool bPerformsThemselves = false;
+		for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
+		{
+			if (*It != this && It->Performer == Target && (It->bPerformOnNextPlay || It->bPerformOnBeginPlay || It->IsPerforming()))
+			{
+				bPerformsThemselves = true;
+				break;
+			}
+		}
+		if (!bPerformsThemselves)
+		{
+			Partners.AddUnique(Target);
+		}
+	}
+	PartnerTransforms.Reset();
+	PartnerTransforms.SetNum(Partners.Num());
 
 	// Remember what we change so it can all be put back.
 	UCharacterMovementComponent* Movement = Performer->GetCharacterMovement();
@@ -751,6 +782,7 @@ void ACinemafyChoreography::FinishPerformance()
 	bPerforming = false;
 	TakeDuration = PerformTime;
 	PendingContacts.Reset();
+	PendingReactions.Reset();
 
 	// Cut points for the director: what was seen to take off, and strikes that actually landed.
 	for (FCinemafyChoreoBeat& Beat : Beats)
@@ -878,7 +910,13 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 	PerformTime += DeltaSeconds;
 	RecordedTimes.Add(PerformTime);
 	RecordedTransforms.Add(Performer->GetActorTransform());
+	for (int32 Index = 0; Index < Partners.Num(); ++Index)
+	{
+		TArray<FTransform>& Samples = PartnerTransforms[Index];
+		Samples.Add(Partners[Index] ? Partners[Index]->GetActorTransform() : (Samples.Num() > 0 ? Samples.Last() : FTransform::Identity));
+	}
 	UpdatePendingContacts();
+	UpdateReactions(DeltaSeconds);
 
 	if (LeadInLeft > 0.f)
 	{
@@ -893,7 +931,7 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 			TailLeft = TailSeconds;
 		}
 		TailLeft -= DeltaSeconds;
-		if (TailLeft <= 0.f && !IsAnimationBusy() && PendingContacts.Num() == 0)
+		if (TailLeft <= 0.f && !IsAnimationBusy() && PendingContacts.Num() == 0 && PendingReactions.Num() == 0)
 		{
 			FinishPerformance();
 		}
@@ -1395,6 +1433,9 @@ bool ACinemafyChoreography::PlayNextAnimation()
 		Pending.bEstimated = bEstimated;
 		Pending.Montage = Montage;
 		Pending.Note = Clip->GetName() + TEXT(": ") + Note;
+
+		// The target answers on the same moment: a combo's last strike gets the big reaction.
+		ScheduleReaction(CurrentBeat, Montage, Pending.Time, AnimQueue.Num() == 0);
 	}
 	return true;
 }
@@ -1420,6 +1461,256 @@ bool ACinemafyChoreography::IsTraversing() const
 	const UCharacterMovementComponent* Movement = Performer ? Performer->GetCharacterMovement() : nullptr;
 	return (Anim && Anim->IsAnyMontagePlaying())
 		|| (Movement && (Movement->MovementMode == MOVE_Flying || Movement->MovementMode == MOVE_Falling));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Interactions: the target answers a strike, its impact frame on the attacker's contact
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+	UAnimMontage* PlayClipOn(ACharacter* Character, UAnimSequenceBase* Clip, float BlendIn)
+	{
+		USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+		UAnimInstance* Anim = Mesh ? Mesh->GetAnimInstance() : nullptr;
+		if (!Anim || !Clip)
+		{
+			return nullptr;
+		}
+		if (UAnimMontage* Montage = Cast<UAnimMontage>(Clip))
+		{
+			return Anim->Montage_Play(Montage, 1.f) > 0.f ? Montage : nullptr;
+		}
+		return Anim->PlaySlotAnimationAsDynamicMontage(Clip, TEXT("DefaultSlot"), BlendIn, 0.25f, 1.f, 1);
+	}
+
+	/** How long before the strike lands a reaction has to start: its own hit notify, else a sensible lead for the kind. */
+	float ReactionLead(const UAnimSequenceBase* Clip, ECinemafyReaction Reaction)
+	{
+		if (Clip)
+		{
+			for (const FAnimNotifyEvent& Notify : Clip->Notifies)
+			{
+				const FString Name = Notify.NotifyName.ToString().ToLower();
+				if (Name.Contains(TEXT("hit")) || Name.Contains(TEXT("impact")) || Name.Contains(TEXT("contact")))
+				{
+					return Notify.GetTriggerTime();
+				}
+			}
+		}
+		switch (Reaction)
+		{
+		case ECinemafyReaction::Block: return 0.25f;  // the guard comes up before the blow
+		case ECinemafyReaction::Dodge: return 0.3f;   // and the dodge starts before it
+		default:                       return 0.06f;  // hit, knockdown and death react on the blow
+		}
+	}
+}
+
+bool ACinemafyChoreography::IsDowned(const ACharacter* Character) const
+{
+	return HeldPoses.ContainsByPredicate([Character](const TPair<TWeakObjectPtr<ACharacter>, TWeakObjectPtr<UAnimMontage>>& Held) { return Held.Key.Get() == Character; });
+}
+
+UAnimSequenceBase* ACinemafyChoreography::PickReaction(ACharacter* Defender, ECinemafyReaction Reaction, float RelativeYaw, float& OutLead)
+{
+	OutLead = ReactionLead(nullptr, Reaction);
+	const USkeletalMeshComponent* Mesh = Defender ? Defender->GetMesh() : nullptr;
+	const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+	if (!Skeleton)
+	{
+		return nullptr;
+	}
+
+	TArray<FString> Folders;
+	for (const FDirectoryPath& Folder : SearchFolders)
+	{
+		Folders.Add(Folder.Path);
+	}
+	// Defenders can be on a different skeleton from the performer, so each skeleton gets its own catalog.
+	TArray<FCinemafyMoveCandidate>& Catalog = PartnerCandidates.FindOrAdd(GetPathNameSafe(Skeleton));
+	if (Catalog.Num() == 0)
+	{
+		Catalog = UCinemafyChoreographyLibrary::GatherCandidates(MoveLibrary, Folders, Skeleton);
+	}
+
+	for (const ECinemafyReaction Try : { Reaction, ECinemafyReaction::Hit })
+	{
+		const FCinemafyPromptReading Reading = UCinemafyChoreographyLibrary::MakeReactionReading(Try, RelativeYaw);
+		const TArray<int32> Picks = UCinemafyChoreographyLibrary::PickAnimations(Reading, Catalog, 1, UsedAnimations);
+		if (Picks.Num() > 0)
+		{
+			if (UAnimSequenceBase* Clip = Cast<UAnimSequenceBase>(Catalog[Picks[0]].Path.TryLoad()))
+			{
+				UsedAnimations.Add(Catalog[Picks[0]].Path);
+				OutLead = ReactionLead(Clip, Try);
+				if (Try != Reaction)
+				{
+					UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography: no %s reaction for %s; using a hit react."),
+						*StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *GetNameSafe(Defender));
+				}
+				return Clip;
+			}
+		}
+		if (Try == ECinemafyReaction::Hit || Reaction == ECinemafyReaction::Block || Reaction == ECinemafyReaction::Dodge)
+		{
+			break; // a block or a dodge never quietly turns into a hit
+		}
+	}
+	return nullptr;
+}
+
+void ACinemafyChoreography::ScheduleReaction(int32 BeatIndex, UAnimMontage* AttackMontage, float ContactTime, bool bFinalStrike)
+{
+	if (!Beats.IsValidIndex(BeatIndex) || !Performer)
+	{
+		return;
+	}
+	FCinemafyChoreoBeat& Beat = Beats[BeatIndex];
+	ACharacter* Defender = Cast<ACharacter>(Beat.Target);
+	if (!Beat.bTargetReacts || !Defender || Defender == Performer || IsDowned(Defender))
+	{
+		return;
+	}
+
+	ECinemafyReaction Reaction = Beat.bOverrideReaction ? Beat.Reaction : Beat.Reading.Reaction;
+	if (Reaction == ECinemafyReaction::None)
+	{
+		return;
+	}
+	// Every strike before a combo's last one gets a hit react (a block stays a block all the way through).
+	if (!bFinalStrike && Reaction != ECinemafyReaction::Block)
+	{
+		Reaction = ECinemafyReaction::Hit;
+	}
+
+	// Where the strike comes from at contact. A defender facing roughly toward it turns to take it head-on.
+	const FVector ToAttacker = (Performer->GetActorLocation() - Defender->GetActorLocation()).GetSafeNormal2D();
+	float RelativeYaw = FRotator::NormalizeAxis(ToAttacker.Rotation().Yaw - Defender->GetActorRotation().Yaw);
+	if (FMath::Abs(RelativeYaw) <= DefenderTurnLimit)
+	{
+		RelativeYaw = 0.f;
+	}
+
+	float Lead = 0.f;
+	UAnimSequenceBase* Clip = nullptr;
+	if (Beat.ReactionOverride)
+	{
+		Clip = Beat.ReactionOverride;
+		Lead = ReactionLead(Clip, Reaction);
+	}
+	else
+	{
+		Clip = PickReaction(Defender, Reaction, RelativeYaw, Lead);
+	}
+	if (!Clip)
+	{
+		const FString Why = FString::Printf(TEXT("No %s reaction animation fits %s's skeleton; the target didn't react"),
+			*StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *GetNameSafe(Defender));
+		if (BeatIndex == CurrentBeat && FallbackReason.IsEmpty())
+		{
+			FallbackReason = Why;
+		}
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Choreography: %s."), *Why);
+		return;
+	}
+
+	// Hold the target still for the exchange, so they don't wander out of the blow.
+	if (AController* Controller = Defender->GetController())
+	{
+		Controller->StopMovement();
+	}
+
+	FCinemafyPendingReaction& Pending = PendingReactions.AddDefaulted_GetRef();
+	Pending.BeatIndex = BeatIndex;
+	Pending.Defender = Defender;
+	Pending.ContactTime = ContactTime;
+	Pending.StartTime = FMath::Max(PerformTime, ContactTime - Lead);
+	Pending.Clip = Clip;
+	Pending.AttackMontage = AttackMontage;
+	Pending.Reaction = Reaction;
+}
+
+void ACinemafyChoreography::UpdateReactions(float DeltaSeconds)
+{
+	// Downed defenders hold the last frame of their fall.
+	for (const TPair<TWeakObjectPtr<ACharacter>, TWeakObjectPtr<UAnimMontage>>& Held : HeldPoses)
+	{
+		ACharacter* Character = Held.Key.Get();
+		UAnimMontage* Montage = Held.Value.Get();
+		UAnimInstance* Anim = Character && Character->GetMesh() ? Character->GetMesh()->GetAnimInstance() : nullptr;
+		if (Anim && Montage && Anim->Montage_IsPlaying(Montage) && Anim->Montage_GetPosition(Montage) >= Montage->GetPlayLength() - 0.05f)
+		{
+			Anim->Montage_Pause(Montage);
+		}
+	}
+
+	for (int32 Index = PendingReactions.Num() - 1; Index >= 0; --Index)
+	{
+		const FCinemafyPendingReaction Pending = PendingReactions[Index];
+		ACharacter* Defender = Pending.Defender.Get();
+		if (!Defender || !Beats.IsValidIndex(Pending.BeatIndex))
+		{
+			PendingReactions.RemoveAt(Index);
+			continue;
+		}
+		FCinemafyChoreoBeat& Beat = Beats[Pending.BeatIndex];
+
+		// During the wind-up, a defender facing the blow turns into it.
+		const FVector ToAttacker = (Performer->GetActorLocation() - Defender->GetActorLocation()).GetSafeNormal2D();
+		const float Yaw = FRotator::NormalizeAxis(ToAttacker.Rotation().Yaw - Defender->GetActorRotation().Yaw);
+		if (FMath::Abs(Yaw) <= DefenderTurnLimit && FMath::Abs(Yaw) > 2.f)
+		{
+			const float NewYaw = FMath::FixedTurn(Defender->GetActorRotation().Yaw, ToAttacker.Rotation().Yaw, TurnSpeed * DeltaSeconds);
+			Defender->SetActorRotation(FRotator(0.f, NewYaw, 0.f));
+		}
+		if (PerformTime < Pending.StartTime)
+		{
+			continue;
+		}
+		PendingReactions.RemoveAt(Index);
+
+		auto Note = [&Beat, this, Defender](const FString& Text)
+		{
+			FCinemafyPerformanceEvent& Event = Beat.Events.AddDefaulted_GetRef();
+			Event.Kind = ECinemafyPerformanceEventKind::Reaction;
+			Event.Time = PerformTime;
+			Event.Location = Defender->GetActorLocation();
+			Event.Note = Text;
+		};
+
+		// The swing was cut off before it could land, so there's nothing to react to.
+		USkeletalMeshComponent* AttackerMesh = Performer->GetMesh();
+		UAnimInstance* AttackerAnim = AttackerMesh ? AttackerMesh->GetAnimInstance() : nullptr;
+		if (!Pending.AttackMontage.IsValid() || !AttackerAnim || !AttackerAnim->Montage_IsPlaying(Pending.AttackMontage.Get()))
+		{
+			continue;
+		}
+
+		// A defender in the middle of their own action isn't overridden (but our own reactions can be cut into).
+		UAnimInstance* DefenderAnim = Defender->GetMesh() ? Defender->GetMesh()->GetAnimInstance() : nullptr;
+		UAnimMontage* Busy = DefenderAnim ? DefenderAnim->GetCurrentActiveMontage() : nullptr;
+		if (Busy && !ReactionMontages.Contains(Busy))
+		{
+			Note(FString::Printf(TEXT("%s was busy (%s); no reaction"), *GetNameSafe(Defender), *GetNameSafe(Busy)));
+			continue;
+		}
+
+		const bool bGoesDown = Pending.Reaction == ECinemafyReaction::Death || Pending.Reaction == ECinemafyReaction::Knockdown;
+		UAnimMontage* Played = PlayClipOn(Defender, Pending.Clip.Get(), Pending.Reaction == ECinemafyReaction::Block ? 0.15f : 0.06f);
+		if (!Played)
+		{
+			Note(FString::Printf(TEXT("%s couldn't play %s"), *GetNameSafe(Defender), *GetNameSafe(Pending.Clip.Get())));
+			continue;
+		}
+		ReactionMontages.Add(Played);
+		if (bGoesDown)
+		{
+			HeldPoses.Add({ Defender, Played });
+		}
+		Note(FString::Printf(TEXT("%s: %s (impact %.2fs in, on the contact)"), *GetNameSafe(Defender), *GetNameSafe(Pending.Clip.Get()),
+			Pending.ContactTime - Pending.StartTime));
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.10.0: "Fights"
+- **Synchronized attacker and defender:**
+  - An attack on a character makes the target react, its impact frame timed to the strike's contact.
+  - Hit reacts come from the side the blow lands on (front, back, left, right).
+  - Knockdown (`heavy`, `knock down`), death (`kill`, `finish`), block (`blocked`), dodge (`dodged`), or none (`feint`).
+  - In combos, every strike lands and the finisher gets the big reaction.
+  - Defenders turn into blows they can see, stop moving for the exchange, and hold their final pose when downed.
+  - A cut-off swing causes no reaction, and a busy defender isn't overridden (both are reported).
+- **Defenders are recorded and baked** with the attacker's take when they have no choreography of their own.
+- Per-beat interaction controls: `bTargetReacts`, reaction override, reaction clip override.
+- Fix: modifiers like "heavy" no longer replace the action when picking clips ("heavy attack" looks for attacks).
+- Contextual Animation adapter planned for paired content (see [CHOREOGRAPHY](Docs/CHOREOGRAPHY.md)).
+
 ## 0.9.2: fixes from the first v0.9 test (bridge scene)
 - **Tracking shots stay out of walls:** the follow rig works like a spring arm. It pulls in in front of a
   blocker, or swings around the subject when pulling in would get too close (`bAvoidWalls`, `MinDistance`).

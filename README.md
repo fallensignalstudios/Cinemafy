@@ -248,6 +248,11 @@ in the Hub) with your character selected, then:
    reverse for over-the-shoulders. Change **Director Style** on the choreography and re-direct as
    often as you like.
 
+**Fights:** click an enemy before `sword attack` and the enemy **reacts on the hit**. Its reaction is
+timed so its impact lands on the strike's contact frame, from the side the blow comes from. Use `kill` for
+a death, `heavy attack` for a knockdown, `attack blocked` for a block, `attack dodged` for a dodge, and
+`combo` for a hit on every strike. Enemies with no choreography of their own are recorded with the take.
+
 Several characters? Give each a choreography. Perform & Record takes everyone (with **Include In
 Takes** on) in one take, and the director cuts the whole fight.
 
