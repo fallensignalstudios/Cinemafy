@@ -175,6 +175,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static UCinemafyDirectorStyleAsset* SaveDirectorStyleAsAsset(ACinemafySceneDirector* Director);
 
+	/**
+	 * Replaces a director's script with a CSV. Columns (any order, case-insensitive): Speaker, Listener,
+	 * Text, Intensity, Emotion, SceneBreak, Action, Duration. Speakers are matched to actors in the level
+	 * by label. Missing durations are estimated from the text. Returns the number of lines imported (-1 on error).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 ImportDirectorScript(ACinemafySceneDirector* Director, const FString& CsvPath);
+
+	/**
+	 * Fills each line's Audio, Face Animation and Body Animation from a content folder, matching assets
+	 * by line number in their name (Line03, Line_03, L03). Animations go to face or body by skeleton.
+	 * Returns the number of slots filled.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 AssignDirectorPerformances(ACinemafySceneDirector* Director, const FString& ContentFolder);
+
 	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static ACinemafySceneDirector* CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style);

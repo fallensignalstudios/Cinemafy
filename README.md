@@ -168,6 +168,17 @@ director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the gam
 call **Cinemafy Subtitle Subsystem → Show Subtitle** too, and `bSubtitlesEnabled` hooks into your
 accessibility settings.
 
+**Importing a script and takes 📥:**
+- **Import Script From CSV:** set the director's *Script File* to a CSV with any of the columns `Speaker, Listener,
+  Text, Intensity, Emotion, SceneBreak, Action, Duration` (any order). Speakers are matched to actor labels
+  in the level, and missing durations are estimated from the text.
+- **Auto-Assign Performances:** set *Performance Folder* to a content folder of takes named by line number
+  (`Line03_Kara.wav`, `Line03_Kara_Face`, `Line03_Kara_Body`…). Audio, face and body clips land on the right
+  lines; face vs. body is decided by skeleton.
+
+Pair these with MetaHuman Animator (face from video) and a video-mocap tool's FBX export (body), and you
+go from recorded performances to a directed scene in a couple of clicks.
+
 **Learn a style from your own edit 🧠:** cut a scene by hand (or open one you love), select the
 director and click **Learn Style From Sequence**. It plays through every cut and classifies each shot
 from what the camera actually sees: frame size at the subject, two characters in frame, a foreground

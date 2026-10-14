@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Engine/EngineTypes.h"
 #include "CinemafyTypes.h"
 #include "CinemafySceneDirector.generated.h"
 
@@ -17,7 +18,9 @@ enum class ECinemafyDirectorRequest : uint8
 	Clear,
 	LearnStyle,
 	AnalyzeAudio,
-	SaveStyleAsset
+	SaveStyleAsset,
+	ImportScript,
+	AssignPerformances
 };
 
 #if WITH_EDITOR
@@ -49,6 +52,14 @@ public:
 	/** A saved style. When set, it's used instead of Style / Custom Style. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
 	TObjectPtr<UCinemafyDirectorStyleAsset> StyleAsset = nullptr;
+
+	/** A CSV script to import (Speaker, Listener, Text, Intensity, Emotion, SceneBreak, Action, Duration columns). */
+	UPROPERTY(EditAnywhere, Category = "Director|Import", meta = (FilePathFilter = "csv"))
+	FFilePath ScriptFile;
+
+	/** A content folder of takes named by line (e.g. Line03_Kara.wav, Line03_Kara_Face) for Auto-Assign Performances. */
+	UPROPERTY(EditAnywhere, Category = "Director|Import", meta = (ContentDir))
+	FDirectoryPath PerformanceFolder;
 
 	/** The scene, line by line. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Script", meta = (TitleProperty = "Note"))
@@ -167,6 +178,14 @@ public:
 	 */
 	UFUNCTION(CallInEditor, Category = "Director")
 	void LearnStyleFromSequence();
+
+	/** Replace the script with the lines in Script File. */
+	UFUNCTION(CallInEditor, Category = "Director|Import")
+	void ImportScriptFromCSV();
+
+	/** Fill each line's Audio / Face / Body clips from Performance Folder, matched by line number. */
+	UFUNCTION(CallInEditor, Category = "Director|Import")
+	void AutoAssignPerformances();
 
 	/** Save the style this director is using (preset, custom or learned) as a reusable asset. */
 	UFUNCTION(CallInEditor, Category = "Director")

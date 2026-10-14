@@ -26,6 +26,9 @@
 #include "CinemafySceneDirector.h"
 #include "CinemafyDirectorStyleAsset.h"
 #include "AssetToolsModule.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Animation/AnimSequence.h"
+#include "Misc/FileHelper.h"
 #include "IAssetTools.h"
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
@@ -2416,6 +2419,223 @@ UCinemafyDirectorStyleAsset* UCinemafyEditorLibrary::SaveDirectorStyleAsAsset(AC
 	TArray<UObject*> ToSync = { Asset };
 	GEditor->SyncBrowserToObjects(ToSync);
 	return Asset;
+}
+
+namespace
+{
+	/** Splits one CSV row, honoring quoted fields ("Well, then," she said). */
+	TArray<FString> ParseCsvRow(const FString& Row)
+	{
+		TArray<FString> Fields;
+		FString Current;
+		bool bQuoted = false;
+		for (int32 Index = 0; Index < Row.Len(); ++Index)
+		{
+			const TCHAR C = Row[Index];
+			if (C == TEXT('"'))
+			{
+				if (bQuoted && Index + 1 < Row.Len() && Row[Index + 1] == TEXT('"'))
+				{
+					Current.AppendChar(TEXT('"'));
+					++Index;
+				}
+				else
+				{
+					bQuoted = !bQuoted;
+				}
+			}
+			else if (C == TEXT(',') && !bQuoted)
+			{
+				Fields.Add(Current.TrimStartAndEnd());
+				Current.Reset();
+			}
+			else
+			{
+				Current.AppendChar(C);
+			}
+		}
+		Fields.Add(Current.TrimStartAndEnd());
+		return Fields;
+	}
+
+	bool ParseBool(const FString& Value)
+	{
+		return Value.Equals(TEXT("true"), ESearchCase::IgnoreCase) || Value.Equals(TEXT("yes"), ESearchCase::IgnoreCase)
+			|| Value.Equals(TEXT("y"), ESearchCase::IgnoreCase) || Value == TEXT("1") || Value.Equals(TEXT("x"), ESearchCase::IgnoreCase);
+	}
+}
+
+int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Director, const FString& CsvPath)
+{
+	TArray<FString> Rows;
+	if (!Director || !FFileHelper::LoadFileToStringArray(Rows, *CsvPath) || Rows.Num() < 2)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvMissing", "Couldn't read a script from {0}. It needs a header row and at least one line."), FText::FromString(CsvPath)));
+		return -1;
+	}
+
+	// Columns by name, in any order.
+	const TArray<FString> Header = ParseCsvRow(Rows[0]);
+	auto Column = [&Header](const TCHAR* Name) { return Header.IndexOfByPredicate([Name](const FString& H) { return H.Equals(Name, ESearchCase::IgnoreCase); }); };
+	const int32 SpeakerCol = Column(TEXT("Speaker"));
+	const int32 ListenerCol = Column(TEXT("Listener"));
+	const int32 TextCol = Column(TEXT("Text"));
+	const int32 IntensityCol = Column(TEXT("Intensity"));
+	const int32 EmotionCol = Column(TEXT("Emotion"));
+	const int32 BreakCol = Column(TEXT("SceneBreak"));
+	const int32 ActionCol = Column(TEXT("Action"));
+	const int32 DurationCol = Column(TEXT("Duration"));
+	if (SpeakerCol == INDEX_NONE)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("CsvNoSpeaker", "The script needs a Speaker column."));
+		return -1;
+	}
+
+	// Actors in the level, by label, for matching speaker names.
+	TMap<FString, AActor*> ActorsByLabel;
+	for (TActorIterator<AActor> It(Director->GetWorld()); It; ++It)
+	{
+		ActorsByLabel.Add(It->GetActorLabel().ToLower(), *It);
+	}
+	auto FindActor = [&ActorsByLabel](const FString& Name) -> AActor*
+	{
+		AActor* const* Found = ActorsByLabel.Find(Name.ToLower());
+		return Found ? *Found : nullptr;
+	};
+
+	const FScopedTransaction Transaction(LOCTEXT("ImportScript", "Cinemafy: Import Script"));
+	Director->Modify();
+	Director->Lines.Reset();
+
+	int32 Unmatched = 0;
+	for (int32 RowIndex = 1; RowIndex < Rows.Num(); ++RowIndex)
+	{
+		if (Rows[RowIndex].TrimStartAndEnd().IsEmpty())
+		{
+			continue;
+		}
+		const TArray<FString> Fields = ParseCsvRow(Rows[RowIndex]);
+		auto Field = [&Fields](int32 Col) { return Fields.IsValidIndex(Col) ? Fields[Col] : FString(); };
+
+		FCinemafyLine Line;
+		const FString SpeakerName = Field(SpeakerCol);
+		Line.Speaker = FindActor(SpeakerName);
+		Line.SpeakerName = FText::FromString(SpeakerName.ToUpper());
+		Line.Listener = FindActor(Field(ListenerCol));
+		Line.Text = FText::FromString(Field(TextCol));
+		Line.Note = FString::Printf(TEXT("%d. %s: %s"), Director->Lines.Num() + 1, *SpeakerName, *Field(TextCol).Left(40));
+		Unmatched += Line.Speaker ? 0 : 1;
+
+		if (!Field(IntensityCol).IsEmpty())
+		{
+			Line.Intensity = FMath::Clamp(FCString::Atof(*Field(IntensityCol)), 0.f, 1.f);
+		}
+		if (!Field(EmotionCol).IsEmpty())
+		{
+			const int64 Value = StaticEnum<ECinemafyEmotion>()->GetValueByNameString(Field(EmotionCol));
+			if (Value != INDEX_NONE)
+			{
+				Line.bSetEmotion = true;
+				Line.Emotion = static_cast<ECinemafyEmotion>(Value);
+			}
+		}
+		Line.bSceneBreak = ParseBool(Field(BreakCol));
+		Line.bAction = ParseBool(Field(ActionCol));
+
+		// Duration: given, or about 2.6 words a second plus a breath.
+		const FString DurationText = Field(DurationCol);
+		if (!DurationText.IsEmpty())
+		{
+			Line.Duration = FMath::Max(FCString::Atof(*DurationText), 0.2f);
+		}
+		else
+		{
+			TArray<FString> Words;
+			Field(TextCol).ParseIntoArrayWS(Words);
+			Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
+		}
+		Director->Lines.Add(Line);
+	}
+
+	if (Unmatched > 0)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvUnmatched",
+			"Imported {0} lines. {1} speaker name(s) didn't match an actor label in the level; set those Speakers by hand."),
+			Director->Lines.Num(), Unmatched));
+	}
+	return Director->Lines.Num();
+}
+
+int32 UCinemafyEditorLibrary::AssignDirectorPerformances(ACinemafySceneDirector* Director, const FString& ContentFolder)
+{
+	if (!Director || ContentFolder.IsEmpty())
+	{
+		return 0;
+	}
+
+	const IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	TArray<FAssetData> Assets;
+	Registry.GetAssetsByPath(FName(*ContentFolder), Assets, true);
+
+	const FScopedTransaction Transaction(LOCTEXT("AssignTakes", "Cinemafy: Assign Performances"));
+	Director->Modify();
+
+	int32 Filled = 0;
+	for (int32 Index = 0; Index < Director->Lines.Num(); ++Index)
+	{
+		FCinemafyLine& Line = Director->Lines[Index];
+		const int32 Number = Index + 1;
+		const FString Tags[] = {
+			FString::Printf(TEXT("line%02d"), Number), FString::Printf(TEXT("line_%02d"), Number),
+			FString::Printf(TEXT("line%d_"), Number), FString::Printf(TEXT("l%02d_"), Number) };
+
+		for (const FAssetData& Asset : Assets)
+		{
+			const FString Name = Asset.AssetName.ToString().ToLower() + TEXT("_");
+			bool bMatches = false;
+			for (const FString& Tag : Tags)
+			{
+				// "Line1_" must not match "Line10_": tags end at a separator or a non-digit.
+				const int32 At = Name.Find(Tag);
+				if (At != INDEX_NONE && !FChar::IsDigit(Name[FMath::Min(At + Tag.Len(), Name.Len() - 1)]))
+				{
+					bMatches = true;
+					break;
+				}
+			}
+			if (!bMatches)
+			{
+				continue;
+			}
+
+			UObject* Object = Asset.GetAsset();
+			if (USoundWave* Sound = Cast<USoundWave>(Object))
+			{
+				Line.Audio = Sound;
+				Line.Analysis = FCinemafyAudioAnalysis();
+				++Filled;
+			}
+			else if (UAnimSequenceBase* Clip = Cast<UAnimSequenceBase>(Object))
+			{
+				USkeletalMeshComponent* Mesh = FindMeshForClip(Line.Speaker, Clip);
+				if (!Mesh)
+				{
+					continue;
+				}
+				// The face mesh is the one with eye bones.
+				if (Mesh->GetBoneIndex(Cinemafy::LeftEyeBone) != INDEX_NONE)
+				{
+					Line.FaceAnimation = Clip;
+				}
+				else
+				{
+					Line.BodyAnimation = Clip;
+				}
+				++Filled;
+			}
+		}
+	}
+	return Filled;
 }
 
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style)

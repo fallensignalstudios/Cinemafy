@@ -121,6 +121,14 @@ void FCinemafyEditorModule::StartupModule()
 		case ECinemafyDirectorRequest::Clear:      UCinemafyEditorLibrary::ClearDirectedShots(Director); break;
 		case ECinemafyDirectorRequest::LearnStyle: UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(Director); break;
 		case ECinemafyDirectorRequest::SaveStyleAsset: UCinemafyEditorLibrary::SaveDirectorStyleAsAsset(Director); break;
+		case ECinemafyDirectorRequest::ImportScript:   UCinemafyEditorLibrary::ImportDirectorScript(Director, Director->ScriptFile.FilePath); break;
+		case ECinemafyDirectorRequest::AssignPerformances:
+		{
+			const int32 Filled = UCinemafyEditorLibrary::AssignDirectorPerformances(Director, Director->PerformanceFolder.Path);
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(NSLOCTEXT("CinemafyEditor", "AssignedTakes",
+				"Assigned {0} take(s) to the script. Hit Direct to cut the scene with them."), Filled));
+			break;
+		}
 		case ECinemafyDirectorRequest::AnalyzeAudio:
 		{
 			const int32 Count = UCinemafyEditorLibrary::AnalyzeDirectorAudio(Director);

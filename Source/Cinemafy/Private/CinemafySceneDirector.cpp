@@ -54,6 +54,20 @@ ACinemafySceneDirector::ACinemafySceneDirector()
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 }
 
+void ACinemafySceneDirector::ImportScriptFromCSV()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::ImportScript);
+#endif
+}
+
+void ACinemafySceneDirector::AutoAssignPerformances()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::AssignPerformances);
+#endif
+}
+
 void ACinemafySceneDirector::SaveStyleAsAsset()
 {
 #if WITH_EDITOR
