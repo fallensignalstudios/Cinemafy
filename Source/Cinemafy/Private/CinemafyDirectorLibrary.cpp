@@ -7,7 +7,8 @@ namespace
 	const ECinemafyShotType AllShotTypes[] = {
 		ECinemafyShotType::WideTwoShot, ECinemafyShotType::MediumTwoShot, ECinemafyShotType::OverTheShoulder,
 		ECinemafyShotType::MediumShot, ECinemafyShotType::MediumCloseUp, ECinemafyShotType::CloseUp,
-		ECinemafyShotType::ExtremeCloseUp, ECinemafyShotType::LowHero, ECinemafyShotType::GroupShot };
+		ECinemafyShotType::ExtremeCloseUp, ECinemafyShotType::LowHero, ECinemafyShotType::GroupShot,
+		ECinemafyShotType::TrackingLead, ECinemafyShotType::TrackingFollow };
 
 	const ECinemafyPrime AllPrimes[] = {
 		ECinemafyPrime::Prime18, ECinemafyPrime::Prime24, ECinemafyPrime::Prime35,
@@ -66,6 +67,11 @@ namespace
 				continue;
 			}
 			if (Type == ECinemafyShotType::GroupShot && !bGroupScene)
+			{
+				continue;
+			}
+			// Walk-and-talk coverage only when people are walking (handled by the planner directly).
+			if (Type == ECinemafyShotType::TrackingLead || Type == ECinemafyShotType::TrackingFollow)
 			{
 				continue;
 			}
@@ -156,6 +162,8 @@ float UCinemafyDirectorLibrary::GetShotSize(ECinemafyShotType ShotType)
 	switch (ShotType)
 	{
 	case ECinemafyShotType::GroupShot:       return -0.5f;
+	case ECinemafyShotType::TrackingLead:    return 1.5f;
+	case ECinemafyShotType::TrackingFollow:  return 2.f;
 	case ECinemafyShotType::WideTwoShot:     return 0.f;
 	case ECinemafyShotType::MediumTwoShot:   return 1.f;
 	case ECinemafyShotType::MediumShot:      return 2.f;
@@ -493,7 +501,20 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		const bool bNewExchange = bGroupScene && Segment == 0 && bHasLast &&
 			!((Last.Subject == Line.Speaker && Last.Counterpart == Line.Listener) || (Last.Subject == Line.Listener && Last.Counterpart == Line.Speaker));
 
-		if (bOpensScene && Segment == 0 && Style.bEstablishingShot && Shot.Counterpart)
+		if (Line.bMoving && !Line.bForceShot)
+		{
+			// Walking: lead them (camera backs up in front) or follow behind; alternate within the line so
+			// consecutive shots change.
+			const bool bLeadFirst = Random.FRand() < Style.TrackingLeadPreference;
+			const bool bLead = (Segment % 2 == 0) ? bLeadFirst : !bLeadFirst;
+			Shot.ShotType = bLead ? ECinemafyShotType::TrackingLead : ECinemafyShotType::TrackingFollow;
+			if (bHasLast && Last.ShotType == Shot.ShotType && Last.Subject == Shot.Subject)
+			{
+				Shot.ShotType = bLead ? ECinemafyShotType::TrackingFollow : ECinemafyShotType::TrackingLead;
+			}
+			Why = bLead ? TEXT("walk-and-talk, leading them") : TEXT("walk-and-talk, following");
+		}
+		else if (bOpensScene && Segment == 0 && Style.bEstablishingShot && Shot.Counterpart)
 		{
 			Shot.ShotType = bGroupScene ? ECinemafyShotType::GroupShot : ECinemafyShotType::WideTwoShot;
 			Why = TEXT("establishing the space");
@@ -550,7 +571,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			}
 			ECinemafyCameraMove Move;
 			float Distance;
-			if (Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
+			if (!Line.bMoving && Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
 			{
 				Shot.bMove = true;
 				Shot.Move = Move;

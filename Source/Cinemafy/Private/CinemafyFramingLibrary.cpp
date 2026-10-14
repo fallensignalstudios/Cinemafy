@@ -33,6 +33,8 @@ namespace
 		case ECinemafyShotType::ExtremeCloseUp:  return { 20.f, 12.f, 0.f, 0.f };
 		case ECinemafyShotType::LowHero:         return { 110.f, 25.f, -75.f, 0.f };
 		case ECinemafyShotType::GroupShot:       return { 230.f, 0.f, 10.f, 200.f };
+		case ECinemafyShotType::TrackingLead:    return { 120.f, 10.f, -5.f, 80.f };
+		case ECinemafyShotType::TrackingFollow:  return { 100.f, 0.f, 5.f, 0.f };
 		}
 		return { 60.f, 18.f, 0.f, 0.f };
 	}
@@ -65,6 +67,8 @@ ECinemafyPrime UCinemafyFramingLibrary::GetRecommendedPrime(ECinemafyShotType Sh
 	case ECinemafyShotType::ExtremeCloseUp:  return ECinemafyPrime::Prime135;
 	case ECinemafyShotType::LowHero:         return ECinemafyPrime::Prime24;
 	case ECinemafyShotType::GroupShot:       return ECinemafyPrime::Prime24;
+	case ECinemafyShotType::TrackingLead:    return ECinemafyPrime::Prime35;
+	case ECinemafyShotType::TrackingFollow:  return ECinemafyPrime::Prime35;
 	}
 	return ECinemafyPrime::Prime50;
 }
@@ -226,6 +230,44 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 		CamPos = Center + Dir * (DistanceForFrame(FrameH, Focal, SensorH) + Spread) + Up * (Spec.HeightOffset + Request.HeightOffset);
 		AimPoint = Center - Up * (FrameH / 6.f);
 		FocusPoint = Center;
+		break;
+	}
+
+	case ECinemafyShotType::TrackingLead:
+	{
+		// In front of the walkers, backing up with them: the pair (or the subject) framed medium-wide.
+		FVector Walk = Subject->GetActorForwardVector().GetSafeNormal2D();
+		if (Counterpart)
+		{
+			Walk = (Walk + Counterpart->GetActorForwardVector().GetSafeNormal2D()).GetSafeNormal2D();
+		}
+		if (Walk.IsNearlyZero())
+		{
+			Walk = LookDir;
+		}
+		const FVector Center = Counterpart ? 0.5f * (SubjectEye + OtherEye) : SubjectEye;
+		const float Width = Counterpart ? FVector::Dist2D(SubjectEye, OtherEye) + Spec.TwoShotPadding : 0.f;
+		const float FrameH = FMath::Max(Spec.FrameHeight, Width / Aspect);
+		const FVector Dir = Walk.RotateAngleAxis((Spec.SideAngleDeg + Request.AngleOffset) * (Request.bFlipSide ? -1.f : 1.f), Up);
+		CamPos = Center + Dir * DistanceForFrame(FrameH, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = Center - Up * (FrameH / 6.f);
+		FocusPoint = Center;
+		break;
+	}
+
+	case ECinemafyShotType::TrackingFollow:
+	{
+		// Behind and just off the subject's shoulder, looking where they're headed.
+		FVector Walk = Subject->GetActorForwardVector().GetSafeNormal2D();
+		if (Walk.IsNearlyZero())
+		{
+			Walk = LookDir;
+		}
+		const FVector Side = FVector::CrossProduct(Up, Walk) * (Request.bFlipSide ? -1.f : 1.f);
+		CamPos = SubjectEye - Walk * 170.f + Side * (40.f + Request.AngleOffset * 1.5f) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = SubjectEye + Walk * 250.f - Up * 20.f;
+		FocusPoint = SubjectEye;
+		Lens = UCinemafyCameraLibrary::SnapToPrime(Focal);
 		break;
 	}
 

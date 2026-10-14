@@ -94,6 +94,10 @@ How it decides, per shot:
 - **Camera moves:** a creep-in on the establishing wide, push-ins on singles as drama builds, a crane-up on low hero shots. They're baked as keyed `Progress` on each camera's Camera Move, and each style has its own appetite for movement (`MoveChance`).
 - **Emotion per line:** tick *Set Emotion* on a line and the speaker's Cinemafy Face emotion is keyed in Sequencer at the start of that line. It crossfades, and the same thing happens live.
 
+- **Walk-and-talk:** when a speaker travels during their line (auto-detected from the sequence, or from
+  velocity when live), coverage switches to **Lead** (the camera backs up in front of them) and **Follow**
+  (behind, over the shoulder) shots. These ride a **Cinemafy Follow Rig** with Steadicam-style lag.
+  `TrackingLeadPreference` per style picks which comes first.
 - **Hold-through and rack focus:** a two-shot can *hold* across a change of speaker, with focus racking
   to whoever starts talking instead of cutting (very classic-trilogy; `HoldThroughChance` per style).
   Shots with both characters in them always focus on the speaker.

@@ -48,7 +48,11 @@ enum class ECinemafyShotType : uint8
 	ExtremeCloseUp  UMETA(DisplayName = "Extreme Close-Up"),
 	LowHero         UMETA(DisplayName = "Low Hero"),
 	/** Frames everyone in a 3+ character scene. */
-	GroupShot       UMETA(DisplayName = "Group Shot")
+	GroupShot       UMETA(DisplayName = "Group Shot"),
+	/** Walk-and-talk: camera backs up in front of the characters as they walk. */
+	TrackingLead    UMETA(DisplayName = "Walk & Talk: Lead"),
+	/** Walk-and-talk: camera follows behind, over the shoulder. */
+	TrackingFollow  UMETA(DisplayName = "Walk & Talk: Follow")
 };
 
 /** How a camera operator would be holding the camera. */
@@ -702,6 +706,10 @@ struct FCinemafyLine
 	/** The recorded line. Drives intensity and timing, and is laid into the sequence when directing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
 	TObjectPtr<USoundBase> Audio = nullptr;
+
+	/** The characters are walking during this line (auto-detected from the sequence when directing). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	bool bMoving = false;
 
 	/** This line starts somewhere (or somewhen) new: use the style's scene-break transition and re-establish. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")

@@ -6,6 +6,7 @@
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafyDirectorStyleAsset.h"
 #include "CinemafyFocusComponent.h"
+#include "CinemafyFollowComponent.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyListenerComponent.h"
 #include "CinemafyModule.h"
@@ -278,6 +279,8 @@ void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float
 	Line.PauseAfter = 0.f;
 	Line.Intensity = Intensity;
 	Line.Text = Subtitle;
+	// Walking speakers get walk-and-talk coverage.
+	Line.bMoving = Speaker->GetVelocity().Size2D() > 60.f;
 	CurrentLiveLine = Line;
 
 	LiveCast.AddUnique(Speaker);
@@ -395,6 +398,21 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	}
 
 	Camera->SetActorTransform(Solution.CameraTransform);
+
+	// Walk-and-talk shots ride a follow rig; everything else stays put.
+	const bool bTracking = Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow;
+	UCinemafyFollowComponent* Follow = Camera->FindComponentByClass<UCinemafyFollowComponent>();
+	if (bTracking)
+	{
+		Follow = Follow ? Follow : FindOrAddRuntimeComponent<UCinemafyFollowComponent>(Camera);
+		Follow->Target = Shot.Subject;
+		Follow->Weight = 1.f;
+		Follow->CaptureOffset();
+	}
+	else if (Follow)
+	{
+		Follow->Weight = 0.f;
+	}
 	UCineCameraComponent* Cine = Camera->GetCineCameraComponent();
 	UCinemafyCameraLibrary::ApplySensor(Cine, Request.Sensor);
 	UCinemafyCameraLibrary::ApplyPrime(Cine, Solution.Lens, 2.8f);

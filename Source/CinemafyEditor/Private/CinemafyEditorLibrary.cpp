@@ -5,6 +5,7 @@
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
 #include "CinemafyCameraMoveComponent.h"
+#include "CinemafyFollowComponent.h"
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
 #include "Animation/AnimSequenceBase.h"
@@ -1204,7 +1205,32 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		AnalyzeDirectorAudio(Director);
 	}
 
-	const TArray<FCinemafyLine> DirectedLines = Director->GetDirectedLines();
+	TArray<FCinemafyLine> DirectedLines = Director->GetDirectedLines();
+
+	// Who's walking? Play through the sequence and see how far each speaker travels during their line.
+	if (const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer())
+	{
+		const FQualifiedFrameTime OriginalTime = Sequencer->GetLocalTime();
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		const FFrameNumber SceneStart = CinemafySequencer::GetPlayheadTick(MovieScene);
+		float Time = 0.f;
+		for (FCinemafyLine& Line : DirectedLines)
+		{
+			if (Line.Speaker && !Line.bMoving)
+			{
+				Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time)));
+				Sequencer->ForceEvaluate();
+				const FVector From = Line.Speaker->GetActorLocation();
+				Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time + Line.Duration)));
+				Sequencer->ForceEvaluate();
+				Line.bMoving = FVector::Dist2D(From, Line.Speaker->GetActorLocation()) > 150.f;
+			}
+			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+		}
+		Sequencer->SetLocalTimeDirectly(ConvertFrameTime(OriginalTime.Time, OriginalTime.Rate, TickResolution));
+		Sequencer->ForceEvaluate();
+	}
+
 	const TArray<FCinemafyPlannedShot> NewPlan = Director->PlanDirectedLines(DirectedLines);
 	if (NewPlan.Num() == 0)
 	{
@@ -1296,6 +1322,17 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		}
 
 		Director->LastPlanCameras[ShotIndex] = Camera;
+
+		// Walk-and-talk cameras ride a follow rig, locked to the subject at the offset they were framed at.
+		if (Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow)
+		{
+			UCinemafyFollowComponent* Follow = FindOrAddComponent<UCinemafyFollowComponent>(Camera, TEXT("CinemafyFollow"));
+			if (!Follow->Target)
+			{
+				Follow->Target = Shot.Subject;
+				Follow->CaptureOffset();
+			}
+		}
 
 		const FCinemafyDirectorStyle& Style = DirectorStyle;
 		if (Style.bApplyLook)
