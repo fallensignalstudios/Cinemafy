@@ -2312,7 +2312,7 @@ bool UCinemafyScriptLibrary::ReadShotCall(const FString& Text, FCinemafyShotCall
 	using namespace CinemafyShotCalls;
 	OutCall = FCinemafyShotCall();
 	FString Words = Text.ToUpper().TrimStartAndEnd();
-	Words = Words.Replace(TEXT("–"), TEXT("-")).Replace(TEXT("—"), TEXT("-")).Replace(TEXT("’"), TEXT("'"))
+	Words = Words.Replace(TEXT("\u2013"), TEXT("-")).Replace(TEXT("\u2014"), TEXT("-")).Replace(TEXT("\u2019"), TEXT("'"))
 		.Replace(TEXT("P.O.V."), TEXT("POV")).Replace(TEXT("P.O.V"), TEXT("POV")).Replace(TEXT("CLOSE-UP"), TEXT("CLOSEUP")).Replace(TEXT("CLOSE UP"), TEXT("CLOSEUP"))
 		.Replace(TEXT("TWO-SHOT"), TEXT("TWO SHOT")).Replace(TEXT("HAND-HELD"), TEXT("HANDHELD")).Replace(TEXT("HAND HELD"), TEXT("HANDHELD"))
 		.Replace(TEXT("OVER-THE-SHOULDER"), TEXT("OVER THE SHOULDER")).Replace(TEXT("LOCKED-OFF"), TEXT("LOCKED OFF")).Replace(TEXT("  "), TEXT(" "));
