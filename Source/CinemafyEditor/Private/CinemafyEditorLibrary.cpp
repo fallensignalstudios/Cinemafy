@@ -1409,6 +1409,12 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	TMap<ACineCameraActor*, TArray<FCameraShotWindow>> CameraWindows;
 	Director->LastSceneStartTick = SceneStart.Value;
 
+	// New cameras are framed on where the characters are when their shot starts (a baked choreography take moves
+	// them), so evaluate the sequence at each shot before framing it, then put the playhead back.
+	const TSharedPtr<ISequencer> FramingSequencer = CinemafySequencer::GetOpenSequencer();
+	const bool bFrameAtShotTime = FramingSequencer.IsValid() && FramingSequencer->GetFocusedMovieSceneSequence() == Sequence;
+	const FQualifiedFrameTime FramingRestoreTime = bFrameAtShotTime ? FramingSequencer->GetLocalTime() : FQualifiedFrameTime();
+
 	for (int32 ShotIndex = 0; ShotIndex < Plan.Num(); ++ShotIndex)
 	{
 		const FCinemafyPlannedShot& Shot = Plan[ShotIndex];
@@ -1418,6 +1424,11 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		ACineCameraActor* Camera = ExistingCameras.FindRef(ShotTag);
 		if (!Camera)
 		{
+			if (bFrameAtShotTime)
+			{
+				FramingSequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Shot.StartTime)));
+				FramingSequencer->ForceEvaluate();
+			}
 			FCinemafyShotRequest Request;
 			Request.ShotType = Shot.ShotType;
 			Request.Subject = Shot.Subject;
@@ -1463,6 +1474,25 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		Feel->Seed = static_cast<int32>(GetTypeHash(Camera->GetFName()) % 1000);
 
 		const FGuid Binding = CinemafySequencer::BindActor(Sequence, Camera);
+
+		// Binding an actor through Sequencer auto-adds a transform track keyed where the camera stands, which pins a
+		// follow-rig camera in place every frame. Mute it (never delete) so walk-and-talk cameras track their subject.
+		if (Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow)
+		{
+			const UMovieScene* ConstMovieScene = MovieScene;
+			if (const FMovieSceneBinding* CameraBinding = ConstMovieScene->FindBinding(Binding))
+			{
+				for (UMovieSceneTrack* Track : CameraBinding->GetTracks())
+				{
+					if (Track && !Track->IsEvalDisabled() && Track->GetClass()->GetFName() == TEXT("MovieScene3DTransformTrack"))
+					{
+						Track->Modify();
+						Track->SetEvalDisabled(true);
+					}
+				}
+			}
+		}
+
 		const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
 		const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime + Shot.Duration);
 		if (UMovieSceneCameraCutSection* Cut = CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), Start))
@@ -1524,6 +1554,12 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 				CreateLightRig(Member, nullptr, DirectorStyle.LightingStyle);
 			}
 		}
+	}
+
+	if (bFrameAtShotTime)
+	{
+		FramingSequencer->SetLocalTimeDirectly(ConvertFrameTime(FramingRestoreTime.Time, FramingRestoreTime.Rate, TickResolution));
+		FramingSequencer->ForceEvaluate();
 	}
 
 	// Make sure the whole scene fits in the playback range.
