@@ -1,6 +1,9 @@
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
+#include "Engine/Engine.h"
+#include "CollisionQueryParams.h"
 #include "GameFramework/Actor.h"
 
 namespace
@@ -180,7 +183,8 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 		const FVector Mid = 0.5f * (SubjectEye + OtherEye);
 		const float NeededWidth = FVector::Dist2D(SubjectEye, OtherEye) + Spec.TwoShotPadding;
 		const float FrameH = FMath::Max(Spec.FrameHeight, NeededWidth / Aspect);
-		CamPos = Mid + SideDir * DistanceForFrame(FrameH, Focal, SensorH) + Up * Spec.HeightOffset;
+		const FVector Dir = SideDir.RotateAngleAxis(Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
+		CamPos = Mid + Dir * DistanceForFrame(FrameH, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
 		AimPoint = Mid - Up * (FrameH / 6.f);
 		FocusPoint = Mid;
 		break;
@@ -189,7 +193,7 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 	case ECinemafyShotType::OverTheShoulder:
 	{
 		// Sit just behind the counterpart's shoulder (camera side of the line) and look back at the subject.
-		CamPos = OtherEye + LookDir * 45.f + SideDir * 35.f + Up * Spec.HeightOffset;
+		CamPos = OtherEye + LookDir * 45.f + SideDir * (35.f + Request.AngleOffset * 1.5f) + Up * (Spec.HeightOffset + Request.HeightOffset);
 		const float Dist = FVector::Dist(CamPos, SubjectEye);
 
 		// Distance is fixed by the blocking, so pick the lens that gives the right frame size.
@@ -205,9 +209,9 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 
 	default:
 	{
-		const float Angle = FMath::DegreesToRadians(Spec.SideAngleDeg);
+		const float Angle = FMath::DegreesToRadians(FMath::Clamp(Spec.SideAngleDeg + Request.AngleOffset, 2.f, 70.f));
 		const FVector Dir = (LookDir * FMath::Cos(Angle) + SideDir * FMath::Sin(Angle)).GetSafeNormal();
-		CamPos = SubjectEye + Dir * DistanceForFrame(Spec.FrameHeight, Focal, SensorH) + Up * Spec.HeightOffset;
+		CamPos = SubjectEye + Dir * DistanceForFrame(Spec.FrameHeight, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
 		AimPoint = SubjectEye - Up * (Spec.FrameHeight / 6.f);
 		if (Counterpart)
 		{
@@ -223,5 +227,97 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 	OutSolution.Lens = Lens;
 	OutSolution.FocalLength = Focal;
 	OutSolution.FocusDistance = FMath::Max(FVector::DotProduct(FocusPoint - CamPos, CamRot.Vector()), 15.f);
+	return true;
+}
+
+bool UCinemafyFramingLibrary::IsShotClear(const UWorld* World, const FCinemafyShotRequest& Request, const FCinemafyShotSolution& Solution)
+{
+	if (!World)
+	{
+		return true;
+	}
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(CinemafyShotClear), false);
+	if (Request.Subject)
+	{
+		Params.AddIgnoredActor(Request.Subject);
+	}
+	if (Request.Counterpart)
+	{
+		// The counterpart is *meant* to be in the way for OTS shots.
+		Params.AddIgnoredActor(Request.Counterpart);
+	}
+
+	const FVector Camera = Solution.CameraTransform.GetLocation();
+
+	// Room for the lens: not inside a wall or a prop.
+	if (World->OverlapAnyTestByChannel(Camera, FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(12.f), Params))
+	{
+		return false;
+	}
+
+	// A clear view of everyone the shot is about.
+	TArray<FVector, TInlineAllocator<2>> Targets;
+	Targets.Add(GetEyePoint(Request.Subject));
+	if (Request.Counterpart && Request.ShotType != ECinemafyShotType::OverTheShoulder && ShotNeedsCounterpart(Request.ShotType))
+	{
+		Targets.Add(GetEyePoint(Request.Counterpart));
+	}
+	for (const FVector& Target : Targets)
+	{
+		FHitResult Hit;
+		if (World->LineTraceSingleByChannel(Hit, Camera, Target, ECC_Visibility, Params))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldContextObject, const FCinemafyShotRequest& Request,
+	FCinemafyShotSolution& OutSolution, bool& bOutClearView)
+{
+	bOutClearView = false;
+	if (!SolveShot(Request, OutSolution))
+	{
+		return false;
+	}
+
+	const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+	if (!World || IsShotClear(World, Request, OutSolution))
+	{
+		bOutClearView = true;
+		return true;
+	}
+
+	// Alternatives that keep the shot's intent, roughly in order of how little they change it.
+	struct FVariant { float Angle; float Height; int32 LensStep; };
+	static const FVariant Variants[] = {
+		{  8.f,   0.f,  0 }, { -8.f,   0.f,  0 }, { 16.f,   0.f,  0 },
+		{  0.f,   0.f, -1 }, { 10.f,   0.f, -1 }, {  0.f,  25.f,  0 },
+		{  0.f, -20.f,  0 }, { 24.f,   0.f, -1 }, {  0.f,   0.f, -2 },
+	};
+
+	const ECinemafyPrime BaseLens = OutSolution.Lens;
+	for (const FVariant& Variant : Variants)
+	{
+		FCinemafyShotRequest Attempt = Request;
+		Attempt.AngleOffset += Variant.Angle;
+		Attempt.HeightOffset += Variant.Height;
+		if (Variant.LensStep != 0)
+		{
+			// A wider lens brings the camera closer for the same framing: in front of whatever was blocking.
+			Attempt.bUseRecommendedLens = false;
+			Attempt.Lens = static_cast<ECinemafyPrime>(FMath::Clamp(static_cast<int32>(BaseLens) + Variant.LensStep, 0, static_cast<int32>(ECinemafyPrime::Prime135)));
+		}
+
+		FCinemafyShotSolution Candidate;
+		if (SolveShot(Attempt, Candidate) && IsShotClear(World, Attempt, Candidate))
+		{
+			OutSolution = Candidate;
+			bOutClearView = true;
+			return true;
+		}
+	}
 	return true;
 }

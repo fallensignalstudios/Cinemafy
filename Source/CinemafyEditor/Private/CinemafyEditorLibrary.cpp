@@ -151,17 +151,17 @@ TArray<AActor*> UCinemafyEditorLibrary::GetSelectedActorsInOrder()
 
 ACineCameraActor* UCinemafyEditorLibrary::CreateShot(const FCinemafyShotRequest& Request, bool bAddToOpenSequence)
 {
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	FCinemafyShotSolution Solution;
-	if (!GEditor || !UCinemafyFramingLibrary::SolveShot(Request, Solution))
+	bool bClearView = false;
+	if (!World || !UCinemafyFramingLibrary::SolveShotAvoidingObstacles(World, Request, Solution, bClearView))
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't solve that shot. Two-shots and over-the-shoulders need a subject and a counterpart."));
 		return nullptr;
 	}
-
-	UWorld* World = GEditor->GetEditorWorldContext().World();
-	if (!World)
+	if (!bClearView)
 	{
-		return nullptr;
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: every placement for this shot is blocked by level geometry. Placed the best guess; nudge it by hand."));
 	}
 
 	const FScopedTransaction Transaction(LOCTEXT("CreateShot", "Cinemafy: Create Shot"));

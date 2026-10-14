@@ -136,6 +136,14 @@ struct FCinemafyShotRequest
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
 	bool bFlipSide = false;
+
+	/** Swing the camera further around the subject (degrees), staying on the same side of the line. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot", AdvancedDisplay)
+	float AngleOffset = 0.f;
+
+	/** Raise (+) or lower (-) the camera, in cm. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot", AdvancedDisplay)
+	float HeightOffset = 0.f;
 };
 
 /** Output of the shot solver. */

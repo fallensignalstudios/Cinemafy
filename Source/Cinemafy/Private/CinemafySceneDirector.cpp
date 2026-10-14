@@ -248,7 +248,8 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	Request.bFlipSide = bFlipSide;
 
 	FCinemafyShotSolution Solution;
-	if (!UCinemafyFramingLibrary::SolveShot(Request, Solution))
+	bool bClearView = false;
+	if (!UCinemafyFramingLibrary::SolveShotAvoidingObstacles(this, Request, Solution, bClearView))
 	{
 		return;
 	}

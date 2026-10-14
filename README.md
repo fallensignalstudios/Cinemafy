@@ -214,6 +214,9 @@ their own curves to `SpeechCurves`, or key `ManualSpeechEnergy`. Tune `SpeechThr
   and groom). Their normal channel 0 world lighting is left as it was.
 - With **Drive Gaze** on, the Listener owns its Gaze's `LookAtOffset` (for thinking glances).
   Use `SetLookAtTarget` to aim the gaze and leave the offset to the Listener.
+- **Smart placement:** Create Shot and the Director check that each camera isn't inside geometry and has a
+  clear view of its subject. If not, they try nearby alternatives on the same side of the line (swing
+  the angle, step closer on a wider lens, raise or lower). The Output Log warns if nothing works.
 - Bone names default to MetaHuman (`FACIAL_L_Eye`, `FACIAL_R_Eye`, `head`) and fall back
   gracefully for other characters.
 

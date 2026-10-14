@@ -20,6 +20,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Framing")
 	static bool SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution);
 
+	/**
+	 * Like SolveShot, but checks the real world: if the camera would sit inside geometry or something
+	 * blocks the view of the subject, it tries nearby alternatives (swing the angle, step closer on a
+	 * wider lens, raise or lower) that keep the shot's intent and the 180-degree side.
+	 * bOutClearView is false if every option was blocked (the best attempt is still returned).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Framing", meta = (WorldContext = "WorldContextObject"))
+	static bool SolveShotAvoidingObstacles(const UObject* WorldContextObject, const FCinemafyShotRequest& Request,
+		FCinemafyShotSolution& OutSolution, bool& bOutClearView);
+
+	/** True if the camera has room around it and an unobstructed view of the request's characters. */
+	static bool IsShotClear(const UWorld* World, const FCinemafyShotRequest& Request, const FCinemafyShotSolution& Solution);
+
 	/** The lens most DPs would reach for on this shot type. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
 	static ECinemafyPrime GetRecommendedPrime(ECinemafyShotType ShotType);
