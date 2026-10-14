@@ -13,4 +13,5 @@ private:
 	void RegisterMenus();
 
 	FDelegateHandle DirectorRequestHandle;
+	FDelegateHandle ChoreoRequestHandle;
 };

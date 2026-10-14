@@ -1,4 +1,8 @@
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyChoreoTools.h"
+#include "CinemafyChoreography.h"
+#include "CinemafyChoreographyLibrary.h"
+#include "GameFramework/Character.h"
 #include "CinemafyModule.h"
 #include "CinemafySequencerUtils.h"
 #include "CinemafyCameraLibrary.h"
@@ -2724,6 +2728,129 @@ int32 UCinemafyEditorLibrary::AddGazeToSelection()
 		WarnNothingSelected(TEXT("character (with a skeletal mesh)"));
 	}
 	return Count;
+}
+
+ACinemafyChoreography* UCinemafyEditorLibrary::ChoreographSelection()
+{
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	ACinemafyChoreography* Choreography = nullptr;
+	ACharacter* Character = nullptr;
+	for (AActor* Actor : GetSelectedActorsInOrder())
+	{
+		if (ACinemafyChoreography* Selected = Cast<ACinemafyChoreography>(Actor))
+		{
+			Choreography = Selected;
+			break;
+		}
+		if (!Character)
+		{
+			Character = Cast<ACharacter>(Actor);
+		}
+	}
+
+	// A character's existing choreography, if it has one.
+	if (!Choreography && Character)
+	{
+		for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
+		{
+			if (It->Performer == Character)
+			{
+				Choreography = *It;
+				break;
+			}
+		}
+	}
+
+	if (!Choreography)
+	{
+		const FScopedTransaction Transaction(LOCTEXT("NewChoreography", "Create Choreography"));
+		FActorSpawnParameters Params;
+		const FVector Location = Character ? Character->GetActorLocation() : FVector::ZeroVector;
+		Choreography = World->SpawnActor<ACinemafyChoreography>(Location, FRotator::ZeroRotator, Params);
+		if (!Choreography)
+		{
+			return nullptr;
+		}
+		Choreography->SetActorLabel(Character ? FString::Printf(TEXT("Choreography_%s"), *Character->GetActorLabel()) : FString(TEXT("Choreography")));
+		Choreography->Performer = Character;
+	}
+
+	FCinemafyChoreoMode::Start(Choreography);
+	return Choreography;
+}
+
+void UCinemafyEditorLibrary::PerformAndRecordChoreography(ACinemafyChoreography* Choreography)
+{
+	CinemafyChoreoTake::PerformAndRecord(Choreography);
+}
+
+int32 UCinemafyEditorLibrary::DirectChoreography(ACinemafyChoreography* Choreography)
+{
+	return CinemafyChoreoTake::DirectShots(Choreography);
+}
+
+UCinemafyMoveLibrary* UCinemafyEditorLibrary::CreateMoveLibraryFromFolder(const FString& ContentFolder)
+{
+	const TArray<FCinemafyMoveCandidate> Candidates = UCinemafyChoreographyLibrary::GatherCandidates(nullptr, { ContentFolder }, nullptr);
+
+	// One-shots only: locomotion belongs to motion matching.
+	static const TSet<FString> Locomotion = { TEXT("walk"), TEXT("run"), TEXT("jog"), TEXT("sprint"), TEXT("loop"), TEXT("locomotion"),
+		TEXT("strafe"), TEXT("pivot"), TEXT("start"), TEXT("stop"), TEXT("turn"), TEXT("idle"), TEXT("pose"), TEXT("additive"), TEXT("ao") };
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+	FString PackageName, AssetName;
+	AssetTools.CreateUniqueAssetName(TEXT("/Game/Cinemafy/ML_Moves"), TEXT(""), PackageName, AssetName);
+	UPackage* Package = CreatePackage(*PackageName);
+	UCinemafyMoveLibrary* Library = NewObject<UCinemafyMoveLibrary>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
+
+	TSet<FString> SeenNames;
+	for (const FCinemafyMoveCandidate& Candidate : Candidates)
+	{
+		if (Candidate.Tokens.ContainsByPredicate([](const FString& Token) { return Locomotion.Contains(Token); }))
+		{
+			continue;
+		}
+		// AS_Attack and AS_Attack_Montage are the same move: keep the montage.
+		FString BaseName = Candidate.Name;
+		BaseName.RemoveFromEnd(TEXT("_Montage"));
+		const bool bMontage = Candidate.Tokens.Contains(TEXT("montage"));
+		if (SeenNames.Contains(BaseName) && !bMontage)
+		{
+			continue;
+		}
+		UAnimSequenceBase* Animation = Cast<UAnimSequenceBase>(Candidate.Path.TryLoad());
+		if (!Animation)
+		{
+			continue;
+		}
+		if (SeenNames.Contains(BaseName))
+		{
+			Library->Moves.RemoveAll([&BaseName](const FCinemafyMoveEntry& Entry) { return Entry.Animation && Entry.Animation->GetName() == BaseName; });
+		}
+		SeenNames.Add(BaseName);
+
+		FCinemafyMoveEntry& Entry = Library->Moves.AddDefaulted_GetRef();
+		Entry.Animation = Animation;
+		for (const FString& Token : UCinemafyChoreographyLibrary::TokenizeName(Candidate.Name))
+		{
+			if (Token.Len() > 1 && !Token.IsNumeric())
+			{
+				Entry.Keywords.AddUnique(Token);
+			}
+		}
+	}
+
+	FAssetRegistryModule::AssetCreated(Library);
+	Package->MarkPackageDirty();
+	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("MoveLibraryMade",
+		"Made {0} with {1} move(s). Set it as the Move Library on your choreographies, and add your own keywords to any entry."),
+		FText::FromString(AssetName), Library->Moves.Num()));
+	return Library;
 }
 
 #undef LOCTEXT_NAMESPACE

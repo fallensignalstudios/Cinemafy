@@ -27,7 +27,10 @@ public class CinemafyEditor : ModuleRules
 			"MovieScene",
 			"MovieSceneTracks",
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"InputCore",
+			"EditorFramework",
+			"LevelEditor"
 		});
 	}
 }

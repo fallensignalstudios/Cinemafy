@@ -20,7 +20,10 @@ public class Cinemafy : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"AssetRegistry",
+			"NavigationSystem",
+			"MotionWarping"
 		});
 	}
 }

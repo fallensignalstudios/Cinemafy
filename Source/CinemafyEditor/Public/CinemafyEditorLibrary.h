@@ -10,6 +10,8 @@ class ACinemafyLightRig;
 class ACinemafySceneDirector;
 class USoundWave;
 class UCinemafyDirectorStyleAsset;
+class ACinemafyChoreography;
+class UCinemafyMoveLibrary;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -198,6 +200,28 @@ public:
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 AddGazeToSelection();
+
+	/**
+	 * Choreograph mode for the selected character (or choreography): click points in the viewport,
+	 * type what happens there. Makes a Cinemafy Choreography for the character if it has none.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static ACinemafyChoreography* ChoreographSelection();
+
+	/** Plays in editor, performs every choreography in the level, records and bakes the take into Sequencer. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static void PerformAndRecordChoreography(ACinemafyChoreography* Choreography);
+
+	/** Cuts shots around a choreography's recorded take with a Scene Director. Returns the shot count. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static int32 DirectChoreography(ACinemafyChoreography* Choreography);
+
+	/**
+	 * Makes a Move Library asset from every one-shot animation (attacks, gestures, reactions...) in a
+	 * content folder, with keywords from their names, for you to curate.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static UCinemafyMoveLibrary* CreateMoveLibraryFromFolder(const FString& ContentFolder);
 
 	static TArray<AActor*> GetSelectedActorsInOrder();
 };

@@ -5,6 +5,8 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "CinemafyCameraLibrary.h"
+#include "CinemafyChoreographyLibrary.h"
+#include "GameFramework/Pawn.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafyFramingLibrary.h"
@@ -414,6 +416,135 @@ bool FCinemafyBrainTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Hits without words become action"), Fight[0].bAction && Fight[0].Moment == ECinemafyMoment::Action);
 
 	TestFalse(TEXT("The decision report says something"), UCinemafyDirectorLibrary::SummarizeDecisions(Plan, Lines).IsEmpty());
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoPromptTest, "Cinemafy.Choreography.ReadsPrompts", CinemafyTests::Flags)
+bool FCinemafyChoreoPromptTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+
+	FCinemafyPromptReading Walk = Lib::ReadPrompt(TEXT("walk"));
+	TestEqual(TEXT("walk moves"), Walk.Kind, ECinemafyActionKind::Move);
+	TestTrue(TEXT("walk sets a gait"), Walk.bHasGait && Walk.Gait == ECinemafyGait::Walk);
+
+	TestEqual(TEXT("sprint is a sprinting move"), Lib::ReadPrompt(TEXT("sprint")).Gait, ECinemafyGait::Sprint);
+	TestEqual(TEXT("sneak crouches"), Lib::ReadPrompt(TEXT("sneak")).Gait, ECinemafyGait::Crouch);
+	TestEqual(TEXT("vault traverses"), Lib::ReadPrompt(TEXT("vault")).Kind, ECinemafyActionKind::Traverse);
+	TestEqual(TEXT("climb traverses"), Lib::ReadPrompt(TEXT("climb")).Kind, ECinemafyActionKind::Traverse);
+	TestEqual(TEXT("sprint vault is still a vault"), Lib::ReadPrompt(TEXT("sprint vault")).Kind, ECinemafyActionKind::Traverse);
+
+	FCinemafyPromptReading Sword = Lib::ReadPrompt(TEXT("sword attack"));
+	TestEqual(TEXT("sword attack attacks"), Sword.Kind, ECinemafyActionKind::Attack);
+	TestEqual(TEXT("...with a sword"), Sword.Weapon, FString(TEXT("sword")));
+	TestTrue(TEXT("...looking for attack animations"), Sword.Keywords.Num() > 0 && Sword.Keywords[0].StartsWith(TEXT("attack")));
+
+	TestEqual(TEXT("combo chains three"), Lib::ReadPrompt(TEXT("combo")).Repeat, 3);
+	TestEqual(TEXT("attack x3 chains three"), Lib::ReadPrompt(TEXT("attack x3")).Repeat, 3);
+	TestTrue(TEXT("shoot is ranged"), Lib::ReadPrompt(TEXT("shoot")).bRanged);
+
+	FCinemafyPromptReading Taunt = Lib::ReadPrompt(TEXT("taunt"));
+	TestEqual(TEXT("taunt performs"), Taunt.Kind, ECinemafyActionKind::Perform);
+	TestTrue(TEXT("...a taunt"), Taunt.Keywords.Num() > 0 && Taunt.Keywords[0].StartsWith(TEXT("taunt")));
+
+	FCinemafyPromptReading Wait = Lib::ReadPrompt(TEXT("wait 2"));
+	TestEqual(TEXT("wait waits"), Wait.Kind, ECinemafyActionKind::Wait);
+	TestEqual(TEXT("...two seconds"), Wait.Seconds, 2.f);
+
+	FCinemafyPromptReading Pistols = Lib::ReadPrompt(TEXT("two pistols"));
+	TestEqual(TEXT("two pistols is an equip"), Pistols.Kind, ECinemafyActionKind::Equip);
+	TestEqual(TEXT("...of both pistols"), Pistols.Weapon, FString(TEXT("pistols")));
+	TestEqual(TEXT("holster goes unarmed"), Lib::ReadPrompt(TEXT("holster")).Weapon, FString(TEXT("unarmed")));
+	TestEqual(TEXT("look looks"), Lib::ReadPrompt(TEXT("look")).Kind, ECinemafyActionKind::Look);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoPickTest, "Cinemafy.Choreography.PicksAnimationsByName", CinemafyTests::Flags)
+bool FCinemafyChoreoPickTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+
+	const TArray<FString> Tokens = Lib::TokenizeName(TEXT("/Game/Anims/AM_Katana_Attack_Combo01"));
+	TestTrue(TEXT("Tokens split on CamelCase, separators and digits"),
+		Tokens.Contains(TEXT("katana")) && Tokens.Contains(TEXT("attack")) && Tokens.Contains(TEXT("combo")) && Tokens.Contains(TEXT("01")));
+	TestTrue(TEXT("CamelCase pairs are kept whole too"), Lib::TokenizeName(TEXT("PistolOneHanded")).Contains(TEXT("onehanded")));
+
+	const FCinemafyPromptReading Sword = Lib::ReadPrompt(TEXT("sword attack"));
+	const float Katana = Lib::ScoreAnimation(Sword, Lib::TokenizeName(TEXT("/Game/CombatMaster/Katana/AM_Katana_Attack_01")));
+	const float Pistol = Lib::ScoreAnimation(Sword, Lib::TokenizeName(TEXT("/Game/Guns/AM_Pistol_Attack_01")));
+	TestTrue(TEXT("A sword attack prefers the katana"), Katana > Pistol);
+	TestTrue(TEXT("Locomotion is never an attack"), Lib::ScoreAnimation(Sword, Lib::TokenizeName(TEXT("Sword_Walk_Loop"))) < 0.f);
+	TestTrue(TEXT("A hit reaction is never an attack"), Lib::ScoreAnimation(Sword, Lib::TokenizeName(TEXT("Sword_HitReact_Front"))) < 0.f);
+
+	TArray<FCinemafyMoveCandidate> Candidates;
+	for (const TCHAR* Name : { TEXT("AS_Single_Attack"), TEXT("AS_Combo_Attack_01_03"), TEXT("AS_Combo_Attack_01_01"), TEXT("AS_Combo_Attack_01_02"), TEXT("AS_Combo_Attack_01_04") })
+	{
+		FCinemafyMoveCandidate& Candidate = Candidates.AddDefaulted_GetRef();
+		Candidate.Name = Name;
+		Candidate.Path = FSoftObjectPath(FString::Printf(TEXT("/Game/Anims/%s.%s"), Name, Name));
+		Candidate.Tokens = Lib::TokenizeName(Name);
+	}
+	const TArray<int32> Combo = Lib::PickAnimations(Lib::ReadPrompt(TEXT("combo")), Candidates, 3, {});
+	TestEqual(TEXT("A combo picks three"), Combo.Num(), 3);
+	if (Combo.Num() == 3)
+	{
+		TestEqual(TEXT("...in order from the first hit"), Candidates[Combo[0]].Name, FString(TEXT("AS_Combo_Attack_01_01")));
+		TestEqual(TEXT("...then the second"), Candidates[Combo[1]].Name, FString(TEXT("AS_Combo_Attack_01_02")));
+		TestEqual(TEXT("...then the third"), Candidates[Combo[2]].Name, FString(TEXT("AS_Combo_Attack_01_03")));
+	}
+
+	TestTrue(TEXT("Two pistols means the two-handed pistol overlay"),
+		Lib::ScoreOverlayName(TEXT("pistols"), TEXT("PistolTwoHanded")) > Lib::ScoreOverlayName(TEXT("pistols"), TEXT("PistolOneHanded")));
+	TestTrue(TEXT("A sword isn't a rifle"), Lib::ScoreOverlayName(TEXT("sword"), TEXT("Rifle")) <= 0.f);
+	TestTrue(TEXT("Blueprint enum paths are trimmed"), Lib::ScoreOverlayName(TEXT("rifle"), TEXT("Enum_OverlayPose::Rifle")) > 5.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoLinesTest, "Cinemafy.Choreography.TakeBecomesDirectorLines", CinemafyTests::Flags)
+bool FCinemafyChoreoLinesTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	APawn* Enemy = Scene.World->SpawnActor<APawn>();
+
+	auto MakeBeat = [](const TCHAR* Prompt, float Start, float End, TArray<float> Impacts, AActor* Target)
+	{
+		FCinemafyChoreoBeat Beat;
+		Beat.Prompt = Prompt;
+		Beat.Reading = UCinemafyChoreographyLibrary::ReadPrompt(Prompt);
+		Beat.StartTime = Start;
+		Beat.EndTime = End;
+		Beat.ImpactTimes = Impacts;
+		Beat.Target = Target;
+		return Beat;
+	};
+
+	TArray<FCinemafyChoreoBeat> Beats;
+	Beats.Add(MakeBeat(TEXT("walk"), 0.5f, 3.f, {}, nullptr));
+	Beats.Add(MakeBeat(TEXT("vault"), 3.f, 4.5f, { 3.6f }, nullptr));
+	Beats.Add(MakeBeat(TEXT("sword attack"), 4.5f, 7.f, { 5.4f }, Enemy));
+	Beats.Add(MakeBeat(TEXT("taunt"), 7.f, 9.f, {}, nullptr));
+
+	const TArray<FCinemafyLine> Lines = UCinemafyChoreographyLibrary::BuildDirectorLines(Beats, Scene.Kara, 10.f);
+	TestEqual(TEXT("One line per beat"), Lines.Num(), 4);
+	if (Lines.Num() != 4)
+	{
+		return true;
+	}
+
+	float Total = 0.f;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		Total += Line.Duration + Line.PauseAfter;
+		TestFalse(TEXT("Timed to the take, not to audio"), Line.bUseAudioDuration);
+	}
+	TestTrue(TEXT("The lines cover the whole take"), FMath::IsNearlyEqual(Total, 10.f, 0.01f));
+	TestTrue(TEXT("Walking is moving"), Lines[0].bMoving);
+	TestTrue(TEXT("A vault is action"), Lines[1].bAction);
+	TestTrue(TEXT("...cut on the take-off"), Lines[1].ImpactTimes.Num() == 1 && FMath::IsNearlyEqual(Lines[1].ImpactTimes[0], 0.6f, 0.01f));
+	TestTrue(TEXT("The attack is action on its impact"), Lines[2].bAction && Lines[2].ImpactTimes.Num() == 1 && FMath::IsNearlyEqual(Lines[2].ImpactTimes[0], 0.9f, 0.01f));
+	TestTrue(TEXT("The enemy is the listener (for over-the-shoulders)"), Lines[2].Listener == Enemy);
+	TestTrue(TEXT("Everything is the performer's"), Lines[3].Speaker == Scene.Kara);
 	return true;
 }
 

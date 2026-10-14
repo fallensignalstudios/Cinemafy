@@ -218,6 +218,47 @@ everyone's Listener at whoever's talking. `StartConversation()` plays the direct
 
 ---
 
+## Choreograph a performance (click, type, record)
+
+Make stock motion-matching animation *act*. **Tools > Cinemafy > Choreograph Character** (or **Choreograph**
+in the Hub) with your character selected, then:
+
+1. **Click** where something happens in the viewport. A box pops up.
+2. **Type** a word or two: `walk`, `run`, `sprint`, `sneak`, `vault`, `climb`, `jump`, `sword attack`,
+   `combo`, `shoot`, `taunt`, `wave`, `look`, `wait 2`, `pistols`, `holster`... Click an enemy before
+   `sword attack` and the attack is aimed at them. Repeat. **Esc** when done. **Ctrl+Z** undoes beats.
+3. **Perform & Record** (banner button, or on the Choreography actor). Cinemafy plays in editor and the
+   character performs it *for real*:
+   - **Locomotion** is your motion matching: Cinemafy steers the character and sets its gait
+     (`SetWantsToSprint` / `SetWantsToWalk`, GASP's `CharacterInputState`, or a speed fallback), so starts,
+     stops, pivots and turns come from the database.
+   - **Vaults and climbs** call the character's own traversal (GASP's `TryTraversalAction`, fed by
+     `GetTraversalCheckInputs`), so the chooser, motion warping and the blend back out are GASP's own.
+   - **Attacks, taunts, gestures and reactions** are picked from your animation library by name and
+     folder (`AM_Katana_Attack_Combo_01` answers to *sword attack*), filtered to animations your
+     skeleton can play. `combo` chains a numbered family in order. Melee closes the distance first,
+     faces the target and sets motion-warp targets (`AttackTarget` / `Target`).
+   - **Weapons** switch the overlay: `sword`, `pistols`, `rifle`, `wand` match GASPALS's overlay enum
+     by display name (*pistols* → `PistolTwoHanded`).
+   - Beats flow: moves round corners, the next action starts as a montage blends out.
+4. Play stops by itself. The take is **baked into the open Level Sequence** (or a new one in
+   `/Game/Cinemafy/Takes`): a transform track plus a recorded animation per body mesh.
+5. **Direct Shots** (automatic after the bake by default) hands the take to a Scene Director: vaults
+   and hits become action lines cut on impact, sprints become tracking shots, the enemy becomes the
+   reverse for over-the-shoulders. Change **Director Style** on the choreography and re-direct as
+   often as you like.
+
+Several characters? Give each a choreography. Perform & Record takes everyone (with **Include In
+Takes** on) in one take, and the director cuts the whole fight.
+
+Each beat shows how it was read (**Reading**) and what it picked (**Chosen Animations**). Override any
+beat with **Animation Override**. For full control, **Build Move Library** gathers the project's
+one-shots into an asset you can curate (add keywords, bias favorites), and set it as the
+choreography's **Move Library**. The **Wiring Report** says what Cinemafy found on the character. If it
+guessed wrong, set the function names under *Wiring*.
+
+---
+
 ## Gameplay ↔ cutscene handoff
 
 1. Open the cutscene's Level Sequence and click *Tools → Cinemafy → Set Up Gameplay Blend*. This:

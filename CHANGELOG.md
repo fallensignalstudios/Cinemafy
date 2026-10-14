@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0: "Choreographer"
+- **Click-to-choreograph:** pick a character, click points in the level, type one or two words per
+  point (`walk`, `vault`, `sprint`, `climb`, `sword attack`, `taunt`...). A popup with quick chips
+  shows, plus labeled route lines in the viewport. Undoable.
+- **The performer brain** reads prompts (gaits, traversal, attacks, combos, ranged, weapons, waits,
+  looks, gestures) and picks animations by name and folder from the project or a curated **Move
+  Library**. It filters by skeleton compatibility, chains numbered combos, avoids repeats, and never
+  uses locomotion or hit reacts as an attack.
+- **Real performances, not splices:** motion matching drives the locomotion live. Traversal uses the
+  character's own system (GASP `TryTraversalAction`). Overlays switch by enum display name (GASPALS).
+  Attacks get motion-warp targets. Everything is auto-wired by reflection, with overrides.
+- **Perform & Record:** play in editor, record every choreographed character, auto-stop, and bake a
+  transform track plus recorded body animation into the open Level Sequence.
+- **Direct Shots:** the take becomes Scene Director lines. Impacts cut on the hit, sprints track,
+  targets become reverses. Multi-character takes merge onto one timeline.
+- MCP toolset: `create_choreography`, `add_choreography_beat`, `read_choreography_prompt`,
+  `perform_and_record_choreography`, `direct_choreography`.
+- Tests for prompt reading, name scoring, combo chains, overlay matching and take-to-lines.
+
 ## 0.7.0: "The Director grows up"
 - **Director style assets** and six archetype presets. **Space Opera Classic** is modeled on classic-trilogy
   craft: locked-off classical coverage, two-shots held through exchanges, wipes, brisk action cutting,

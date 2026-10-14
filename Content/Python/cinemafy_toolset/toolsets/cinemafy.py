@@ -433,6 +433,104 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Helpers ----------------------------------------------------------------------
 
+    # --- Choreography -------------------------------------------------------------------
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def create_choreography(performer: unreal.Character) -> unreal.CinemafyChoreography:
+        """Creates a Cinemafy Choreography for a character (or returns the one it already has).
+        Add beats to it, then perform_and_record_choreography.
+
+        Args:
+            performer: The character who performs.
+
+        Returns:
+            The choreography.
+        """
+        for actor in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors():
+            if isinstance(actor, unreal.CinemafyChoreography) and actor.get_editor_property('performer') == performer:
+                return actor
+        choreo = unreal.get_editor_subsystem(unreal.EditorActorSubsystem).spawn_actor_from_class(
+            unreal.CinemafyChoreography, performer.get_actor_location())
+        if choreo is None:
+            raise RuntimeError('Could not spawn a choreography.')
+        choreo.set_actor_label('Choreography_' + performer.get_actor_label())
+        choreo.set_editor_property('performer', performer)
+        return choreo
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def add_choreography_beat(choreography: unreal.CinemafyChoreography, prompt: str, location: unreal.Vector,
+                              target: unreal.Actor = None) -> str:
+        """Appends a beat: the performer goes to the location and does what the prompt says. Prompts are
+        one or two words: walk, run, sprint, sneak, vault, climb, jump, sword attack, combo, shoot, taunt,
+        wave, look, wait 2, pistols, holster. Unknown words are searched for in animation names.
+
+        Args:
+            choreography: The choreography to add to.
+            prompt: What happens at this point.
+            location: Where it happens (world space).
+            target: A character the action is aimed at (attacks, taunts), if any.
+
+        Returns:
+            How the director read the prompt and which animation(s) it picked.
+        """
+        index = choreography.add_beat(prompt, location, target)
+        beat = choreography.get_editor_property('beats')[index]
+        reading = beat.get_editor_property('reading')
+        anims = [a.get_name() for a in beat.get_editor_property('chosen_animations') if a]
+        return reading.get_editor_property('summary') + (' using ' + ', '.join(anims) if anims else '')
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def read_choreography_prompt(prompt: str) -> unreal.CinemafyPromptReading:
+        """Shows how the choreographer reads a prompt, without adding it anywhere.
+
+        Args:
+            prompt: One or two words, e.g. "sword attack".
+
+        Returns:
+            The reading: action kind, gait, weapon, keywords, repeat count.
+        """
+        return unreal.CinemafyChoreographyLibrary.read_prompt(prompt)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def perform_and_record_choreography(choreography: unreal.CinemafyChoreography) -> str:
+        """Starts play-in-editor; every choreography in the level performs and is recorded. When the take
+        ends, play stops and the performance is baked into the open Level Sequence (or a new one), then
+        directed if the choreography's Direct After Bake is on. This returns immediately; the take runs
+        in the background.
+
+        Args:
+            choreography: The main choreography (its director cuts the take).
+
+        Returns:
+            A status message.
+        """
+        if not choreography.get_editor_property('performer') or len(choreography.get_editor_property('beats')) == 0:
+            raise ValueError('The choreography needs a performer and at least one beat.')
+        _lib.perform_and_record_choreography(choreography)
+        return 'Recording started; the take bakes into Sequencer when the performance finishes.'
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def direct_choreography(choreography: unreal.CinemafyChoreography) -> list[unreal.CinemafyPlannedShot]:
+        """Cuts coverage around a recorded choreography take with a Scene Director.
+
+        Args:
+            choreography: A choreography with a recorded take.
+
+        Returns:
+            The planned shots.
+        """
+        if choreography.get_editor_property('take_duration') <= 0:
+            raise ValueError('Record a take first (perform_and_record_choreography).')
+        if _lib.direct_choreography(choreography) <= 0:
+            raise RuntimeError('The director planned no shots.')
+        director = choreography.get_editor_property('scene_director')
+        return list(director.last_plan) if director else []
+
     @staticmethod
     def _eye_focus_distance(camera: unreal.CineCameraActor):
         """The focal-plane distance the camera's Eye Focus wants right now (it only updates on ticks,

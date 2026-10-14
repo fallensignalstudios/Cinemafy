@@ -116,6 +116,16 @@ void SCinemafyHub::Construct(const FArguments& InArgs)
 
 			+ SVerticalBox::Slot().AutoHeight()
 			[
+				MakeSection(LOCTEXT("Performance", "Performance"), {
+					MakeButton(LOCTEXT("Choreograph", "Choreograph"), LOCTEXT("ChoreographTip", "Select a character, click points, type what they do (walk, vault, sword attack, taunt)."),
+						[]() { Lib::ChoreographSelection(); }),
+					MakeButton(LOCTEXT("MoveLibrary", "Build Move Library"), LOCTEXT("MoveLibraryTip", "Gather the project's attacks, gestures and reactions into a curatable asset."),
+						[]() { Lib::CreateMoveLibraryFromFolder(TEXT("/Game")); }),
+				})
+			]
+
+			+ SVerticalBox::Slot().AutoHeight()
+			[
 				MakeSection(LOCTEXT("Shots", "Shots"), {
 					MakeEnumDropdown<ECinemafyShotType>(LOCTEXT("CreateShot", "Create Shot"),
 						LOCTEXT("CreateShotTip", "Select the subject, then their partner (then anyone else for group shots)."),

@@ -4,6 +4,8 @@
 #include "SCinemafyShotBrowser.h"
 #include "SCinemafyHub.h"
 #include "CinemafySceneDirector.h"
+#include "CinemafyChoreography.h"
+#include "CinemafyChoreoTools.h"
 #include "Misc/MessageDialog.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
@@ -139,6 +141,18 @@ void FCinemafyEditorModule::StartupModule()
 		}
 	});
 
+	// Choreography buttons, and the take recorder that listens for performances in play-in-editor.
+	ChoreoRequestHandle = ACinemafyChoreography::OnEditorRequest.AddLambda([](ACinemafyChoreography* Choreography, ECinemafyChoreoRequest Request)
+	{
+		switch (Request)
+		{
+		case ECinemafyChoreoRequest::Choreograph:      FCinemafyChoreoMode::Start(Choreography); break;
+		case ECinemafyChoreoRequest::PerformAndRecord: CinemafyChoreoTake::PerformAndRecord(Choreography); break;
+		case ECinemafyChoreoRequest::DirectShots:      CinemafyChoreoTake::DirectShots(Choreography); break;
+		}
+	});
+	CinemafyChoreoTake::Initialize();
+
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyShotBrowser::TabName,
 		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
 		{
@@ -171,6 +185,9 @@ void FCinemafyEditorModule::StartupModule()
 void FCinemafyEditorModule::ShutdownModule()
 {
 	ACinemafySceneDirector::OnEditorRequest.Remove(DirectorRequestHandle);
+	ACinemafyChoreography::OnEditorRequest.Remove(ChoreoRequestHandle);
+	FCinemafyChoreoMode::Stop();
+	CinemafyChoreoTake::Shutdown();
 
 	if (FSlateApplication::IsInitialized())
 	{
@@ -197,6 +214,16 @@ void FCinemafyEditorModule::RegisterMenus()
 		LOCTEXT("ShotBrowserMenuTip", "Open a film strip of every camera cut in the open Level Sequence."),
 		FSlateIcon(),
 		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyShotBrowser::TabName); })));
+
+	Section.AddMenuEntry("CinemafyChoreograph", LOCTEXT("ChoreographMenu", "Choreograph Character"),
+		LOCTEXT("ChoreographMenuTip", "Select a character, then click points in the level and type what they do there: walk, vault, sprint, climb, sword attack, taunt. Perform & Record bakes it into Sequencer."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::ChoreographSelection(); })));
+
+	Section.AddMenuEntry("CinemafyMoveLibrary", LOCTEXT("MoveLibraryMenu", "Build Move Library from /Game"),
+		LOCTEXT("MoveLibraryMenuTip", "Collect every attack, gesture and reaction animation in the project into a Move Library asset you can curate."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { UCinemafyEditorLibrary::CreateMoveLibraryFromFolder(TEXT("/Game")); })));
 
 	Section.AddSubMenu("CinemafyDirector", LOCTEXT("DirectorMenu", "Scene Director"),
 		LOCTEXT("DirectorMenuTip", "Create an AI director for the selected characters: write lines, pick a style, hit Direct."),
