@@ -3,6 +3,7 @@
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
 #include "CinemafySceneDirector.h"
+#include "Misc/MessageDialog.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -118,6 +119,13 @@ void FCinemafyEditorModule::StartupModule()
 		case ECinemafyDirectorRequest::Direct:     UCinemafyEditorLibrary::DirectSceneInSequencer(Director); break;
 		case ECinemafyDirectorRequest::Clear:      UCinemafyEditorLibrary::ClearDirectedShots(Director); break;
 		case ECinemafyDirectorRequest::LearnStyle: UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(Director); break;
+		case ECinemafyDirectorRequest::AnalyzeAudio:
+		{
+			const int32 Count = UCinemafyEditorLibrary::AnalyzeDirectorAudio(Director);
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(NSLOCTEXT("CinemafyEditor", "AnalyzedLines",
+				"Listened to {0} line(s). Durations and Audio Intensity are updated on each line (see the Output Log for details)."), Count));
+			break;
+		}
 		}
 	});
 

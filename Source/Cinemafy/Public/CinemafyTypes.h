@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "CinemafyTypes.generated.h"
 
+class USoundBase;
+
 /** Bone names Cinemafy uses to find a character's eyes and head. Defaults match the MetaHuman skeletons. */
 namespace Cinemafy
 {
@@ -522,6 +524,35 @@ struct FCinemafyDirectorStyle
 	float MoveChance = 0.3f;
 };
 
+/** What Cinemafy heard in a line's dialogue audio. */
+USTRUCT(BlueprintType)
+struct FCinemafyAudioAnalysis
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	bool bValid = false;
+
+	/** Average level of the speech (dBFS, silence excluded). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	float LoudnessDb = -60.f;
+
+	/** How hard the loudest moments hit (95th percentile, dBFS). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	float PeakDb = -60.f;
+
+	/** Speech rate estimate from loudness bursts (roughly syllables per second). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	float SyllablesPerSecond = 0.f;
+
+	/** Fraction of the clip that's speech rather than silence. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	float ActiveRatio = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	float Duration = 0.f;
+};
+
 /** One line of dialogue in a scene script. */
 USTRUCT(BlueprintType)
 struct FCinemafyLine
@@ -546,6 +577,25 @@ struct FCinemafyLine
 	/** Dramatic weight of the line: 0 = small talk, 1 = the big reveal. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (ClampMin = "0", ClampMax = "1"))
 	float Intensity = 0.5f;
+
+	/** The recorded line. Drives intensity and timing, and is laid into the sequence when directing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
+	TObjectPtr<USoundBase> Audio = nullptr;
+
+	/** Let the delivery decide how intense the line is (blended by the director's Audio Intensity Weight). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
+	bool bAutoIntensity = true;
+
+	/** Set Duration from the audio's length. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
+	bool bUseAudioDuration = true;
+
+	/** Intensity heard in the audio, relative to the rest of the scene. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line|Audio")
+	float AudioIntensity = -1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line|Audio")
+	FCinemafyAudioAnalysis Analysis;
 
 	/** Override the director for the start of this line. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")

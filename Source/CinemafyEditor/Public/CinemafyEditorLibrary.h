@@ -8,6 +8,7 @@
 class ACineCameraActor;
 class ACinemafyLightRig;
 class ACinemafySceneDirector;
+class USoundWave;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -119,6 +120,17 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 LearnDirectorStyleFromSequence(ACinemafySceneDirector* Director);
+
+	/** Measures a dialogue recording: speech loudness, peaks, speech rate and how much of it is talking. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static FCinemafyAudioAnalysis AnalyzeDialogueSound(USoundWave* Sound);
+
+	/**
+	 * Analyzes every line's audio in a director's script, sets durations from the audio and derives
+	 * each line's AudioIntensity relative to the rest of the scene. Returns the number of lines analyzed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 AnalyzeDirectorAudio(ACinemafySceneDirector* Director);
 
 	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")

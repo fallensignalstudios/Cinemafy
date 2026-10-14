@@ -78,6 +78,26 @@ void ACinemafySceneDirector::ClearShots()
 #endif
 }
 
+void ACinemafySceneDirector::AnalyzeDialogueAudio()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::AnalyzeAudio);
+#endif
+}
+
+TArray<FCinemafyLine> ACinemafySceneDirector::GetEffectiveLines() const
+{
+	TArray<FCinemafyLine> Effective = Lines;
+	for (FCinemafyLine& Line : Effective)
+	{
+		if (Line.bAutoIntensity && Line.AudioIntensity >= 0.f)
+		{
+			Line.Intensity = FMath::Lerp(Line.Intensity, Line.AudioIntensity, FMath::Clamp(AudioIntensityWeight, 0.f, 1.f));
+		}
+	}
+	return Effective;
+}
+
 void ACinemafySceneDirector::LearnStyleFromSequence()
 {
 #if WITH_EDITOR
@@ -102,7 +122,7 @@ void ACinemafySceneDirector::QueueShots(const TArray<FCinemafyPlannedShot>& Shot
 
 void ACinemafySceneDirector::StartConversation()
 {
-	LastPlan = UCinemafyDirectorLibrary::PlanScene(Lines, GetStyle(), Seed);
+	LastPlan = UCinemafyDirectorLibrary::PlanScene(GetEffectiveLines(), GetStyle(), Seed);
 	if (LastPlan.Num() == 0)
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the script has no lines with speakers."));

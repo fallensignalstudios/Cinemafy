@@ -5,6 +5,8 @@
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
 #include "CinemafyCameraMoveComponent.h"
+#include "Sound/SoundWave.h"
+#include "Tracks/MovieSceneAudioTrack.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
 #include "CinemafyLightRig.h"
@@ -25,6 +27,8 @@
 #include "MovieSceneSequenceID.h"
 #include "Camera/CameraComponent.h"
 #include "CinemafyCameraMoveComponent.h"
+#include "Sound/SoundWave.h"
+#include "Tracks/MovieSceneAudioTrack.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -805,6 +809,46 @@ namespace
 		}
 	}
 
+	const FText DialogueTrackName = NSLOCTEXT("CinemafyEditor", "DialogueTrack", "Cinemafy Dialogue");
+
+	/** Lays each line's audio into a "Cinemafy Dialogue" track (one row per speaker), replacing the last take's. */
+	void PlaceDialogueAudio(UMovieScene* MovieScene, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart)
+	{
+		if (!Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return Line.Audio != nullptr; }))
+		{
+			return;
+		}
+
+		TArray<UMovieSceneTrack*> OldTracks;
+		for (UMovieSceneTrack* Track : MovieScene->GetTracks())
+		{
+			if (Track && Track->IsA<UMovieSceneAudioTrack>() && Track->GetDisplayName().EqualTo(DialogueTrackName))
+			{
+				OldTracks.Add(Track);
+			}
+		}
+		for (UMovieSceneTrack* Track : OldTracks)
+		{
+			MovieScene->RemoveTrack(*Track);
+		}
+
+		UMovieSceneAudioTrack* AudioTrack = MovieScene->AddTrack<UMovieSceneAudioTrack>();
+		AudioTrack->SetDisplayName(DialogueTrackName);
+
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		TArray<AActor*> Speakers;
+		float Time = 0.f;
+		for (const FCinemafyLine& Line : Lines)
+		{
+			if (Line.Audio)
+			{
+				const int32 Row = Speakers.AddUnique(Line.Speaker);
+				AudioTrack->AddNewSoundOnRow(Line.Audio, SceneStart + TickResolution.AsFrameNumber(Time), Row);
+			}
+			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+		}
+	}
+
 	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
 	{
 		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
@@ -826,7 +870,15 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		return 0;
 	}
 
-	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Director->Lines, Director->GetStyle(), Director->Seed);
+	// Listen first if there's audio nobody has analyzed yet.
+	const bool bNeedsAnalysis = Director->Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return Line.Audio && !Line.Analysis.bValid; });
+	if (bNeedsAnalysis)
+	{
+		AnalyzeDirectorAudio(Director);
+	}
+
+	const TArray<FCinemafyLine> EffectiveLines = Director->GetEffectiveLines();
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(EffectiveLines, Director->GetStyle(), Director->Seed);
 	if (Plan.Num() == 0)
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
@@ -914,6 +966,11 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		BakeCameraMoves(Sequence, MovieScene, Pair.Key, Pair.Value);
 	}
 	BakeEmotions(Sequence, MovieScene, Plan, SceneStart);
+
+	if (Director->bPlaceDialogueAudio)
+	{
+		PlaceDialogueAudio(MovieScene, EffectiveLines, SceneStart);
+	}
 
 	// Make sure the whole scene fits in the playback range.
 	const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
@@ -1225,6 +1282,187 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 		P50, P10, P90, Style.LensBias, LowAngle, Moving, Style.bEstablishingShot ? TEXT("yes") : TEXT("no"));
 	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
 	return Observed.Num();
+}
+
+FCinemafyAudioAnalysis UCinemafyEditorLibrary::AnalyzeDialogueSound(USoundWave* Sound)
+{
+	FCinemafyAudioAnalysis Result;
+	if (!Sound)
+	{
+		return Result;
+	}
+
+	TArray<uint8> RawPCM;
+	uint32 SampleRate = 0;
+	uint16 NumChannels = 0;
+	if (!Sound->GetImportedSoundWaveData(RawPCM, SampleRate, NumChannels) || SampleRate == 0 || NumChannels == 0)
+	{
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't read audio data from %s."), *Sound->GetName());
+		return Result;
+	}
+
+	// 16-bit interleaved PCM -> mono floats.
+	const int16* Samples = reinterpret_cast<const int16*>(RawPCM.GetData());
+	const int32 NumFrames = RawPCM.Num() / (sizeof(int16) * NumChannels);
+	Result.Duration = static_cast<float>(NumFrames) / SampleRate;
+
+	// Loudness in 20 ms windows.
+	const int32 Window = FMath::Max(1, static_cast<int32>(SampleRate / 50));
+	TArray<float> WindowDb;
+	TArray<float> WindowPower;
+	for (int32 Start = 0; Start + Window <= NumFrames; Start += Window)
+	{
+		double SumSquares = 0.0;
+		for (int32 Frame = Start; Frame < Start + Window; ++Frame)
+		{
+			float Mono = 0.f;
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				Mono += Samples[Frame * NumChannels + Channel] / 32768.f;
+			}
+			Mono /= NumChannels;
+			SumSquares += Mono * Mono;
+		}
+		const float Power = static_cast<float>(SumSquares / Window);
+		WindowPower.Add(Power);
+		WindowDb.Add(10.f * FMath::LogX(10.f, Power + 1e-12f));
+	}
+	if (WindowDb.Num() < 3)
+	{
+		return Result;
+	}
+
+	// Speech = clearly above the room tone.
+	TArray<float> SortedDb = WindowDb;
+	SortedDb.Sort();
+	const float NoiseFloor = SortedDb[SortedDb.Num() / 10];
+	const float SpeechThreshold = FMath::Max(NoiseFloor + 10.f, -50.f);
+
+	double SpeechPower = 0.0;
+	TArray<float> SpeechDb;
+	for (int32 Index = 0; Index < WindowDb.Num(); ++Index)
+	{
+		if (WindowDb[Index] > SpeechThreshold)
+		{
+			SpeechPower += WindowPower[Index];
+			SpeechDb.Add(WindowDb[Index]);
+		}
+	}
+	if (SpeechDb.Num() == 0)
+	{
+		return Result;
+	}
+
+	SpeechDb.Sort();
+	Result.LoudnessDb = 10.f * FMath::LogX(10.f, static_cast<float>(SpeechPower / SpeechDb.Num()) + 1e-12f);
+	Result.PeakDb = SpeechDb[FMath::Min(SpeechDb.Num() - 1, FMath::RoundToInt(SpeechDb.Num() * 0.95f))];
+	Result.ActiveRatio = static_cast<float>(SpeechDb.Num()) / WindowDb.Num();
+
+	// Speech rate: count loudness bursts (syllable nuclei) at least 80 ms apart that rise 4 dB above the valley before them.
+	int32 Bursts = 0;
+	int32 LastBurst = -100;
+	float Valley = WindowDb[0];
+	for (int32 Index = 2; Index < WindowDb.Num() - 2; ++Index)
+	{
+		const float V = WindowDb[Index];
+		Valley = FMath::Min(Valley, V);
+		const bool bLocalPeak = V >= WindowDb[Index - 1] && V >= WindowDb[Index + 1] && V >= WindowDb[Index - 2] && V >= WindowDb[Index + 2];
+		if (bLocalPeak && V > SpeechThreshold && V - Valley > 4.f && Index - LastBurst >= 4)
+		{
+			++Bursts;
+			LastBurst = Index;
+			Valley = V;
+		}
+	}
+	const float SpeechSeconds = SpeechDb.Num() * 0.02f;
+	Result.SyllablesPerSecond = SpeechSeconds > 0.f ? Bursts / SpeechSeconds : 0.f;
+	Result.bValid = true;
+	return Result;
+}
+
+int32 UCinemafyEditorLibrary::AnalyzeDirectorAudio(ACinemafySceneDirector* Director)
+{
+	if (!Director)
+	{
+		return 0;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("AnalyzeAudio", "Cinemafy: Analyze Dialogue Audio"));
+	Director->Modify();
+
+	int32 Analyzed = 0;
+	for (FCinemafyLine& Line : Director->Lines)
+	{
+		USoundWave* Wave = Cast<USoundWave>(Line.Audio);
+		Line.Analysis = AnalyzeDialogueSound(Wave);
+		Line.AudioIntensity = -1.f;
+		if (Line.Analysis.bValid)
+		{
+			++Analyzed;
+			if (Line.bUseAudioDuration)
+			{
+				Line.Duration = FMath::Max(Line.Analysis.Duration, 0.2f);
+			}
+		}
+		else if (Line.Audio && !Wave)
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: %s isn't a Sound Wave; only Sound Waves can be analyzed."), *Line.Audio->GetName());
+		}
+	}
+
+	if (Analyzed == 0)
+	{
+		return 0;
+	}
+
+	// Intensity is relative to the scene: what's loud, sharp and fast for *this* conversation.
+	auto Stats = [&Director](TFunctionRef<float(const FCinemafyAudioAnalysis&)> Get, float MinStd, float& OutMean, float& OutStd)
+	{
+		TArray<float> Values;
+		for (const FCinemafyLine& Line : Director->Lines)
+		{
+			if (Line.Analysis.bValid)
+			{
+				Values.Add(Get(Line.Analysis));
+			}
+		}
+		OutMean = 0.f;
+		for (float V : Values) { OutMean += V; }
+		OutMean /= Values.Num();
+		float Variance = 0.f;
+		for (float V : Values) { Variance += FMath::Square(V - OutMean); }
+		OutStd = FMath::Max(FMath::Sqrt(Variance / Values.Num()), MinStd);
+	};
+
+	float LoudMean, LoudStd, RateMean, RateStd, PunchMean, PunchStd;
+	Stats([](const FCinemafyAudioAnalysis& A) { return A.LoudnessDb; }, 3.f, LoudMean, LoudStd);
+	Stats([](const FCinemafyAudioAnalysis& A) { return A.SyllablesPerSecond; }, 0.5f, RateMean, RateStd);
+	Stats([](const FCinemafyAudioAnalysis& A) { return A.PeakDb - A.LoudnessDb; }, 2.f, PunchMean, PunchStd);
+
+	for (FCinemafyLine& Line : Director->Lines)
+	{
+		if (!Line.Analysis.bValid)
+		{
+			continue;
+		}
+
+		const FCinemafyAudioAnalysis& A = Line.Analysis;
+		if (Analyzed == 1)
+		{
+			// Nothing to compare against: judge loudness on an absolute scale.
+			Line.AudioIntensity = static_cast<float>(FMath::GetMappedRangeValueClamped(FVector2D(-30.0, -10.0), FVector2D(0.2, 0.8), static_cast<double>(A.LoudnessDb)));
+			continue;
+		}
+
+		const float LoudZ = (A.LoudnessDb - LoudMean) / LoudStd;
+		const float RateZ = (A.SyllablesPerSecond - RateMean) / RateStd;
+		const float PunchZ = ((A.PeakDb - A.LoudnessDb) - PunchMean) / PunchStd;
+		Line.AudioIntensity = FMath::Clamp(0.5f + 0.2f * LoudZ + 0.12f * RateZ + 0.08f * PunchZ, 0.05f, 0.98f);
+
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: \"%s\" %.1f dB, %.1f syl/s -> audio intensity %.2f"),
+			*Line.Note, A.LoudnessDb, A.SyllablesPerSecond, Line.AudioIntensity);
+	}
+	return Analyzed;
 }
 
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style)

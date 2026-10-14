@@ -42,6 +42,8 @@
 ## 🚀 Stretch
 - [x] Scene Director: style presets, intensity-driven coverage planner, Sequencer bake, re-roll, live directing
 - [x] Director v2: camera moves per shot (keyed Progress), emotion per line (keyed), learn a style from an existing edit, stronger reverse-shot size matching
-- [ ] Director v3: intensity curves from dialogue audio, multi-character (3+) blocking, cutting on action
+- [x] Intensity from dialogue audio: loudness / peaks / speech rate, scene-relative scoring, durations from audio, dialogue track placement
+- [ ] Director v3: multi-character (3+) blocking, cutting on action, emphasis-timed push-ins from audio peaks
+- [ ] Performance Import: face (MetaHuman Animator) + body (video mocap FBX) + audio takes lined up in a Director scene
 - [ ] Anamorphic mode (squeeze, oval bokeh, streak flares)
 - [ ] Movie Render Graph presets for trailer captures

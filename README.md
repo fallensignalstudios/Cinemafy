@@ -93,6 +93,20 @@ How it decides, per shot:
 Every decision is logged with a reason ("Line 4: Close-Up on Voss (tightening for drama, intensity 0.8)")
 and kept in the director's **Last Plan**.
 
+**Intensity from the audio 🎙️:** drop each line's recording into its **Audio** slot and click
+**Analyze Dialogue Audio** (Direct also does this automatically for new audio). For each line, Cinemafy measures:
+- speech loudness (silence excluded)
+- how hard the peaks hit
+- speech rate
+- how much of the clip is talking
+
+It then scores intensity **relative to the rest of the scene**, so recording gain doesn't matter. A shouted
+line in a quiet conversation reads as intense, and a calm one in a shouting match reads as calm. Line durations come from
+the audio, and the result shows on each line as **Audio Intensity**. The director blends it with your manual
+Intensity using **Audio Intensity Weight** (0 = your call, 1 = the delivery decides). With
+**Place Dialogue Audio** on, Direct also lays the recordings into a *Cinemafy Dialogue* track, one row
+per speaker, so the cut plays with the real delivery.
+
 **Learn a style from your own edit 🧠:** cut a scene by hand (or open one you love), select the
 director and click **Learn Style From Sequence**. It plays through every cut and classifies each shot
 from what the camera actually sees: frame size at the subject, two characters in frame, a foreground

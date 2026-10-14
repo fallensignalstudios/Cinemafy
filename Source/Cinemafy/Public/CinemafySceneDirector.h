@@ -13,7 +13,8 @@ enum class ECinemafyDirectorRequest : uint8
 {
 	Direct,
 	Clear,
-	LearnStyle
+	LearnStyle,
+	AnalyzeAudio
 };
 
 #if WITH_EDITOR
@@ -49,6 +50,14 @@ public:
 	/** Same seed = same edit. Re-roll picks a new one. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
 	int32 Seed = 1;
+
+	/** How much each line's heard intensity overrides its manual Intensity (lines with audio and Auto Intensity). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio", meta = (ClampMin = "0", ClampMax = "1"))
+	float AudioIntensityWeight = 0.8f;
+
+	/** Lay each line's audio into the sequence when directing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
+	bool bPlaceDialogueAudio = true;
 
 	/** Which side of the line of action every camera lives on. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
@@ -90,8 +99,16 @@ public:
 	UFUNCTION(CallInEditor, Category = "Director")
 	void LearnStyleFromSequence();
 
+	/** Listen to every line's audio: measure the delivery, set durations and audio intensity. */
+	UFUNCTION(CallInEditor, Category = "Director")
+	void AnalyzeDialogueAudio();
+
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
 	FCinemafyDirectorStyle GetStyle() const;
+
+	/** The script as the director will cut it: intensities blended with what the audio says. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
+	TArray<FCinemafyLine> GetEffectiveLines() const;
 
 	/** Tag on every camera this director creates. */
 	FName GetDirectorTag() const;
