@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.1: "Honest performances" (from Vesryn's review)
+- **Beat outcomes:** Succeeded, Fallback, Blocked, Failed or TimedOut, each with a reason, shown on
+  the beat's viewport label and in the bake toast.
+  - A jump standing in for a vault is now a labeled Fallback, not a success.
+  - Blocked moves say so.
+- **Arrival policies** per beat:
+  - Pass through before more travel or a charge (no idle at waypoints).
+  - Enter vaults moving.
+  - Stop and settle before gestures and looks (no taunting mid-skid).
+- **Typed performance events:** beat start, arrived, action start, takeoff, landing, contact, action end.
+  - Contacts are authored (hit/impact/contact notify) or flagged estimated.
+  - A contact is only published if the swing is still playing when it lands.
+  - The director's cut points come from these events.
+- **Bake fixes:**
+  - The root bone is kept, preserving GASP's root offset in turns; no double counting.
+  - Recording uses the sequence's display rate, sampled in whole frames.
+  - Only the previous take's track is replaced; hand-made transform tracks are muted, never deleted.
+  - `SkipRecordingComponents` replaces the "Face" name guess.
+- **Melee warp target** is now where the attacker should stand, facing the target, not the target's center.
+- **The performer is restored** after a take: possession, gait flags, crouch, speed, warp targets.
+- [Choreography design contract](Docs/CHOREOGRAPHY.md) and roadmap items for adapters, traversal
+  queries, paired interactions and bake validation.
+
 ## 0.9.0: "Cinemafy Edit"
 - **Premiere-style editing in Sequencer:**
   - Razor (shot or all tracks), sync-locked **ripple delete**, ripple trim start/end (Q/W).

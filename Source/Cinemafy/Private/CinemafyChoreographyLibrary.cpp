@@ -736,6 +736,39 @@ float UCinemafyChoreographyLibrary::ScoreOverlayName(const FString& Weapon, cons
 	return Best;
 }
 
+ECinemafyArrival UCinemafyChoreographyLibrary::ResolveArrival(const TArray<FCinemafyChoreoBeat>& Beats, int32 BeatIndex)
+{
+	if (!Beats.IsValidIndex(BeatIndex))
+	{
+		return ECinemafyArrival::StopAndFace;
+	}
+	const FCinemafyChoreoBeat& Beat = Beats[BeatIndex];
+	if (Beat.Arrival != ECinemafyArrival::Auto)
+	{
+		return Beat.Arrival;
+	}
+	if (Beat.Reading.Kind == ECinemafyActionKind::Traverse)
+	{
+		return ECinemafyArrival::EnterAction;
+	}
+	if (Beat.Reading.Kind != ECinemafyActionKind::Move || !Beats.IsValidIndex(BeatIndex + 1))
+	{
+		return ECinemafyArrival::StopAndFace;
+	}
+	// Keep momentum into more travel, a vault, or a charge at someone; stop before gestures, looks and waits.
+	const FCinemafyChoreoBeat& Next = Beats[BeatIndex + 1];
+	switch (Next.Reading.Kind)
+	{
+	case ECinemafyActionKind::Move:
+	case ECinemafyActionKind::Traverse:
+		return ECinemafyArrival::PassThrough;
+	case ECinemafyActionKind::Attack:
+		return Next.Reading.bRanged ? ECinemafyArrival::StopAndFace : ECinemafyArrival::PassThrough;
+	default:
+		return ECinemafyArrival::StopAndFace;
+	}
+}
+
 TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TArray<FCinemafyChoreoBeat>& Beats, AActor* Performer, float TakeDuration)
 {
 	TArray<const FCinemafyChoreoBeat*> Timed;

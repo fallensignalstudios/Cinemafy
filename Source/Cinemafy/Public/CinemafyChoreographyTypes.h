@@ -37,6 +37,72 @@ enum class ECinemafyGait : uint8
 	Crouch  UMETA(DisplayName = "Crouch")
 };
 
+/** What actually happened to a beat. A requested action, a chosen animation and a completed action are different things. */
+UENUM(BlueprintType)
+enum class ECinemafyBeatOutcome : uint8
+{
+	NotRun     UMETA(DisplayName = "Not Run"),
+	Succeeded  UMETA(DisplayName = "Succeeded"),
+	/** Done, but not the way it was asked (e.g. a jump instead of a vault). The reason says how. */
+	Fallback   UMETA(DisplayName = "Fallback"),
+	/** Geometry stopped the performer short of the mark. */
+	Blocked    UMETA(DisplayName = "Blocked"),
+	/** Nothing could perform it (no animation, no capability). */
+	Failed     UMETA(DisplayName = "Failed"),
+	TimedOut   UMETA(DisplayName = "Timed Out")
+};
+
+/** How a movement beat treats its mark. */
+UENUM(BlueprintType)
+enum class ECinemafyArrival : uint8
+{
+	/** Pass through before more travel, stop before anything else. */
+	Auto         UMETA(DisplayName = "Auto"),
+	/** A waypoint: round the corner at speed, no idle. */
+	PassThrough  UMETA(DisplayName = "Pass Through"),
+	/** Come to a real stop (speed settles) before the next beat starts. */
+	StopAndFace  UMETA(DisplayName = "Stop"),
+	/** Arrive moving, straight into the action (vaults). */
+	EnterAction  UMETA(DisplayName = "Enter Action")
+};
+
+/** Kinds of moment in a recorded take, for the camera director. */
+UENUM(BlueprintType)
+enum class ECinemafyPerformanceEventKind : uint8
+{
+	BeatStart   UMETA(DisplayName = "Beat Start"),
+	Arrived     UMETA(DisplayName = "Arrived"),
+	ActionStart UMETA(DisplayName = "Action Start"),
+	Takeoff     UMETA(DisplayName = "Takeoff"),
+	Landing     UMETA(DisplayName = "Landing"),
+	/** A strike landing. Estimated unless the clip has a hit/impact/contact notify. */
+	Contact     UMETA(DisplayName = "Contact"),
+	ActionEnd   UMETA(DisplayName = "Action End")
+};
+
+/** One moment in a take: what, when (take seconds), where, and whether it was observed or estimated. */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyPerformanceEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Event")
+	ECinemafyPerformanceEventKind Kind = ECinemafyPerformanceEventKind::BeatStart;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Event")
+	float Time = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Event")
+	FVector Location = FVector::ZeroVector;
+
+	/** A guess (e.g. a strike timed at 40% of a clip with no hit notify), not something seen to happen. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Event")
+	bool bEstimated = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Event")
+	FString Note;
+};
+
 /** How the director brain read a one- or two-word prompt. */
 USTRUCT(BlueprintType)
 struct CINEMAFY_API FCinemafyPromptReading
@@ -100,6 +166,14 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat")
 	TObjectPtr<UAnimSequenceBase> AnimationOverride = nullptr;
 
+	/** Movement beats: pass through the mark, stop on it, or enter the next action moving. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat")
+	ECinemafyArrival Arrival = ECinemafyArrival::Auto;
+
+	/** Stable identity (survives reordering and renaming). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat", AdvancedDisplay)
+	FGuid Id;
+
 	/** Play-rate for the beat's animation. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat", meta = (ClampMin = "0.1", ClampMax = "3.0"))
 	float PlayRate = 1.f;
@@ -119,13 +193,20 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
 	float EndTime = -1.f;
 
-	/** Seconds into the take when hits landed / feet touched down. */
+	/** Cut points for the director: observed takeoffs and confirmed (or estimated) contacts, in take seconds. Derived from Events. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
 	TArray<float> ImpactTimes;
 
-	/** The beat ran out of time or found nothing to play (see the Output Log). */
+	/** Everything that happened in this beat, typed. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
-	bool bFailed = false;
+	TArray<FCinemafyPerformanceEvent> Events;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
+	ECinemafyBeatOutcome Outcome = ECinemafyBeatOutcome::NotRun;
+
+	/** Why the outcome isn't a plain success (shown on the beat's label too). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
+	FString OutcomeReason;
 };
 
 /** One animation the director can reach for, with the words that describe it. */

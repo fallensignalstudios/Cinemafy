@@ -669,19 +669,35 @@ void ACinemafyChoreography::Perform()
 	// Beats resolved in the editor come across with their picks; resolve anything that wasn't.
 	for (int32 Index = 0; Index < Beats.Num(); ++Index)
 	{
-		if (Beats[Index].Reading.Summary.IsEmpty())
+		FCinemafyChoreoBeat& Beat = Beats[Index];
+		if (Beat.Reading.Summary.IsEmpty())
 		{
 			ResolveBeat(Index);
 		}
-		Beats[Index].StartTime = -1.f;
-		Beats[Index].EndTime = -1.f;
-		Beats[Index].ImpactTimes.Reset();
-		Beats[Index].bFailed = false;
+		if (!Beat.Id.IsValid())
+		{
+			Beat.Id = FGuid::NewGuid();
+		}
+		Beat.StartTime = -1.f;
+		Beat.EndTime = -1.f;
+		Beat.ImpactTimes.Reset();
+		Beat.Events.Reset();
+		Beat.Outcome = ECinemafyBeatOutcome::NotRun;
+		Beat.OutcomeReason.Reset();
 	}
+	PendingContacts.Reset();
+
+	// Remember what we change so it can all be put back.
+	UCharacterMovementComponent* Movement = Performer->GetCharacterMovement();
+	SavedMaxWalkSpeed = Movement ? Movement->MaxWalkSpeed : -1.f;
+	bStartedCrouched = Performer->bIsCrouched;
+	SavedPlayer.Reset();
+	SpawnedController.Reset();
 
 	// The performer needs a controller for movement input to land; a player stops driving it for the take.
 	if (APlayerController* PC = Cast<APlayerController>(Performer->GetController()))
 	{
+		SavedPlayer = PC;
 		PC->UnPossess();
 		PC->SetViewTarget(Performer);
 	}
@@ -692,7 +708,7 @@ void ACinemafyChoreography::Perform()
 	}
 
 	BuildRig();
-	bCrouched = Performer->bIsCrouched;
+	bCrouched = bStartedCrouched;
 	ApplyGait(ECinemafyGait::Walk);
 
 	bPerforming = true;
@@ -712,16 +728,131 @@ void ACinemafyChoreography::StopPerforming()
 {
 	if (bPerforming)
 	{
+		// Anything still running is cut off: say so rather than leave it looking unrun.
+		if (Beats.IsValidIndex(CurrentBeat) && Phase != EPhase::Start)
+		{
+			FinishBeat(ECinemafyBeatOutcome::TimedOut, TEXT("Performance stopped before this beat finished"));
+		}
 		FinishPerformance();
 	}
+}
+
+void ACinemafyChoreography::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// When the whole world is going away, don't hand pawns between controllers that are being torn down.
+	bWorldEnding = EndPlayReason == EEndPlayReason::EndPlayInEditor || EndPlayReason == EEndPlayReason::Quit
+		|| EndPlayReason == EEndPlayReason::LevelTransition;
+	StopPerforming();
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACinemafyChoreography::FinishPerformance()
 {
 	bPerforming = false;
 	TakeDuration = PerformTime;
+	PendingContacts.Reset();
+
+	// Cut points for the director: what was seen to take off, and strikes that actually landed.
+	for (FCinemafyChoreoBeat& Beat : Beats)
+	{
+		Beat.ImpactTimes.Reset();
+		for (const FCinemafyPerformanceEvent& Event : Beat.Events)
+		{
+			if (Event.Kind == ECinemafyPerformanceEventKind::Contact || Event.Kind == ECinemafyPerformanceEventKind::Takeoff)
+			{
+				Beat.ImpactTimes.Add(Event.Time);
+			}
+		}
+		Beat.ImpactTimes.Sort();
+	}
+	RestorePerformer();
 	OnPerformanceEvent.Broadcast(this, false);
 	OnPerformanceFinished.Broadcast();
+}
+
+void ACinemafyChoreography::RestorePerformer()
+{
+	if (!Performer)
+	{
+		return;
+	}
+	if (Rig.SetSprint)
+	{
+		Rig.SetSprint(false);
+	}
+	if (Rig.SetWalk)
+	{
+		Rig.SetWalk(false);
+	}
+	if (bCrouched != bStartedCrouched && Rig.SetCrouch)
+	{
+		Rig.SetCrouch(bStartedCrouched);
+		bCrouched = bStartedCrouched;
+	}
+	if (UCharacterMovementComponent* Movement = Performer->GetCharacterMovement(); Movement && SavedMaxWalkSpeed >= 0.f)
+	{
+		Movement->MaxWalkSpeed = SavedMaxWalkSpeed;
+	}
+	if (UMotionWarpingComponent* Warping = Performer->FindComponentByClass<UMotionWarpingComponent>())
+	{
+		for (const TCHAR* Name : { TEXT("AttackTarget"), TEXT("Target"), TEXT("Warp"), TEXT("MeleeTarget") })
+		{
+			Warping->RemoveWarpTarget(Name);
+		}
+	}
+	// Hand the character back to whoever had it.
+	APlayerController* PC = SavedPlayer.Get();
+	if (PC && !bWorldEnding)
+	{
+		if (AController* Spawned = SpawnedController.Get())
+		{
+			Spawned->UnPossess();
+			Spawned->Destroy();
+		}
+		PC->Possess(Performer);
+	}
+	SavedPlayer.Reset();
+	SpawnedController.Reset();
+}
+
+void ACinemafyChoreography::AddEvent(ECinemafyPerformanceEventKind Kind, bool bEstimated, const FString& Note, float AtTime)
+{
+	if (!Beats.IsValidIndex(CurrentBeat) || !Performer)
+	{
+		return;
+	}
+	FCinemafyPerformanceEvent& Event = Beats[CurrentBeat].Events.AddDefaulted_GetRef();
+	Event.Kind = Kind;
+	Event.Time = AtTime >= 0.f ? AtTime : PerformTime;
+	Event.Location = Performer->GetActorLocation();
+	Event.bEstimated = bEstimated;
+	Event.Note = Note;
+}
+
+void ACinemafyChoreography::UpdatePendingContacts()
+{
+	USkeletalMeshComponent* Mesh = Performer ? Performer->GetMesh() : nullptr;
+	UAnimInstance* Anim = Mesh ? Mesh->GetAnimInstance() : nullptr;
+	for (int32 Index = PendingContacts.Num() - 1; Index >= 0; --Index)
+	{
+		const FCinemafyPendingContact& Pending = PendingContacts[Index];
+		if (PerformTime < Pending.Time)
+		{
+			continue;
+		}
+		UAnimMontage* Montage = Pending.Montage.Get();
+		if (Montage && Anim && Anim->Montage_IsPlaying(Montage) && Beats.IsValidIndex(Pending.BeatIndex))
+		{
+			FCinemafyPerformanceEvent& Event = Beats[Pending.BeatIndex].Events.AddDefaulted_GetRef();
+			Event.Kind = ECinemafyPerformanceEventKind::Contact;
+			Event.Time = Pending.Time;
+			Event.Location = Performer->GetActorLocation();
+			Event.bEstimated = Pending.bEstimated;
+			Event.Note = Pending.Note;
+		}
+		// Otherwise the swing was interrupted before it landed: no contact.
+		PendingContacts.RemoveAt(Index);
+	}
 }
 
 void ACinemafyChoreography::Tick(float DeltaSeconds)
@@ -747,6 +878,7 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 	PerformTime += DeltaSeconds;
 	RecordedTimes.Add(PerformTime);
 	RecordedTransforms.Add(Performer->GetActorTransform());
+	UpdatePendingContacts();
 
 	if (LeadInLeft > 0.f)
 	{
@@ -761,7 +893,7 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 			TailLeft = TailSeconds;
 		}
 		TailLeft -= DeltaSeconds;
-		if (TailLeft <= 0.f && !IsAnimationBusy())
+		if (TailLeft <= 0.f && !IsAnimationBusy() && PendingContacts.Num() == 0)
 		{
 			FinishPerformance();
 		}
@@ -796,6 +928,10 @@ void ACinemafyChoreography::StartBeat()
 	AnimQueue = Beat.ChosenAnimations;
 	StuckCheckLocation = Performer->GetActorLocation();
 	StuckTimer = 0.f;
+	ShortfallReason.Reset();
+	FallbackReason.Reset();
+	CurrentArrival = UCinemafyChoreographyLibrary::ResolveArrival(Beats, CurrentBeat);
+	AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, Beat.Prompt);
 
 	const FVector Here = Performer->GetActorLocation();
 	const FVector Point = GetBeatWorldLocation(CurrentBeat);
@@ -812,9 +948,9 @@ void ACinemafyChoreography::StartBeat()
 		ApplyGait(ECinemafyGait::Run);
 	}
 
-	if (!Reading.Weapon.IsEmpty())
+	if (!Reading.Weapon.IsEmpty() && !ApplyOverlay(Reading.Weapon) && Reading.Kind != ECinemafyActionKind::Equip)
 	{
-		ApplyOverlay(Reading.Weapon);
+		FallbackReason = FString::Printf(TEXT("No overlay state fits \"%s\"; performed in the current stance"), *Reading.Weapon);
 	}
 
 	// Route.
@@ -865,15 +1001,31 @@ void ACinemafyChoreography::StartBeat()
 	UE_LOG(LogCinemafy, Verbose, TEXT("Cinemafy Choreography: beat %d \"%s\" -> %s"), CurrentBeat + 1, *Beat.Prompt, *Reading.Summary);
 }
 
-void ACinemafyChoreography::FinishBeat(bool bFailed)
+void ACinemafyChoreography::FinishBeat(ECinemafyBeatOutcome Outcome, const FString& Reason)
 {
 	if (Beats.IsValidIndex(CurrentBeat))
 	{
-		Beats[CurrentBeat].EndTime = PerformTime;
-		Beats[CurrentBeat].bFailed |= bFailed;
-		if (bFailed)
+		FCinemafyChoreoBeat& Beat = Beats[CurrentBeat];
+
+		// A clean finish after a short approach or a missing overlay is a fallback, not a success.
+		FString FinalReason = Reason;
+		if (Outcome == ECinemafyBeatOutcome::Succeeded && !(ShortfallReason.IsEmpty() && FallbackReason.IsEmpty()))
 		{
-			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Choreography: beat %d \"%s\" didn't finish cleanly."), CurrentBeat + 1, *Beats[CurrentBeat].Prompt);
+			Outcome = ECinemafyBeatOutcome::Fallback;
+			FinalReason = !ShortfallReason.IsEmpty() ? ShortfallReason : FallbackReason;
+		}
+
+		Beat.EndTime = PerformTime;
+		Beat.Outcome = Outcome;
+		Beat.OutcomeReason = FinalReason;
+		if (Outcome == ECinemafyBeatOutcome::Succeeded || Outcome == ECinemafyBeatOutcome::Fallback)
+		{
+			AddEvent(ECinemafyPerformanceEventKind::ActionEnd);
+		}
+		if (Outcome != ECinemafyBeatOutcome::Succeeded)
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Choreography: beat %d \"%s\" %s: %s"), CurrentBeat + 1, *Beat.Prompt,
+				*StaticEnum<ECinemafyBeatOutcome>()->GetDisplayNameTextByValue(static_cast<int64>(Outcome)).ToString(), *FinalReason);
 		}
 	}
 	++CurrentBeat;
@@ -894,7 +1046,7 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 
 	if (BeatTime > BeatTimeout)
 	{
-		FinishBeat(true);
+		FinishBeat(ECinemafyBeatOutcome::TimedOut, FString::Printf(TEXT("Still not done after %.0fs (phase %d)"), BeatTimeout, static_cast<int32>(Phase)));
 		return;
 	}
 
@@ -905,7 +1057,7 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 	{
 	case EPhase::Approach:
 	{
-		// Stuck against something: call it arrived rather than run into the wall forever.
+		// Blocked: report it honestly instead of running into the wall forever (or pretending we arrived).
 		StuckTimer += DeltaSeconds;
 		if (StuckTimer > 1.2f)
 		{
@@ -914,13 +1066,15 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 			StuckTimer = 0.f;
 			if (bStuck && Reading.Kind != ECinemafyActionKind::Traverse)
 			{
-				UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography: %s is blocked on beat %d; carrying on from here."), *GetNameSafe(Performer), CurrentBeat + 1);
+				const FString Reason = FString::Printf(TEXT("Blocked %.0f cm short of the mark"), FVector::Dist2D(Here, Point));
 				if (Reading.Kind == ECinemafyActionKind::Move)
 				{
-					FinishBeat(false);
+					FinishBeat(ECinemafyBeatOutcome::Blocked, Reason);
 				}
 				else
 				{
+					// It can still act from here, but that's a fallback.
+					ShortfallReason = Reason + TEXT("; acted from there");
 					Phase = EPhase::Face;
 					PhaseTime = 0.f;
 				}
@@ -931,43 +1085,48 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		if (Reading.Kind == ECinemafyActionKind::Traverse)
 		{
 			const float Distance = FVector::Dist2D(Here, Point);
-			// Keep running at it; ask the character to traverse as soon as it's in range.
+			// Keep running at it; ask the character's own traversal as soon as it's in range.
 			const FVector Beyond = Point + (Point - Here).GetSafeNormal2D() * 300.f;
 			SteerTo(Beyond, 10.f);
-			if (Distance < TraversalRange)
+			if (Distance < TraversalRange && Rig.Traverse)
 			{
 				TraverseRetry -= DeltaSeconds;
 				if (TraverseRetry <= 0.f)
 				{
 					TraverseRetry = 0.1f;
-					if (TryTraverse())
-					{
-						bTraversalStarted = true;
-					}
+					bTraversalStarted = TryTraverse();
 				}
 			}
 			if (!bTraversalStarted && Distance < 70.f)
 			{
-				// No traversal system (or it said no): a picked vault animation, else a jump.
-				if (!PlayNextAnimation())
+				// The traversal system didn't take it (or there isn't one). Only an approved stand-in, and it's labeled as one.
+				const FString Why = Rig.Traverse ? TEXT("The character's traversal didn't accept this obstacle (height, depth or approach)")
+					: TEXT("The performer has no traversal function (set Traversal Function under Wiring)");
+				if (PlayNextAnimation())
+				{
+					FallbackReason = Why + FString::Printf(TEXT("; played %s instead"), *GetNameSafe(ActiveMontage.Get()));
+				}
+				else
 				{
 					Performer->Jump();
+					FallbackReason = Why + TEXT("; jumped instead");
 				}
 				bTraversalStarted = true;
 			}
 			if (bTraversalStarted)
 			{
-				Beat.ImpactTimes.Add(PerformTime);
+				AddEvent(ECinemafyPerformanceEventKind::ActionStart, false, TEXT("traversal requested"));
 				Phase = EPhase::Act;
 				PhaseTime = 0.f;
 			}
 			return;
 		}
 
-		float Radius = ArrivalRadius;
 		FVector Destination = PathPoints.IsValidIndex(PathIndex) ? PathPoints[PathIndex] : Point;
 		const bool bLastPoint = PathIndex >= PathPoints.Num() - 1;
-		if (Reading.Kind == ECinemafyActionKind::Attack && Cast<APawn>(Beat.Target))
+		const bool bMeleeTarget = Reading.Kind == ECinemafyActionKind::Attack && Cast<APawn>(Beat.Target);
+		float Radius = ArrivalRadius;
+		if (bMeleeTarget)
 		{
 			Destination = Beat.Target->GetActorLocation();
 			const ACharacter* TargetCharacter = Cast<ACharacter>(Beat.Target);
@@ -977,30 +1136,47 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		{
 			Radius = 80.f;
 		}
-		else if (Reading.Kind == ECinemafyActionKind::Move && Beats.IsValidIndex(CurrentBeat + 1))
+		else if (CurrentArrival == ECinemafyArrival::PassThrough || CurrentArrival == ECinemafyArrival::EnterAction)
 		{
-			const ECinemafyActionKind Next = Beats[CurrentBeat + 1].Reading.Kind;
-			if (Next == ECinemafyActionKind::Move || Next == ECinemafyActionKind::Traverse)
-			{
-				Radius = CornerRadius;
-			}
+			Radius = CornerRadius;
 		}
 
 		if (SteerTo(Destination, Radius))
 		{
-			if (!bLastPoint && !(Reading.Kind == ECinemafyActionKind::Attack && Cast<APawn>(Beat.Target)))
+			if (!bLastPoint && !bMeleeTarget)
 			{
 				++PathIndex;
 			}
 			else if (Reading.Kind == ECinemafyActionKind::Move)
 			{
-				FinishBeat(false);
+				if (CurrentArrival == ECinemafyArrival::StopAndFace)
+				{
+					// Let the stop play out before anything else starts (no taunting mid-skid).
+					Phase = EPhase::Settle;
+					PhaseTime = 0.f;
+				}
+				else
+				{
+					AddEvent(ECinemafyPerformanceEventKind::Arrived, false, TEXT("passing through"));
+					FinishBeat(ECinemafyBeatOutcome::Succeeded);
+				}
 			}
 			else
 			{
+				AddEvent(ECinemafyPerformanceEventKind::Arrived);
 				Phase = EPhase::Face;
 				PhaseTime = 0.f;
 			}
+		}
+		return;
+	}
+
+	case EPhase::Settle:
+	{
+		if (Performer->GetVelocity().Size2D() < 25.f || PhaseTime > 1.5f)
+		{
+			AddEvent(ECinemafyPerformanceEventKind::Arrived, false, FString::Printf(TEXT("stopped %.0f cm from the mark"), FVector::Dist2D(Here, Point)));
+			FinishBeat(ECinemafyBeatOutcome::Succeeded);
 		}
 		return;
 	}
@@ -1024,11 +1200,20 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 			case ECinemafyActionKind::Attack:
 			case ECinemafyActionKind::Perform:
 			case ECinemafyActionKind::Equip:
-				if (!PlayNextAnimation())
+				if (PlayNextAnimation())
 				{
-					// Equip without an animation is just the overlay change; anything else had nothing to play.
-					ActDoneDelay = Reading.Kind == ECinemafyActionKind::Equip ? 0.5f : 0.8f;
-					Beat.bFailed = Reading.Kind != ECinemafyActionKind::Equip;
+					AddEvent(ECinemafyPerformanceEventKind::ActionStart, false, GetNameSafe(ActiveMontage.Get()));
+				}
+				else if (Reading.Kind == ECinemafyActionKind::Equip && Rig.SetOverlay)
+				{
+					// The overlay switch is the whole equip (no draw animation in the library).
+					ActDoneDelay = 0.5f;
+				}
+				else
+				{
+					FinishBeat(ECinemafyBeatOutcome::Failed, Reading.Kind == ECinemafyActionKind::Equip
+						? FString::Printf(TEXT("No overlay hook and no draw animation for \"%s\""), *Reading.Weapon)
+						: FString::Printf(TEXT("Nothing in the library fits \"%s\" for this skeleton (add a Move Library entry or an Animation Override)"), *Beat.Prompt));
 				}
 				break;
 			default:
@@ -1045,22 +1230,27 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		{
 			// Keep the input going so the landing flows straight into the next move.
 			SteerTo(Here + Performer->GetActorForwardVector() * 300.f, 10.f, 0.6f);
-			bSawTraversal |= IsTraversing();
+			const bool bTraversingNow = IsTraversing();
+			if (bTraversingNow && !bSawTraversal)
+			{
+				AddEvent(ECinemafyPerformanceEventKind::Takeoff, false, FallbackReason.IsEmpty() ? TEXT("traversal") : TEXT("fallback"));
+			}
+			bSawTraversal |= bTraversingNow;
 			if (PhaseTime > 0.35f && !bSawTraversal && FVector::Dist2D(Here, Point) >= 70.f)
 			{
-				// The traversal call said yes but nothing happened (no result pin): keep approaching.
-				Beat.ImpactTimes.Pop();
+				// The traversal call returned without starting anything: keep approaching.
 				bTraversalStarted = false;
 				Phase = EPhase::Approach;
 				PhaseTime = 0.f;
 			}
-			else if (PhaseTime > 0.3f && bSawTraversal && !IsTraversing())
+			else if (PhaseTime > 0.3f && bSawTraversal && !bTraversingNow)
 			{
-				FinishBeat(false);
+				AddEvent(ECinemafyPerformanceEventKind::Landing);
+				FinishBeat(ECinemafyBeatOutcome::Succeeded);
 			}
 			else if (PhaseTime > 5.f)
 			{
-				FinishBeat(true);
+				FinishBeat(ECinemafyBeatOutcome::TimedOut, bSawTraversal ? TEXT("Traversal never landed") : TEXT("Traversal never started"));
 			}
 			return;
 		}
@@ -1074,7 +1264,7 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		{
 			if (!IsAnimationBusy() && !PlayNextAnimation())
 			{
-				FinishBeat(false);
+				FinishBeat(ECinemafyBeatOutcome::Succeeded);
 			}
 			return;
 		}
@@ -1082,7 +1272,7 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		ActDoneDelay -= DeltaSeconds;
 		if (ActDoneDelay <= 0.f)
 		{
-			FinishBeat(false);
+			FinishBeat(ECinemafyBeatOutcome::Succeeded);
 		}
 		return;
 	}
@@ -1137,16 +1327,21 @@ bool ACinemafyChoreography::PlayNextAnimation()
 
 	ActivePlayRate = FMath::Max(Beat.PlayRate, 0.1f);
 
-	// Line the strike up with the target for montages that warp (motion warping windows).
-	if (Beat.Target)
+	// Line the strike up for montages with warp windows. The root target is where the attacker should stand
+	// (in front of the target, facing it) - not the target's own position, or root motion walks into them.
+	if (APawn* TargetPawn = Cast<APawn>(Beat.Target))
 	{
 		if (UMotionWarpingComponent* Warping = Performer->FindComponentByClass<UMotionWarpingComponent>())
 		{
-			const FVector TargetLocation = Beat.Target->GetActorLocation();
-			const FRotator Facing = (TargetLocation - Performer->GetActorLocation()).GetSafeNormal2D().Rotation();
+			const FVector TargetLocation = TargetPawn->GetActorLocation();
+			const FVector Toward = (TargetLocation - Performer->GetActorLocation()).GetSafeNormal2D();
+			const ACharacter* TargetCharacter = Cast<ACharacter>(TargetPawn);
+			const float Standoff = MeleeRange + (TargetCharacter && TargetCharacter->GetCapsuleComponent() ? TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleRadius() : 40.f);
+			const FVector Stand = TargetLocation - Toward * Standoff;
+			const FVector RootLocation(Stand.X, Stand.Y, Performer->GetActorLocation().Z);
 			for (const TCHAR* Name : { TEXT("AttackTarget"), TEXT("Target"), TEXT("Warp"), TEXT("MeleeTarget") })
 			{
-				Warping->AddOrUpdateWarpTargetFromLocationAndRotation(Name, TargetLocation, Facing);
+				Warping->AddOrUpdateWarpTargetFromLocationAndRotation(Name, RootLocation, Toward.Rotation());
 			}
 		}
 	}
@@ -1170,21 +1365,36 @@ bool ACinemafyChoreography::PlayNextAnimation()
 	ActiveMontage = Montage;
 	UsedAnimations.Add(FSoftObjectPath(Clip));
 
-	// When does it land? A notify named like a hit, else about 40% in.
-	float Impact = Clip->GetPlayLength() * 0.4f;
-	for (const FAnimNotifyEvent& Notify : Clip->Notifies)
-	{
-		const FString Name = Notify.NotifyName.ToString().ToLower() + (Notify.Notify ? Notify.Notify->GetClass()->GetName().ToLower() : FString())
-			+ (Notify.NotifyStateClass ? Notify.NotifyStateClass->GetClass()->GetName().ToLower() : FString());
-		if (Name.Contains(TEXT("hit")) || Name.Contains(TEXT("impact")) || Name.Contains(TEXT("damage")) || Name.Contains(TEXT("trace")) || Name.Contains(TEXT("window")))
-		{
-			Impact = Notify.GetTriggerTime();
-			break;
-		}
-	}
+	// When does it land? An authored hit/impact/contact notify is taken as the contact. A damage or trace
+	// *window* only brackets it, and with nothing at all it's a labeled guess at 40%.
 	if (Beat.Reading.Kind == ECinemafyActionKind::Attack)
 	{
-		Beat.ImpactTimes.Add(PerformTime + Impact / ActivePlayRate);
+		float Contact = Clip->GetPlayLength() * 0.4f;
+		bool bEstimated = true;
+		FString Note = TEXT("estimated at 40% (no hit notify)");
+		for (const FAnimNotifyEvent& Notify : Clip->Notifies)
+		{
+			const FString Name = Notify.NotifyName.ToString().ToLower() + (Notify.Notify ? Notify.Notify->GetClass()->GetName().ToLower() : FString())
+				+ (Notify.NotifyStateClass ? Notify.NotifyStateClass->GetClass()->GetName().ToLower() : FString());
+			if (Name.Contains(TEXT("hit")) || Name.Contains(TEXT("impact")) || Name.Contains(TEXT("contact")))
+			{
+				Contact = Notify.GetTriggerTime();
+				bEstimated = false;
+				Note = Notify.NotifyName.ToString();
+				break;
+			}
+			if (bEstimated && (Name.Contains(TEXT("damage")) || Name.Contains(TEXT("trace")) || Name.Contains(TEXT("window"))))
+			{
+				Contact = Notify.GetTriggerTime() + Notify.GetDuration() * 0.4f;
+				Note = FString::Printf(TEXT("estimated inside %s"), *Notify.NotifyName.ToString());
+			}
+		}
+		FCinemafyPendingContact& Pending = PendingContacts.AddDefaulted_GetRef();
+		Pending.BeatIndex = CurrentBeat;
+		Pending.Time = PerformTime + Contact / ActivePlayRate;
+		Pending.bEstimated = bEstimated;
+		Pending.Montage = Montage;
+		Pending.Note = Clip->GetName() + TEXT(": ") + Note;
 	}
 	return true;
 }
@@ -1264,8 +1474,16 @@ void ACinemafyChoreography::RefreshLabels()
 		Label->SetHiddenInGame(true);
 		Label->SetHorizontalAlignment(EHTA_Center);
 		Label->SetWorldSize(22.f);
-		Label->SetTextRenderColor(ColorForKind(Beat.Reading.Kind));
-		Label->SetText(FText::FromString(FString::Printf(TEXT("%d  %s"), Index + 1, *Beat.Prompt)));
+		// After a take, problems show right at the beat: red for blocked / failed / timed out, amber for fallbacks.
+		const bool bProblem = Beat.Outcome == ECinemafyBeatOutcome::Blocked || Beat.Outcome == ECinemafyBeatOutcome::Failed || Beat.Outcome == ECinemafyBeatOutcome::TimedOut;
+		const bool bFallback = Beat.Outcome == ECinemafyBeatOutcome::Fallback;
+		FString Text = FString::Printf(TEXT("%d  %s"), Index + 1, *Beat.Prompt);
+		if (bProblem || bFallback)
+		{
+			Text += FString::Printf(TEXT("\n%s: %s"), *StaticEnum<ECinemafyBeatOutcome>()->GetDisplayNameTextByValue(static_cast<int64>(Beat.Outcome)).ToString(), *Beat.OutcomeReason);
+		}
+		Label->SetTextRenderColor(bProblem ? FColor(255, 60, 60) : bFallback ? FColor(255, 170, 40) : ColorForKind(Beat.Reading.Kind));
+		Label->SetText(FText::FromString(Text));
 		Label->RegisterComponent();
 		Label->SetWorldLocation(GetBeatWorldLocation(Index) + FVector(0.f, 0.f, 60.f));
 		Labels.Add(Label);

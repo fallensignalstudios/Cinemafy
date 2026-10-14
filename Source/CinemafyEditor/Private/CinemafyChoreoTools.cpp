@@ -445,6 +445,8 @@ namespace CinemafyChoreoTake
 		TArray<FCinemafyChoreoBeat> Beats;
 		float Duration = 0.f;
 		bool bFinished = false;
+		/** Body and transform samples share this rate: the open sequence's display rate when there is one. */
+		FFrameRate SampleRate = FFrameRate(30, 1);
 	};
 
 	TArray<FRecording> Recordings;
@@ -491,10 +493,16 @@ namespace CinemafyChoreoTake
 
 		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
 		FAnimationRecordingSettings Settings;
-		Settings.SampleFrameRate = FFrameRate(30, 1);
+		const ULevelSequence* OpenSequence = CinemafySequencer::GetOpenSequence();
+		Recording.SampleRate = OpenSequence && OpenSequence->GetMovieScene() ? OpenSequence->GetMovieScene()->GetDisplayRate() : FFrameRate(30, 1);
+		Settings.SampleFrameRate = Recording.SampleRate;
 		Settings.Length = 0.f;
+		// Bake-space contract: the actor (capsule) transform goes on a transform track; the body is recorded relative to
+		// its mesh component, root bone included. Keeping the root keeps pose-relative root offsets (GASP's Offset Root
+		// Bone during turns and pivots) that removing it would throw away. Travel lives only on the actor track, since
+		// a character's root bone doesn't carry it, so nothing is counted twice.
 		Settings.bRecordInWorldSpace = false;
-		Settings.bRemoveRootAnimation = true;
+		Settings.bRemoveRootAnimation = false;
 		Settings.bAutoSaveAsset = false;
 
 		TArray<USkeletalMeshComponent*> Meshes;
@@ -502,7 +510,7 @@ namespace CinemafyChoreoTake
 		for (USkeletalMeshComponent* Mesh : Meshes)
 		{
 			// Followers copy their leader's pose and faces are Cinemafy Face's job: record the bodies that animate.
-			if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Mesh->GetName().Contains(TEXT("Face")))
+			if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->SkipRecordingComponents.Contains(Mesh->GetFName()))
 			{
 				continue;
 			}
@@ -623,8 +631,23 @@ namespace CinemafyChoreoTake
 			return;
 		}
 
-		// The take is the performer's motion: it replaces any transform track they had.
-		UMovieScene3DTransformTrack* Track = ReplaceBindingTrack<UMovieScene3DTransformTrack>(MovieScene, Binding, false);
+		// Replace only the previous take's track. Hand-made transform tracks are never deleted: they're muted (eval
+		// disabled) so the take plays, and can be switched back on in Sequencer.
+		UMovieScene3DTransformTrack* Track = ReplaceBindingTrack<UMovieScene3DTransformTrack>(MovieScene, Binding, true);
+		Track->SetDisplayName(TakeTrackName);
+		const UMovieScene* ConstMovieScene = MovieScene;
+		if (const FMovieSceneBinding* Existing = ConstMovieScene->FindBinding(Binding))
+		{
+			for (UMovieSceneTrack* Other : Existing->GetTracks())
+			{
+				if (Other && Other != Track && Other->IsA<UMovieScene3DTransformTrack>() && !Other->IsEvalDisabled())
+				{
+					Other->Modify();
+					Other->SetEvalDisabled(true);
+					UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Take: muted an existing transform track on %s so the take plays (not deleted)."), *Performer->GetActorLabel());
+				}
+			}
+		}
 		UMovieScene3DTransformSection* Section = Cast<UMovieScene3DTransformSection>(Track->CreateNewSection());
 		Track->AddSection(*Section);
 
@@ -639,9 +662,12 @@ namespace CinemafyChoreoTake
 		}
 
 		FRotator Previous = Recording.Transforms[0].Rotator();
-		const float Step = 1.f / 30.f;
-		for (float Time = 0.f; Time <= Recording.Duration + KINDA_SMALL_NUMBER; Time += Step)
+		// Step in whole frames of the capture rate (no drifting float accumulation), converted exactly to ticks.
+		const FFrameRate Rate = Recording.SampleRate;
+		const int32 Frames = Rate.AsFrameTime(Recording.Duration).FloorToFrame().Value;
+		for (int32 FrameIndex = 0; FrameIndex <= Frames; ++FrameIndex)
 		{
+			const float Time = static_cast<float>(Rate.AsSeconds(FFrameTime(FrameIndex)));
 			const FTransform Sample = SampleTransform(Recording.Times, Recording.Transforms, Time);
 			const FVector Location = Sample.GetLocation();
 			FRotator Rotation = Sample.Rotator();
@@ -651,7 +677,7 @@ namespace CinemafyChoreoTake
 			Rotation.Yaw = Previous.Yaw + FRotator::NormalizeAxis(Rotation.Yaw - Previous.Yaw);
 			Previous = Rotation;
 
-			const FFrameNumber Frame = Start + TickResolution.AsFrameNumber(Time);
+			const FFrameNumber Frame = Start + FFrameRate::TransformTime(FFrameTime(FrameIndex), Rate, TickResolution).RoundToFrame();
 			Channels[0]->AddLinearKey(Frame, Location.X);
 			Channels[1]->AddLinearKey(Frame, Location.Y);
 			Channels[2]->AddLinearKey(Frame, Location.Z);
@@ -738,6 +764,7 @@ namespace CinemafyChoreoTake
 		const float StartSeconds = static_cast<float>(TickResolution.AsSeconds(FFrameTime(Start)));
 
 		int32 Baked = 0;
+		int32 NeedsAttention = 0;
 		for (const TPair<ACinemafyChoreography*, const FRecording*>& Pair : Matched)
 		{
 			ACinemafyChoreography* Choreo = Pair.Key;
@@ -760,11 +787,18 @@ namespace CinemafyChoreoTake
 				Beat.StartTime = Took.StartTime;
 				Beat.EndTime = Took.EndTime;
 				Beat.ImpactTimes = Took.ImpactTimes;
-				Beat.bFailed = Took.bFailed;
+				Beat.Events = Took.Events;
+				Beat.Outcome = Took.Outcome;
+				Beat.OutcomeReason = Took.OutcomeReason;
+				if (Took.Outcome != ECinemafyBeatOutcome::Succeeded)
+				{
+					++NeedsAttention;
+				}
 			}
 			Choreo->TakeDuration = Recording.Duration;
 			Choreo->TakeStartSeconds = StartSeconds;
 			Choreo->TakeSequence = Sequence;
+			Choreo->RefreshLabels();
 			++Baked;
 		}
 
@@ -778,8 +812,10 @@ namespace CinemafyChoreoTake
 		CinemafySequencer::NotifyChanged();
 		Recordings.Reset();
 
-		Toast(FText::Format(LOCTEXT("Baked", "Baked {0} performance(s) into {1} ({2}s)."), Baked, FText::FromString(Sequence->GetName()),
-			FText::AsNumber(FMath::RoundToFloat(LongestTake * 10.f) / 10.f)));
+		Toast(FText::Format(LOCTEXT("Baked", "Baked {0} performance(s) into {1} ({2}s).{3}"), Baked, FText::FromString(Sequence->GetName()),
+			FText::AsNumber(FMath::RoundToFloat(LongestTake * 10.f) / 10.f),
+			NeedsAttention > 0 ? FText::Format(LOCTEXT("BakedProblems", " {0} beat(s) need attention: see the red and amber labels."), NeedsAttention) : FText::GetEmpty()),
+			NeedsAttention == 0);
 
 		if (Primary && Primary->bDirectAfterBake && Baked > 0)
 		{

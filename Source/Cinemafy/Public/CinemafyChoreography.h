@@ -8,6 +8,7 @@
 
 class ACharacter;
 class AController;
+class APlayerController;
 class UAnimMontage;
 class UTextRenderComponent;
 class ULevelSequence;
@@ -28,6 +29,16 @@ enum class ECinemafyChoreoRequest : uint8
 DECLARE_MULTICAST_DELEGATE_TwoParams(FCinemafyChoreoEditorRequest, class ACinemafyChoreography*, ECinemafyChoreoRequest);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FCinemafyChoreoPerformanceEvent, class ACinemafyChoreography*, bool /*bStarted*/);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCinemafyChoreographyFinished);
+
+/** A strike that should land at Time if its montage is still playing then. */
+struct FCinemafyPendingContact
+{
+	int32 BeatIndex = INDEX_NONE;
+	float Time = 0.f;
+	bool bEstimated = true;
+	TWeakObjectPtr<UAnimMontage> Montage;
+	FString Note;
+};
 
 /** Hooks into a performer (gait, traversal, overlay, crouch), found by reflection once per performance. */
 struct FCinemafyPerformerRig
@@ -156,6 +167,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Display")
 	bool bShowPath = true;
 
+	/**
+	 * Skeletal mesh components (by component name) that Perform & Record leaves alone. Faces are
+	 * Cinemafy Face's job by default; follower meshes (leader pose) are always skipped, since they copy their leader.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Take")
+	TArray<FName> SkipRecordingComponents = { FName(TEXT("Face")) };
+
 	/** Length of the last recorded take (seconds). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Choreography|Take")
 	float TakeDuration = 0.f;
@@ -223,6 +241,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
 	TArray<FCinemafyLine> BuildDirectorLines() const;
 
+	/** Rebuilds the beat labels in the viewport (prompts, plus outcomes after a take). */
+	void RefreshLabels();
+
 	/** Reads one beat's prompt and picks its animations. */
 	void ResolveBeat(int32 BeatIndex);
 
@@ -231,6 +252,7 @@ public:
 	TArray<FTransform> RecordedTransforms;
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -239,7 +261,7 @@ public:
 #endif
 
 private:
-	enum class EPhase : uint8 { Start, Approach, Face, Act, Done };
+	enum class EPhase : uint8 { Start, Approach, Settle, Face, Act, Done };
 
 	void BuildRig();
 	void ApplyGait(ECinemafyGait Gait);
@@ -247,7 +269,12 @@ private:
 	bool TryTraverse();
 
 	void StartBeat();
-	void FinishBeat(bool bFailed);
+	void FinishBeat(ECinemafyBeatOutcome Outcome, const FString& Reason = FString());
+	void AddEvent(ECinemafyPerformanceEventKind Kind, bool bEstimated = false, const FString& Note = FString(), float AtTime = -1.f);
+	/** Confirms contacts whose time has come (only while their montage is still playing: an interrupted swing doesn't hit). */
+	void UpdatePendingContacts();
+	/** Puts the performer back the way it was found (possession, gait flags, crouch, speed, warp targets). */
+	void RestorePerformer();
 	void TickBeat(float DeltaSeconds);
 	void FinishPerformance();
 
@@ -261,7 +288,6 @@ private:
 	bool IsTraversing() const;
 	FVector GetTargetPoint(const FCinemafyChoreoBeat& Beat, int32 BeatIndex) const;
 
-	void RefreshLabels();
 	void DrawPath() const;
 
 	TArray<FCinemafyMoveCandidate> Candidates;
@@ -291,6 +317,15 @@ private:
 	ECinemafyGait CurrentGait = ECinemafyGait::Walk;
 	bool bCrouched = false;
 	TWeakObjectPtr<AController> SpawnedController;
+	TWeakObjectPtr<APlayerController> SavedPlayer;
+	float SavedMaxWalkSpeed = -1.f;
+	bool bStartedCrouched = false;
+	bool bWorldEnding = false;
+	ECinemafyArrival CurrentArrival = ECinemafyArrival::StopAndFace;
+	/** Set when the approach ended short of the mark (geometry); the beat can still act, but it isn't a clean success. */
+	FString ShortfallReason;
+	FString FallbackReason;
+	TArray<FCinemafyPendingContact> PendingContacts;
 	TSet<FSoftObjectPath> UsedAnimations;
 
 	UPROPERTY(Transient)

@@ -24,6 +24,8 @@ was written without a compiler. These are the calls most likely to need a small 
 | `CinemafyEditLibrary.cpp` | `UMovieSceneAudioSection::GetSoundVolumeChannel()` | Fallback: `GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0)`. |
 | `CinemafyEditLibrary.cpp` | `UMovieScene::SetMarkedFrame` / `DeleteMarkedFrame` / `AddMarkedFrame` | 4.26+. |
 | `SCinemafyTransition.cpp` | `FSlateClippingZone(TopLeft, TopRight, BottomLeft, BottomRight)` with `FVector2f` | Older engines take `FVector2D`. |
+| `CinemafyChoreoTools.cpp` | `UMovieSceneTrack::IsEvalDisabled` / `SetEvalDisabled` | Editor-only data. Fallback: remove the mute and let the user disable the old track. |
+| `CinemafyChoreography.cpp` | `UMotionWarpingComponent::RemoveWarpTarget(FName)` | Older: `RemoveWarpTargets`, or skip (the targets are harmless). |
 | `SCinemafyShotBrowser.cpp` / Learn Style | `ISequencer::FindBoundObjects` | Compiled fine in 5.8 (Shot Browser). If removed later, resolve through the sequence's shared playback state. |
 
 Behavioral things to check in-engine (not compile issues):

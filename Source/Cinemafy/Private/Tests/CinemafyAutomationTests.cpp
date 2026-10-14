@@ -548,4 +548,28 @@ bool FCinemafyChoreoLinesTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoArrivalTest, "Cinemafy.Choreography.ArrivalPolicies", CinemafyTests::Flags)
+bool FCinemafyChoreoArrivalTest::RunTest(const FString& Parameters)
+{
+	auto Beat = [](const TCHAR* Prompt)
+	{
+		FCinemafyChoreoBeat B;
+		B.Prompt = Prompt;
+		B.Reading = UCinemafyChoreographyLibrary::ReadPrompt(Prompt);
+		return B;
+	};
+	TArray<FCinemafyChoreoBeat> Beats = { Beat(TEXT("walk")), Beat(TEXT("vault")), Beat(TEXT("sprint")), Beat(TEXT("taunt")), Beat(TEXT("run")) };
+
+	using Lib = UCinemafyChoreographyLibrary;
+	TestEqual(TEXT("A walk mark before a vault is a waypoint (no idle)"), Lib::ResolveArrival(Beats, 0), ECinemafyArrival::PassThrough);
+	TestEqual(TEXT("A vault is entered moving"), Lib::ResolveArrival(Beats, 1), ECinemafyArrival::EnterAction);
+	TestEqual(TEXT("A sprint before a taunt comes to a real stop"), Lib::ResolveArrival(Beats, 2), ECinemafyArrival::StopAndFace);
+	TestEqual(TEXT("The last move stops"), Lib::ResolveArrival(Beats, 4), ECinemafyArrival::StopAndFace);
+
+	Beats[0].Arrival = ECinemafyArrival::StopAndFace;
+	TestEqual(TEXT("An explicit arrival wins"), Lib::ResolveArrival(Beats, 0), ECinemafyArrival::StopAndFace);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -251,6 +251,11 @@ in the Hub) with your character selected, then:
 Several characters? Give each a choreography. Perform & Record takes everyone (with **Include In
 Takes** on) in one take, and the director cuts the whole fight.
 
+After a take, each beat reports its **Outcome**: Succeeded, Fallback (done another way, with the reason),
+Blocked, Failed or Timed Out. Problems turn the beat's label red or amber in the viewport. Movement
+beats have an **Arrival** policy: pass through, stop, or enter the next action moving. Auto picks one
+from what follows. See the [design contract](Docs/CHOREOGRAPHY.md).
+
 Each beat shows how it was read (**Reading**) and what it picked (**Chosen Animations**). Override any
 beat with **Animation Override**. For full control, **Build Move Library** gathers the project's
 one-shots into an asset you can curate (add keywords, bias favorites), and set it as the

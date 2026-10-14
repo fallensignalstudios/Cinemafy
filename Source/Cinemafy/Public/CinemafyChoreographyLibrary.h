@@ -43,6 +43,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
 	static TArray<FString> GetSynonyms(const FString& Word);
 
+	/** What a beat's Arrival means in context: Auto passes through before more travel, enters vaults moving, and stops before anything else. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
+	static ECinemafyArrival ResolveArrival(const TArray<FCinemafyChoreoBeat>& Beats, int32 BeatIndex);
+
 	/** Builds the lines the Scene Director cuts from: one per recorded beat, timed to the take. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
 	static TArray<FCinemafyLine> BuildDirectorLines(const TArray<FCinemafyChoreoBeat>& Beats, AActor* Performer, float TakeDuration);

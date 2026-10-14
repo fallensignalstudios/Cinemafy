@@ -39,6 +39,17 @@
 - [ ] Lip sync v2: audio-assisted plosive detection and look-ahead when the sequence is baked
 - [ ] Emotion "intensity curves" authored from dialogue tags
 
+## 🎬 v0.8 – v0.9: Choreographer and Edit
+- [x] Click-to-choreograph, prompt brain, live performance through motion matching and the performer's traversal
+- [x] Perform & Record bake; Direct Shots around the take
+- [x] Honest outcomes, arrival policies, typed performance events, root-preserving bake ([design contract](CHOREOGRAPHY.md))
+- [x] Cinemafy Edit: razor, ripple, roll, transitions, titles, ducking, markers, grade, multicam
+- [ ] Performer adapter interface (explicit capability profiles)
+- [ ] Geometry-aware traversal queries with typed refusal reasons
+- [ ] Synchronized attacker/defender interactions on a shared contact marker
+- [ ] Fixed-time contact constraints; versioned takes; bake reconstruction validation
+- [ ] Composition checks: OTS shoulder occupancy, crop across moves, protect both sides of an interaction
+
 ## 🚀 Stretch
 - [x] Scene Director: style presets, intensity-driven coverage planner, Sequencer bake, re-roll, live directing
 - [x] Director v2: camera moves per shot (keyed Progress), emotion per line (keyed), learn a style from an existing edit, stronger reverse-shot size matching
