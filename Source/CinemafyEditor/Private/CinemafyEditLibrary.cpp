@@ -333,7 +333,7 @@ namespace CinemafyEdit
 		{
 			return nullptr;
 		}
-		for (TActorIterator<ACinemafyEditDecisions> It(World); It; ++It)
+		if (TActorIterator<ACinemafyEditDecisions> It(World); It)
 		{
 			return *It;
 		}

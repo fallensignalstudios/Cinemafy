@@ -14,4 +14,5 @@ private:
 
 	FDelegateHandle DirectorRequestHandle;
 	FDelegateHandle ChoreoRequestHandle;
+	FDelegateHandle SequencerCreatedHandle;
 };

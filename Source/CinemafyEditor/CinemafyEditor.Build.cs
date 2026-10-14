@@ -30,7 +30,8 @@ public class CinemafyEditor : ModuleRules
 			"SlateCore",
 			"InputCore",
 			"EditorFramework",
-			"LevelEditor"
+			"LevelEditor",
+			"SequenceRecorder"
 		});
 	}
 }

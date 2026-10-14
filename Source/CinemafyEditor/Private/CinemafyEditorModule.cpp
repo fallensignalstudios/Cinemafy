@@ -212,11 +212,15 @@ void FCinemafyEditorModule::StartupModule()
 
 	// Premiere-style shortcuts while Sequencer has focus.
 	FCinemafyEditCommands::Register();
+	// Command bindings belong to each Sequencer instance, so bind as each one opens.
 	ISequencerModule& SequencerModule = FModuleManager::LoadModuleChecked<ISequencerModule>(TEXT("Sequencer"));
-	if (TSharedPtr<FUICommandList> SequencerCommands = SequencerModule.GetCommandBindings(ESequencerCommandBindings::Sequencer))
+	SequencerCreatedHandle = SequencerModule.RegisterOnSequencerCreated(FOnSequencerCreated::FDelegate::CreateLambda([](TSharedRef<ISequencer> Sequencer)
 	{
-		FCinemafyEditCommands::BindTo(SequencerCommands.ToSharedRef());
-	}
+		if (TSharedPtr<FUICommandList> SequencerCommands = Sequencer->GetCommandBindings(ESequencerCommandBindings::Sequencer))
+		{
+			FCinemafyEditCommands::BindTo(SequencerCommands.ToSharedRef());
+		}
+	}));
 
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FCinemafyEditorModule::RegisterMenus));
 }
@@ -234,6 +238,10 @@ void FCinemafyEditorModule::ShutdownModule()
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyHub::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyEditPanel::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyMulticam::TabName);
+	}
+	if (ISequencerModule* SequencerModule = FModuleManager::GetModulePtr<ISequencerModule>(TEXT("Sequencer")))
+	{
+		SequencerModule->UnregisterOnSequencerCreated(SequencerCreatedHandle);
 	}
 	FCinemafyEditCommands::Unregister();
 	UToolMenus::UnRegisterStartupCallback(this);

@@ -461,7 +461,10 @@ namespace CinemafyChoreoTake
 		{
 			if (USkeletalMeshComponent* Mesh = Component.Live.Get())
 			{
-				Component.Animation = FAnimationRecorderManager::Get().StopRecordingAnimation(Mesh, false);
+				// StopRecordingAnimation returns nothing in 5.8: take the sequence before stopping.
+				FAnimationRecorderManager& Recorder = FAnimationRecorderManager::Get();
+				Component.Animation = Recorder.GetCurrentlyRecordingSequence(Mesh);
+				Recorder.StopRecordingAnimation(Mesh, false);
 			}
 			Component.Live.Reset();
 		}
@@ -708,6 +711,22 @@ namespace CinemafyChoreoTake
 			Track->SetDisplayName(TakeTrackName);
 			Track->AddNewAnimation(Start, Animation);
 			Animation->MarkPackageDirty();
+
+			// Binding a skeletal mesh through Sequencer auto-adds an FK Control Rig track, which overrides the
+			// recorded animation with its default pose. Mute it (never delete) so the take plays.
+			const UMovieScene* ConstMovieScene = MovieScene;
+			if (const FMovieSceneBinding* MeshBinding = ConstMovieScene->FindBinding(Binding))
+			{
+				for (UMovieSceneTrack* Other : MeshBinding->GetTracks())
+				{
+					if (Other && Other != Track && !Other->IsEvalDisabled() && Other->GetClass()->GetFName() == TEXT("MovieSceneControlRigParameterTrack"))
+					{
+						Other->Modify();
+						Other->SetEvalDisabled(true);
+						UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Take: muted a Control Rig track on %s so the recorded body animation plays (not deleted)."), *(*Mesh)->GetName());
+					}
+				}
+			}
 		}
 	}
 
