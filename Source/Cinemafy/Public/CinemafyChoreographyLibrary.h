@@ -4,6 +4,7 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CinemafyChoreographyTypes.h"
 #include "CinemafyTypes.h"
+#include "CinemafyPerformerProfile.h"
 #include "CinemafyChoreographyLibrary.generated.h"
 
 class USkeleton;
@@ -57,6 +58,17 @@ public:
 	/** "front", "back", "left" or "right" for where a blow comes from. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
 	static FString ReactionDirection(float RelativeYaw);
+
+	/**
+	 * Measures the obstacle at Toward, approached from From (the performer's feet), against what the performer can
+	 * do: height, depth, landing room, headroom and approach angle, with a verdict and a plain-words reason.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography", meta = (WorldContext = "WorldContextObject"))
+	static FCinemafyTraversalCheck CheckTraversal(const UObject* WorldContextObject, FVector From, FVector Toward,
+		const FCinemafyTraversalEnvelope& Envelope, float CapsuleRadius, float CapsuleHalfHeight, const TArray<AActor*>& IgnoreActors);
+
+	/** Turns measured numbers into a verdict (the pure part of CheckTraversal, testable without a level). */
+	static void JudgeTraversal(FCinemafyTraversalCheck& Check, const FCinemafyTraversalEnvelope& Envelope, bool bLandingClear, float CapsuleRadius);
 
 	/** Builds the lines the Scene Director cuts from: one per recorded beat, timed to the take. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")

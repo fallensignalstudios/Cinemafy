@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CinemafyTypes.h"
+#include "CinemafyPerformerProfile.h"
 #include "CinemafyEditorLibrary.generated.h"
 
 class ACineCameraActor;
@@ -12,6 +13,7 @@ class USoundWave;
 class UCinemafyDirectorStyleAsset;
 class ACinemafyChoreography;
 class UCinemafyMoveLibrary;
+class UCinemafyPerformerProfile;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -222,6 +224,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
 	static UCinemafyMoveLibrary* CreateMoveLibraryFromFolder(const FString& ContentFolder);
+
+	/** Makes a Performer Profile asset from a preset (GASP, GASPALS, SignalForge, MetaHuman, generic) in /Game/Cinemafy/Performers. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static UCinemafyPerformerProfile* CreatePerformerProfile(ECinemafyPerformerPreset Preset, const FString& Name);
+
+	/** Saves what a choreography's auto-wiring found on its performer as a Performer Profile, and assigns it. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static UCinemafyPerformerProfile* SaveWiringAsProfile(ACinemafyChoreography* Choreography);
+
+	/** The wiring report for a choreography's performer (and its profile's check), as text. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static FString GetWiringReport(ACinemafyChoreography* Choreography);
 
 	static TArray<AActor*> GetSelectedActorsInOrder();
 };

@@ -527,7 +527,7 @@ namespace CinemafyChoreoTake
 			for (USkeletalMeshComponent* Mesh : Meshes)
 			{
 				// Followers copy their leader's pose and faces are Cinemafy Face's job: record the bodies that animate.
-				if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->SkipRecordingComponents.Contains(Mesh->GetFName()))
+				if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->GetSkipRecordingComponents().Contains(Mesh->GetFName()))
 				{
 					continue;
 				}
@@ -954,6 +954,7 @@ namespace CinemafyChoreoTake
 		FCinemafyChoreoMode::Stop();
 
 		int32 Performers = 0;
+		TArray<FString> WontWork;
 		for (TActorIterator<ACinemafyChoreography> It(GetEditorWorld()); It; ++It)
 		{
 			ACinemafyChoreography* Choreo = *It;
@@ -963,12 +964,39 @@ namespace CinemafyChoreoTake
 			{
 				for (int32 Index = 0; Index < Choreo->Beats.Num(); ++Index)
 				{
-					if (Choreo->Beats[Index].Reading.Summary.IsEmpty())
+					FCinemafyChoreoBeat& Beat = Choreo->Beats[Index];
+					if (Beat.Reading.Summary.IsEmpty())
 					{
 						Choreo->ResolveBeat(Index);
 					}
+					else if (Beat.Reading.Kind == ECinemafyActionKind::Traverse)
+					{
+						// The level may have changed since the beat was placed: measure again.
+						Beat.TraversalCheck = Choreo->MeasureTraversal(Index);
+					}
+					const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
+					if (Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked && !Check.bPossible)
+					{
+						WontWork.Add(FString::Printf(TEXT("%s, beat %d \"%s\": %s"), *GetNameSafe(Choreo->Performer), Index + 1, *Beat.Prompt, *Check.Reason));
+					}
 				}
+				Choreo->RefreshLabels();
 				++Performers;
+			}
+		}
+
+		if (WontWork.Num() > 0)
+		{
+			const FText Message = FText::Format(LOCTEXT("TraversalWontWork",
+				"These won't work as placed:\n\n{0}\n\nRecord anyway? (They'll be marked Failed in the take, not faked.)"),
+				FText::FromString(FString::Join(WontWork, TEXT("\n"))));
+			if (FMessageDialog::Open(EAppMsgType::YesNo, Message) != EAppReturnType::Yes)
+			{
+				for (TActorIterator<ACinemafyChoreography> It(GetEditorWorld()); It; ++It)
+				{
+					It->bPerformOnNextPlay = false;
+				}
+				return;
 			}
 		}
 

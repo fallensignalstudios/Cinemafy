@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "CinemafyChoreographyTypes.h"
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafyPerformerProfile.h"
 #include "CinemafyChoreography.generated.h"
 
 class ACharacter;
@@ -13,6 +14,7 @@ class UAnimMontage;
 class UTextRenderComponent;
 class ULevelSequence;
 class ACinemafySceneDirector;
+class UCinemafyPerformerProfile;
 
 /** Buttons on the choreography that the editor module answers. */
 UENUM()
@@ -23,7 +25,11 @@ enum class ECinemafyChoreoRequest : uint8
 	/** Play in editor, perform every choreography, record the takes and bake them into the open Level Sequence. */
 	PerformAndRecord,
 	/** Hand the recorded take to a Scene Director and cut shots around it. */
-	DirectShots
+	DirectShots,
+	/** Save what the auto-wiring found on the performer as a Performer Profile asset (and use it). */
+	SaveProfile,
+	/** Show the wiring report (and the profile's check against this character). */
+	CheckWiring
 };
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FCinemafyChoreoEditorRequest, class ACinemafyChoreography*, ECinemafyChoreoRequest);
@@ -51,6 +57,20 @@ struct FCinemafyPendingReaction
 	TWeakObjectPtr<UAnimSequenceBase> Clip;
 	TWeakObjectPtr<UAnimMontage> AttackMontage;
 	ECinemafyHitReaction Reaction = ECinemafyHitReaction::Hit;
+};
+
+/** What the wiring found on a performer: the names to put in a profile. */
+struct FCinemafyDetectedWiring
+{
+	FName SprintFunction;
+	FString SprintProperty;
+	FName WalkFunction;
+	FString WalkProperty;
+	FName CrouchFunction;
+	FName UncrouchFunction;
+	FName TraversalFunction;
+	FName OverlayFunction;
+	FString OverlayProperty;
 };
 
 /** Hooks into a performer (gait, traversal, overlay, crouch), found by reflection once per performance. */
@@ -86,6 +106,13 @@ public:
 	/** Who performs. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography")
 	TObjectPtr<ACharacter> Performer = nullptr;
+
+	/**
+	 * How to drive this performer. Empty = the profile Project Settings maps to its class, else guessed by name
+	 * (Save Wiring As Profile keeps what was guessed).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography")
+	TObjectPtr<UCinemafyPerformerProfile> Profile = nullptr;
 
 	/** The performance, in order. Each beat's Location is relative to this actor (move it to move the whole routine). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography", meta = (TitleProperty = "Prompt"))
@@ -232,6 +259,14 @@ public:
 	UFUNCTION(CallInEditor, Category = "Choreography", meta = (DisplayPriority = 2))
 	void DirectShots();
 
+	/** Saves what the auto-wiring found on the performer as a Performer Profile asset, and uses it from now on. */
+	UFUNCTION(CallInEditor, Category = "Choreography|Wiring", meta = (DisplayName = "Save Wiring As Profile"))
+	void SaveWiringAsProfile();
+
+	/** Shows what Cinemafy will drive on the performer, and anything the profile names that's missing. */
+	UFUNCTION(CallInEditor, Category = "Choreography|Wiring")
+	void CheckWiring();
+
 	/** Re-reads every prompt and re-picks animations (e.g. after adding animations to the project). */
 	UFUNCTION(CallInEditor, Category = "Choreography", meta = (DisplayPriority = 3))
 	void ReadPrompts();
@@ -261,8 +296,22 @@ public:
 	/** Rebuilds the beat labels in the viewport (prompts, plus outcomes after a take). */
 	void RefreshLabels();
 
+	/** The profile in effect (this choreography's, else Project Settings' for the performer's class). */
+	const UCinemafyPerformerProfile* GetProfile() const;
+	const UCinemafyMoveLibrary* GetMoveLibrary() const;
+	TArray<FName> GetSkipRecordingComponents() const;
+	/** What the performer can climb (the profile's, else GASP-like limits if it has a traversal function, else jumps only). */
+	FCinemafyTraversalEnvelope GetTraversalEnvelope();
+	/** Re-runs the wiring (editor checks, Save Wiring As Profile). */
+	void RefreshWiring();
+	/** Filled by the wiring: the names it found. */
+	FCinemafyDetectedWiring DetectedWiring;
+
 	/** Reads one beat's prompt and picks its animations. */
 	void ResolveBeat(int32 BeatIndex);
+
+	/** Measures a Traverse beat's obstacle from where the performer will be (the previous mark, or its feet). */
+	FCinemafyTraversalCheck MeasureTraversal(int32 BeatIndex, const FVector* FromOverride = nullptr);
 
 	/** Recorded while performing: the performer's transform over time (seconds since the take started). */
 	TArray<float> RecordedTimes;
@@ -333,6 +382,10 @@ private:
 	float StuckTimer = 0.f;
 	float TraverseRetry = 0.f;
 	bool bTraversalStarted = false;
+	/** The obstacle turned out to be ankle-high: walk across instead of asking for a vault. */
+	bool bStepOverOnly = false;
+	/** Set by StartBeat when the beat can't be performed at all (finished on the next tick). */
+	FString PrecheckFailReason;
 	bool bSawTraversal = false;
 	float ActDoneDelay = 0.f;
 	TArray<TObjectPtr<UAnimSequenceBase>> AnimQueue;
@@ -345,6 +398,7 @@ private:
 	float SavedMaxWalkSpeed = -1.f;
 	bool bStartedCrouched = false;
 	bool bWorldEnding = false;
+	FVector EffectiveFallbackSpeeds = FVector(180.f, 400.f, 650.f);
 	ECinemafyArrival CurrentArrival = ECinemafyArrival::StopAndFace;
 	/** Set when the approach ended short of the mark (geometry); the beat can still act, but it isn't a clean success. */
 	FString ShortfallReason;

@@ -123,6 +123,69 @@ enum class ECinemafyHitReaction : uint8
 	None       UMETA(DisplayName = "None")
 };
 
+/** What a measured obstacle allows. */
+UENUM(BlueprintType)
+enum class ECinemafyTraversalVerdict : uint8
+{
+	NotChecked     UMETA(DisplayName = "Not Checked"),
+	/** Too low to matter: just walk over it. */
+	StepOver       UMETA(DisplayName = "Step Over"),
+	Vault          UMETA(DisplayName = "Vault"),
+	/** Climb up onto it (deep or tall). */
+	Mantle         UMETA(DisplayName = "Mantle"),
+	/** No traversal system, but low enough to jump. */
+	Jump           UMETA(DisplayName = "Jump"),
+	TooTall        UMETA(DisplayName = "Too Tall"),
+	NoRoomToLand   UMETA(DisplayName = "No Room to Land"),
+	NoHeadroom     UMETA(DisplayName = "No Headroom"),
+	TooNarrow      UMETA(DisplayName = "Too Narrow to Stand On"),
+	BadAngle       UMETA(DisplayName = "Approach Too Steep"),
+	NoObstacle     UMETA(DisplayName = "Nothing There"),
+	CannotTraverse UMETA(DisplayName = "Can't Traverse")
+};
+
+/** An obstacle measured from where the performer approaches it. Distances in cm. */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyTraversalCheck
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	ECinemafyTraversalVerdict Verdict = ECinemafyTraversalVerdict::NotChecked;
+
+	/** The performer can get over / onto it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	bool bPossible = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	float Height = 0.f;
+
+	/** Front face to far edge (very large = a platform). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	float Depth = 0.f;
+
+	/** Clear space above the top. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	float Headroom = 0.f;
+
+	/** Degrees between the approach and straight on to the face. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	float ApproachAngle = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	FVector FrontPoint = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	FVector FarPoint = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	FVector LandingPoint = FVector::ZeroVector;
+
+	/** In plain words: what was measured and why it will or won't work. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	FString Reason;
+};
+
 /** How the director brain read a one- or two-word prompt. */
 USTRUCT(BlueprintType)
 struct CINEMAFY_API FCinemafyPromptReading
@@ -197,6 +260,10 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	/** Stable identity (survives reordering and renaming). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat", AdvancedDisplay)
 	FGuid Id;
+
+	/** Traversal beats: the obstacle as measured from the approach (refreshed when the beat is read). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Director")
+	FCinemafyTraversalCheck TraversalCheck;
 
 	/** Attacks on a character: make the target react, synchronized to the contact. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction")

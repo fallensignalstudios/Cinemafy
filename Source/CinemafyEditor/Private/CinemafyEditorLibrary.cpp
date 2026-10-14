@@ -2,6 +2,7 @@
 #include "CinemafyChoreoTools.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafyPerformerProfile.h"
 #include "GameFramework/Character.h"
 #include "CinemafyModule.h"
 #include "CinemafySequencerUtils.h"
@@ -3049,6 +3050,89 @@ UCinemafyMoveLibrary* UCinemafyEditorLibrary::CreateMoveLibraryFromFolder(const 
 		"Made {0} with {1} move(s). Set it as the Move Library on your choreographies, and add your own keywords to any entry."),
 		FText::FromString(AssetName), Library->Moves.Num()));
 	return Library;
+}
+
+namespace
+{
+	UCinemafyPerformerProfile* NewProfileAsset(const FString& Name)
+	{
+		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+		FString PackageName, AssetName;
+		AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("/Game/Cinemafy/Performers/PP_%s"), *Name), TEXT(""), PackageName, AssetName);
+		UPackage* Package = CreatePackage(*PackageName);
+		UCinemafyPerformerProfile* Profile = NewObject<UCinemafyPerformerProfile>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
+		FAssetRegistryModule::AssetCreated(Profile);
+		Package->MarkPackageDirty();
+		return Profile;
+	}
+}
+
+UCinemafyPerformerProfile* UCinemafyEditorLibrary::CreatePerformerProfile(ECinemafyPerformerPreset Preset, const FString& Name)
+{
+	UCinemafyPerformerProfile* Profile = NewProfileAsset(Name.IsEmpty() ? StaticEnum<ECinemafyPerformerPreset>()->GetNameStringByValue(static_cast<int64>(Preset)) : Name);
+	Profile->ApplyPreset(Preset);
+	return Profile;
+}
+
+UCinemafyPerformerProfile* UCinemafyEditorLibrary::SaveWiringAsProfile(ACinemafyChoreography* Choreography)
+{
+	if (!Choreography || !Choreography->Performer)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoPerformerProfile", "Pick a performer first: the profile is made from what's found on it."));
+		return nullptr;
+	}
+
+	// Detect with no profile in the way, so everything gets looked for.
+	UCinemafyPerformerProfile* Previous = Choreography->Profile;
+	Choreography->Profile = nullptr;
+	Choreography->RefreshWiring();
+	const FCinemafyDetectedWiring Found = Choreography->DetectedWiring;
+	Choreography->Profile = Previous;
+
+	const FString ClassName = Choreography->Performer->GetClass()->GetName().Replace(TEXT("_C"), TEXT(""));
+	UCinemafyPerformerProfile* Profile = NewProfileAsset(ClassName);
+	Profile->SprintFunction = Found.SprintFunction;
+	Profile->SprintProperty = Found.SprintFunction.IsNone() ? Found.SprintProperty : FString();
+	Profile->WalkFunction = Found.WalkFunction;
+	Profile->WalkProperty = Found.WalkFunction.IsNone() ? Found.WalkProperty : FString();
+	Profile->CrouchFunction = Found.CrouchFunction;
+	Profile->UncrouchFunction = Found.UncrouchFunction;
+	Profile->TraversalFunction = Found.TraversalFunction;
+	Profile->Traversal.bCanTraverse = !Found.TraversalFunction.IsNone();
+	Profile->OverlayFunction = Found.OverlayFunction;
+	Profile->OverlayProperty = Found.OverlayFunction.IsNone() ? Found.OverlayProperty : FString();
+	Profile->SkipRecordingComponents = Choreography->SkipRecordingComponents;
+	Profile->Notes = FString::Printf(TEXT("Saved from what was found on %s (%s). Check the traversal limits against your character."),
+		*Choreography->Performer->GetActorLabel(), *Choreography->Performer->GetClass()->GetName());
+
+	const FScopedTransaction Transaction(LOCTEXT("AssignProfile", "Assign Performer Profile"));
+	Choreography->Modify();
+	Choreography->Profile = Profile;
+	Choreography->RefreshWiring();
+
+	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ProfileSaved",
+		"Saved {0} and assigned it.\n\n{1}\n\nAdd it under Project Settings > Plugins > Cinemafy > Performer Profiles to use it for every {2}."),
+		FText::FromString(Profile->GetName()), FText::FromString(Profile->Validate(Choreography->Performer)), FText::FromString(ClassName)));
+	return Profile;
+}
+
+FString UCinemafyEditorLibrary::GetWiringReport(ACinemafyChoreography* Choreography)
+{
+	if (!Choreography || !Choreography->Performer)
+	{
+		return TEXT("No performer.");
+	}
+	Choreography->RefreshWiring();
+	FString Report = Choreography->WiringReport.Replace(TEXT("; "), TEXT("\n"));
+	if (const UCinemafyPerformerProfile* Profile = Choreography->GetProfile())
+	{
+		Report += FString::Printf(TEXT("\n\nProfile %s against %s:\n%s"), *Profile->GetName(), *Choreography->Performer->GetActorLabel(), *Profile->Validate(Choreography->Performer));
+	}
+	const FCinemafyTraversalEnvelope Envelope = Choreography->GetTraversalEnvelope();
+	Report += Envelope.bCanTraverse
+		? FString::Printf(TEXT("\n\nClimbs: vaults up to %.0f cm (%.0f cm deep), mantles up to %.0f cm."), Envelope.MaxVaultHeight, Envelope.MaxVaultDepth, Envelope.MaxMantleHeight)
+		: FString::Printf(TEXT("\n\nClimbs: nothing (jumps up to %.0f cm)."), Envelope.MaxJumpHeight);
+	return Report;
 }
 
 #undef LOCTEXT_NAMESPACE

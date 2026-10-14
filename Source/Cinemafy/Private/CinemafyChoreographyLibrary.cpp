@@ -7,6 +7,8 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "GameFramework/Pawn.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 
 namespace
 {
@@ -945,6 +947,183 @@ ECinemafyArrival UCinemafyChoreographyLibrary::ResolveArrival(const TArray<FCine
 	default:
 		return ECinemafyArrival::StopAndFace;
 	}
+}
+
+void UCinemafyChoreographyLibrary::JudgeTraversal(FCinemafyTraversalCheck& Check, const FCinemafyTraversalEnvelope& Envelope, bool bLandingClear, float CapsuleRadius)
+{
+	auto Set = [&Check](ECinemafyTraversalVerdict Verdict, bool bPossible, const FString& Reason)
+	{
+		Check.Verdict = Verdict;
+		Check.bPossible = bPossible;
+		Check.Reason = Reason;
+	};
+	const bool bPlatform = Check.Depth >= 390.f;
+	const FString Size = bPlatform ? FString::Printf(TEXT("%.0f cm high (a platform)"), Check.Height)
+		: FString::Printf(TEXT("%.0f cm high, %.0f cm deep"), Check.Height, Check.Depth);
+
+	if (Check.Height < Envelope.MinHeight)
+	{
+		Set(ECinemafyTraversalVerdict::StepOver, true, FString::Printf(TEXT("Only %.0f cm: walks over it, no vault needed"), Check.Height));
+		return;
+	}
+	if (!Envelope.bCanTraverse)
+	{
+		if (Check.Height <= Envelope.MaxJumpHeight)
+		{
+			Set(ECinemafyTraversalVerdict::Jump, true, FString::Printf(TEXT("%s: jumps it (no traversal system)"), *Size));
+		}
+		else
+		{
+			Set(ECinemafyTraversalVerdict::CannotTraverse, false, FString::Printf(TEXT("%s: too tall to jump (%.0f cm max) and the performer has no traversal system"),
+				*Size, Envelope.MaxJumpHeight));
+		}
+		return;
+	}
+	if (Check.ApproachAngle > Envelope.MaxApproachAngle)
+	{
+		Set(ECinemafyTraversalVerdict::BadAngle, false, FString::Printf(TEXT("Approaching at %.0f degrees to the face (max %.0f): put the mark before it straighter on"),
+			Check.ApproachAngle, Envelope.MaxApproachAngle));
+		return;
+	}
+	if (Check.Height > Envelope.MaxMantleHeight)
+	{
+		Set(ECinemafyTraversalVerdict::TooTall, false, FString::Printf(TEXT("%s: too tall (climbs up to %.0f cm)"), *Size, Envelope.MaxMantleHeight));
+		return;
+	}
+
+	const bool bVaultSized = Check.Height <= Envelope.MaxVaultHeight && Check.Depth <= Envelope.MaxVaultDepth;
+	const bool bCanStandOnTop = Check.Depth >= CapsuleRadius * 2.f && Check.Headroom >= Envelope.MinHeadroom;
+	if (bVaultSized && bLandingClear && Check.Headroom >= Envelope.MinHeadroom * 0.5f)
+	{
+		Set(ECinemafyTraversalVerdict::Vault, true, FString::Printf(TEXT("%s: vaults over it"), *Size));
+		return;
+	}
+	if (bCanStandOnTop)
+	{
+		Set(ECinemafyTraversalVerdict::Mantle, true, bVaultSized
+			? FString::Printf(TEXT("%s: no room to land beyond, so climbs onto it instead"), *Size)
+			: FString::Printf(TEXT("%s: climbs onto it"), *Size));
+		return;
+	}
+	if (bVaultSized)
+	{
+		Set(ECinemafyTraversalVerdict::NoRoomToLand, false, FString::Printf(TEXT("%s: no room to land on the far side (needs %.0f cm clear)"), *Size, Envelope.MinLandingDepth));
+		return;
+	}
+	if (Check.Headroom < Envelope.MinHeadroom)
+	{
+		Set(ECinemafyTraversalVerdict::NoHeadroom, false, FString::Printf(TEXT("%s: only %.0f cm of headroom above it (needs %.0f)"), *Size, Check.Headroom, Envelope.MinHeadroom));
+		return;
+	}
+	Set(ECinemafyTraversalVerdict::TooNarrow, false, FString::Printf(TEXT("%s: too deep to vault (%.0f cm max) and too narrow to stand on"), *Size, Envelope.MaxVaultDepth));
+}
+
+FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObject* WorldContextObject, FVector From, FVector Toward,
+	const FCinemafyTraversalEnvelope& Envelope, float CapsuleRadius, float CapsuleHalfHeight, const TArray<AActor*>& IgnoreActors)
+{
+	FCinemafyTraversalCheck Check;
+	const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+	FVector Direction = (Toward - From) * FVector(1.f, 1.f, 0.f);
+	if (!World || Direction.SizeSquared() < 1.f)
+	{
+		Check.Verdict = ECinemafyTraversalVerdict::NoObstacle;
+		Check.Reason = TEXT("No approach to measure from");
+		return Check;
+	}
+	Direction.Normalize();
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(CinemafyTraversalCheck), false);
+	Params.AddIgnoredActors(IgnoreActors);
+	FHitResult Hit;
+
+	// The floor the performer approaches on.
+	float FloorZ = From.Z;
+	if (World->LineTraceSingleByChannel(Hit, From + FVector(0.f, 0.f, 100.f), From - FVector(0.f, 0.f, 300.f), ECC_Visibility, Params))
+	{
+		FloorZ = Hit.ImpactPoint.Z;
+	}
+
+	// The front face: the lowest probe height that hits something on the way to (and a little past) the mark.
+	const float Reach = FVector::Dist2D(From, Toward) + 150.f;
+	bool bFoundFront = false;
+	FVector FrontNormal = -Direction;
+	for (const float ProbeHeight : { 20.f, 45.f, 80.f, 120.f, 170.f, 230.f })
+	{
+		const FVector Start(From.X, From.Y, FloorZ + ProbeHeight);
+		if (World->LineTraceSingleByChannel(Hit, Start, Start + Direction * Reach, ECC_Visibility, Params) && !Hit.bStartPenetrating)
+		{
+			Check.FrontPoint = Hit.ImpactPoint;
+			FrontNormal = Hit.ImpactNormal.GetSafeNormal2D();
+			bFoundFront = true;
+			break;
+		}
+	}
+	if (!bFoundFront)
+	{
+		Check.Verdict = ECinemafyTraversalVerdict::NoObstacle;
+		Check.Reason = TEXT("Nothing to climb between the last mark and this one (click on the obstacle itself)");
+		return Check;
+	}
+	Check.ApproachAngle = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(-Direction, FrontNormal), -1.f, 1.f)));
+
+	// Its top: drop down onto it from above anything climbable.
+	const float CeilingProbe = FloorZ + FMath::Max(Envelope.MaxMantleHeight, Envelope.MaxJumpHeight) + 150.f;
+	const FVector InsideFront = Check.FrontPoint + Direction * 8.f;
+	float TopZ = FloorZ;
+	if (World->LineTraceSingleByChannel(Hit, FVector(InsideFront.X, InsideFront.Y, CeilingProbe), FVector(InsideFront.X, InsideFront.Y, FloorZ - 5.f), ECC_Visibility, Params))
+	{
+		if (Hit.bStartPenetrating)
+		{
+			// Solid all the way up past anything climbable: a wall.
+			Check.Height = CeilingProbe - FloorZ;
+			Check.Verdict = ECinemafyTraversalVerdict::TooTall;
+			Check.Reason = FString::Printf(TEXT("A wall over %.0f cm tall"), Check.Height);
+			return Check;
+		}
+		TopZ = Hit.ImpactPoint.Z;
+	}
+	Check.Height = TopZ - FloorZ;
+
+	// Its depth: walk across the top until it drops away.
+	Check.Depth = 400.f;
+	for (float Along = 10.f; Along <= 400.f; Along += 10.f)
+	{
+		const FVector Probe = Check.FrontPoint + Direction * Along;
+		const bool bStillTop = World->LineTraceSingleByChannel(Hit, FVector(Probe.X, Probe.Y, TopZ + 25.f), FVector(Probe.X, Probe.Y, TopZ - 25.f), ECC_Visibility, Params);
+		if (!bStillTop)
+		{
+			Check.Depth = Along;
+			break;
+		}
+	}
+	Check.FarPoint = Check.FrontPoint + Direction * Check.Depth;
+	Check.FarPoint.Z = TopZ;
+
+	// Headroom above the top.
+	const FVector OnTop = Check.FrontPoint + Direction * FMath::Min(Check.Depth * 0.5f, 30.f);
+	const float HeadroomProbe = 250.f;
+	Check.Headroom = HeadroomProbe;
+	if (World->LineTraceSingleByChannel(Hit, FVector(OnTop.X, OnTop.Y, TopZ + 5.f), FVector(OnTop.X, OnTop.Y, TopZ + HeadroomProbe), ECC_Visibility, Params))
+	{
+		Check.Headroom = Hit.Distance + 5.f;
+	}
+
+	// The landing beyond: floor to stand on, and a capsule's worth of clear space there.
+	bool bLandingClear = false;
+	if (Check.Depth < 390.f)
+	{
+		const FVector Beyond = Check.FarPoint + Direction * (CapsuleRadius + Envelope.MinLandingDepth * 0.5f);
+		if (World->LineTraceSingleByChannel(Hit, FVector(Beyond.X, Beyond.Y, TopZ + 50.f), FVector(Beyond.X, Beyond.Y, FloorZ - 200.f), ECC_Visibility, Params))
+		{
+			Check.LandingPoint = Hit.ImpactPoint;
+			const FVector Standing = Hit.ImpactPoint + FVector(0.f, 0.f, CapsuleHalfHeight + 3.f);
+			bLandingClear = !World->OverlapAnyTestByChannel(Standing, FQuat::Identity, ECC_Pawn,
+				FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight), Params);
+		}
+	}
+
+	JudgeTraversal(Check, Envelope, bLandingClear, CapsuleRadius);
+	return Check;
 }
 
 TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TArray<FCinemafyChoreoBeat>& Beats, AActor* Performer, float TakeDuration)

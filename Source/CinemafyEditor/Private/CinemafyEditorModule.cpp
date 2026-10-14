@@ -154,6 +154,10 @@ void FCinemafyEditorModule::StartupModule()
 		case ECinemafyChoreoRequest::Choreograph:      FCinemafyChoreoMode::Start(Choreography); break;
 		case ECinemafyChoreoRequest::PerformAndRecord: CinemafyChoreoTake::PerformAndRecord(Choreography); break;
 		case ECinemafyChoreoRequest::DirectShots:      CinemafyChoreoTake::DirectShots(Choreography); break;
+		case ECinemafyChoreoRequest::SaveProfile:      UCinemafyEditorLibrary::SaveWiringAsProfile(Choreography); break;
+		case ECinemafyChoreoRequest::CheckWiring:
+			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyEditorLibrary::GetWiringReport(Choreography)));
+			break;
 		}
 	});
 	CinemafyChoreoTake::Initialize();

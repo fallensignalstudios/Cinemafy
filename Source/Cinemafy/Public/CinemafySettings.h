@@ -5,6 +5,8 @@
 #include "CinemafySettings.generated.h"
 
 class UCinemafyMoveLibrary;
+class UCinemafyPerformerProfile;
+class ACharacter;
 
 /** Project-wide Cinemafy settings (Project Settings > Plugins > Cinemafy). */
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Cinemafy"))
@@ -27,6 +29,13 @@ public:
 	 */
 	UPROPERTY(config, EditAnywhere, Category = "Animation")
 	TMap<FString, float> FolderBias;
+
+	/**
+	 * Which performer profile each kind of character uses (the most specific class wins). A choreography's own
+	 * Profile overrides this.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Performers")
+	TMap<TSoftClassPtr<ACharacter>, TSoftObjectPtr<UCinemafyPerformerProfile>> PerformerProfiles;
 
 	/** The FolderBias for a package path ("/Game/Pack/Anim"): 0 when no folder matches. */
 	static float GetFolderBias(const FString& PackagePath);

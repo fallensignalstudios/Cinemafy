@@ -691,4 +691,41 @@ bool FCinemafyDialogueCastTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyTraversalJudgeTest, "Cinemafy.Choreography.JudgesObstaclesBeforeRecording", CinemafyTests::Flags)
+bool FCinemafyTraversalJudgeTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+	const FCinemafyTraversalEnvelope Envelope; // GASP-like defaults
+	auto Judge = [&Envelope](float Height, float Depth, float Headroom, bool bLandingClear, float Angle = 0.f, const FCinemafyTraversalEnvelope* Override = nullptr)
+	{
+		FCinemafyTraversalCheck Check;
+		Check.Height = Height;
+		Check.Depth = Depth;
+		Check.Headroom = Headroom;
+		Check.ApproachAngle = Angle;
+		Lib::JudgeTraversal(Check, Override ? *Override : Envelope, bLandingClear, 35.f);
+		return Check;
+	};
+
+	TestEqual(TEXT("A kerb is stepped over"), Judge(20.f, 30.f, 250.f, true).Verdict, ECinemafyTraversalVerdict::StepOver);
+	TestEqual(TEXT("A waist-high crate with room beyond is vaulted"), Judge(100.f, 50.f, 250.f, true).Verdict, ECinemafyTraversalVerdict::Vault);
+	TestEqual(TEXT("A low wall with no room beyond, but wide enough to stand on, is mantled"), Judge(100.f, 75.f, 250.f, false).Verdict, ECinemafyTraversalVerdict::Mantle);
+	const FCinemafyTraversalCheck Cramped = Judge(100.f, 40.f, 250.f, false);
+	TestEqual(TEXT("A thin rail against a wall: no room to land"), Cramped.Verdict, ECinemafyTraversalVerdict::NoRoomToLand);
+	TestFalse(TEXT("...and that's a no"), Cramped.bPossible);
+	TestTrue(TEXT("...and it says so"), Cramped.Reason.Contains(TEXT("no room to land")));
+	const FCinemafyTraversalCheck Tall = Judge(310.f, 400.f, 250.f, false);
+	TestEqual(TEXT("A 3 m ledge is too tall"), Tall.Verdict, ECinemafyTraversalVerdict::TooTall);
+	TestTrue(TEXT("...with the numbers"), Tall.Reason.Contains(TEXT("310")) && Tall.Reason.Contains(TEXT("275")));
+	TestEqual(TEXT("A platform is climbed onto"), Judge(180.f, 400.f, 250.f, false).Verdict, ECinemafyTraversalVerdict::Mantle);
+	TestEqual(TEXT("Under a low ceiling there's no headroom"), Judge(180.f, 400.f, 50.f, false).Verdict, ECinemafyTraversalVerdict::NoHeadroom);
+	TestEqual(TEXT("Coming in at a glancing angle is refused"), Judge(100.f, 50.f, 250.f, true, 70.f).Verdict, ECinemafyTraversalVerdict::BadAngle);
+
+	FCinemafyTraversalEnvelope NoSystem;
+	NoSystem.bCanTraverse = false;
+	TestEqual(TEXT("Without traversal, a low box is jumped"), Judge(50.f, 50.f, 250.f, true, 0.f, &NoSystem).Verdict, ECinemafyTraversalVerdict::Jump);
+	TestEqual(TEXT("...and a crate is out of reach"), Judge(100.f, 50.f, 250.f, true, 0.f, &NoSystem).Verdict, ECinemafyTraversalVerdict::CannotTraverse);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
