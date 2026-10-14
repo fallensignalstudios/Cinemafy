@@ -571,6 +571,52 @@ namespace CinemafyScriptBreakdown
 		}
 	};
 
+	/** "Spare him -> 2.1.3 ~ spared ? !angry" -> text "Spare him", target, flags set, conditions. */
+	void ParseFlowTail(FString& InOutText, FString& OutTarget, TArray<FString>& OutSet, TArray<FString>& OutRequire)
+	{
+		// Conditions in braces up front: "{trusts_kade} Ask for help".
+		while (InOutText.StartsWith(TEXT("{")))
+		{
+			const int32 Close = InOutText.Find(TEXT("}"));
+			if (Close == INDEX_NONE)
+			{
+				break;
+			}
+			OutRequire.Add(InOutText.Mid(1, Close - 1).TrimStartAndEnd());
+			InOutText = InOutText.Mid(Close + 1).TrimStartAndEnd();
+		}
+		TArray<FString> Parts;
+		int32 Cut = InOutText.Len();
+		for (const TCHAR* Marker : { TEXT("->"), TEXT(" ~ "), TEXT(" ? ") })
+		{
+			const int32 At = InOutText.Find(Marker);
+			if (At != INDEX_NONE)
+			{
+				Cut = FMath::Min(Cut, At);
+			}
+		}
+		FString Tail = InOutText.Mid(Cut);
+		InOutText = InOutText.Left(Cut).TrimStartAndEnd();
+		// Walk the tail: each marker owns the words up to the next marker.
+		Tail = Tail.Replace(TEXT("->"), TEXT("\x01>")).Replace(TEXT(" ~ "), TEXT("\x01~")).Replace(TEXT(" ? "), TEXT("\x01?"));
+		Tail.ParseIntoArray(Parts, TEXT("\x01"), true);
+		for (const FString& Part : Parts)
+		{
+			const FString Value = Part.Mid(1).TrimStartAndEnd();
+			if (Value.IsEmpty())
+			{
+				continue;
+			}
+			switch (Part[0])
+			{
+			case TEXT('>'): OutTarget = Value; break;
+			case TEXT('~'): OutSet.Add(Value); break;
+			case TEXT('?'): OutRequire.Add(Value); break;
+			default: break;
+			}
+		}
+	}
+
 	FParse Parse(const FString& RawText)
 	{
 		FParse P;
@@ -629,6 +675,33 @@ namespace CinemafyScriptBreakdown
 			}
 			const bool bWasBlank = bBlankBefore;
 			bBlankBefore = false;
+
+			// Story flow (games): "* choice -> target ~ flag ? condition", "-> divert", "~ flag", "? condition".
+			if ((Trim.StartsWith(TEXT("* ")) || Trim.StartsWith(TEXT("+ "))) && P.Scenes.Num() > 0)
+			{
+				FCinemafyScriptChoice& Choice = P.Scenes.Last().Data.Choices.AddDefaulted_GetRef();
+				FString Rest = Trim.Mid(2).TrimStartAndEnd();
+				ParseFlowTail(Rest, Choice.Target, Choice.SetFlags, Choice.RequireFlags);
+				Choice.Text = Rest.Replace(TEXT("["), TEXT("")).Replace(TEXT("]"), TEXT("")).TrimStartAndEnd();
+				OpenAction = nullptr;
+				continue;
+			}
+			if (Trim.StartsWith(TEXT("->")) && P.Scenes.Num() > 0)
+			{
+				P.Scenes.Last().Data.Divert = Trim.Mid(2).TrimStartAndEnd();
+				OpenAction = nullptr;
+				continue;
+			}
+			if (Trim.StartsWith(TEXT("~ ")) && P.Scenes.Num() > 0)
+			{
+				P.Scenes.Last().Data.SetFlags.Add(Trim.Mid(2).TrimStartAndEnd());
+				continue;
+			}
+			if (Trim.StartsWith(TEXT("? ")) && P.Scenes.Num() > 0)
+			{
+				P.Scenes.Last().Data.RequireFlags.Add(Trim.Mid(2).TrimStartAndEnd());
+				continue;
+			}
 
 			// Fountain sections: # act, ## chapter (### and deeper count as chapters too).
 			if (Trim.StartsWith(TEXT("#")))
@@ -1053,6 +1126,7 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 	}
 
 	TrackContinuity(Acts);
+	ResolveStoryTargets(Acts);
 
 	// The report: what was found, and every call Cinemafy made.
 	TArray<FString> Report;
@@ -1641,6 +1715,7 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 void UCinemafyScriptProject::RefreshContinuity()
 {
 	UCinemafyScriptLibrary::TrackContinuity(Acts);
+	UCinemafyScriptLibrary::ResolveStoryTargets(Acts);
 	MarkPackageDirty();
 }
 
@@ -1770,4 +1845,83 @@ const FCinemafyCastMember* UCinemafyScriptProject::FindCastMember(const FString&
 const FCinemafySet* UCinemafyScriptProject::FindSet(const FString& ScriptLocation) const
 {
 	return Sets.FindByPredicate([&ScriptLocation](const FCinemafySet& Set) { return Set.ScriptLocation.Equals(ScriptLocation, ESearchCase::IgnoreCase); });
+}
+
+void UCinemafyScriptLibrary::ResolveStoryTargets(TArray<FCinemafyScriptAct>& Acts)
+{
+	TArray<FCinemafyScriptScene*> Scenes;
+	for (FCinemafyScriptAct& Act : Acts)
+	{
+		for (FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			for (FCinemafyScriptScene& Scene : Chapter.Scenes)
+			{
+				Scenes.Add(&Scene);
+			}
+		}
+	}
+	auto Resolve = [&Scenes](const FString& Target, FCinemafyScriptScene& From) -> FString
+	{
+		const FString Trimmed = Target.TrimStartAndEnd();
+		if (Trimmed.IsEmpty())
+		{
+			return FString();
+		}
+		if (Trimmed.Equals(TEXT("END"), ESearchCase::IgnoreCase) || Trimmed.Equals(TEXT("DONE"), ESearchCase::IgnoreCase))
+		{
+			return TEXT("END");
+		}
+		const FString Number = Trimmed.StartsWith(TEXT("#")) ? Trimmed.Mid(1) : FString();
+		for (const FCinemafyScriptScene* Scene : Scenes)
+		{
+			if (Scene->Id == Trimmed || (!Number.IsEmpty() && FString::FromInt(Scene->Number) == Number))
+			{
+				return Scene->Id;
+			}
+		}
+		// By heading or place: the first match after this scene, else anywhere.
+		const FString Wanted = CinemafyScriptText::Normalize(Trimmed);
+		const FCinemafyScriptScene* Fallback = nullptr;
+		bool bAfter = false;
+		for (const FCinemafyScriptScene* Scene : Scenes)
+		{
+			if (Scene == &From)
+			{
+				bAfter = true;
+				continue;
+			}
+			const bool bMatch = CinemafyScriptText::Normalize(Scene->Heading).Contains(Wanted) || CinemafyScriptText::Normalize(Scene->Location) == Wanted;
+			if (bMatch && bAfter)
+			{
+				return Scene->Id;
+			}
+			if (bMatch && !Fallback)
+			{
+				Fallback = Scene;
+			}
+		}
+		return Fallback ? Fallback->Id : FString();
+	};
+	for (FCinemafyScriptScene* Scene : Scenes)
+	{
+		Scene->DivertSceneId = Resolve(Scene->Divert, *Scene);
+		for (FCinemafyScriptChoice& Choice : Scene->Choices)
+		{
+			Choice.TargetSceneId = Resolve(Choice.Target, *Scene);
+		}
+	}
+}
+
+bool UCinemafyScriptLibrary::FlagsHold(const TArray<FString>& Conditions, const TSet<FName>& Flags)
+{
+	for (const FString& Condition : Conditions)
+	{
+		const bool bNot = Condition.StartsWith(TEXT("!"));
+		const FName Flag(*(bNot ? Condition.Mid(1) : Condition).TrimStartAndEnd());
+		if (Flags.Contains(Flag) == bNot)
+		{
+			return false;
+		}
+	}
+	return true;
 }

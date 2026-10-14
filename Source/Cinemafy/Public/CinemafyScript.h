@@ -97,6 +97,35 @@ struct CINEMAFY_API FCinemafyContinuityFact
 	FString Evidence;
 };
 
+/**
+ * A choice at the end of a scene (games): "* Spare him -> 2.1.3 ~ spared_thane". Shown when its Require Flags
+ * hold; picking it sets Set Flags and plays Target.
+ */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyScriptChoice
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choice")
+	FString Text;
+
+	/** Where it goes, as written: a scene id ("2.1.3"), "#14", a heading or place ("MED BAY"), or END. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choice")
+	FString Target;
+
+	/** The scene id Target resolved to (empty = the next scene; "END" = the story ends). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Choice")
+	FString TargetSceneId;
+
+	/** Flags set by picking it ("!flag" clears one). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choice")
+	TArray<FString> SetFlags;
+
+	/** Only offered when these flags are set ("!flag" = when it isn't). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choice")
+	TArray<FString> RequireFlags;
+};
+
 /** One scene: a place and time, who's in it, what's said, and where it is in production. */
 USTRUCT(BlueprintType)
 struct CINEMAFY_API FCinemafyScriptScene
@@ -146,6 +175,27 @@ struct CINEMAFY_API FCinemafyScriptScene
 	/** A fight, chase or stunt is described. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Scene")
 	bool bHasAction = false;
+
+	// --- Story flow (games) ----------------------------------------------------------------------------------------
+
+	/** Offered when the scene ends ("* text -> target" lines). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow")
+	TArray<FCinemafyScriptChoice> Choices;
+
+	/** Where the story goes after this scene with no choice ("-> target"); empty = the next scene. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow")
+	FString Divert;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Flow")
+	FString DivertSceneId;
+
+	/** Flags set when the scene plays ("~ flag", "~ !flag"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow")
+	TArray<FString> SetFlags;
+
+	/** The scene only plays when these hold ("? flag"); otherwise the story skips it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Flow")
+	TArray<FString> RequireFlags;
 
 	/** What has to be true going into this scene (carried from earlier scenes), for set, wardrobe and blocking. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Continuity")
@@ -372,6 +422,12 @@ public:
 	/** How well a set of spoken lines matches a scene's dialogue: share of the lines found in it (0..1). */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static float ScoreLinesAgainstScene(const TArray<FString>& SpokenLines, const FCinemafyScriptScene& Scene);
+
+	/** Points choice and divert targets at scene ids (after a breakdown or an edit). */
+	static void ResolveStoryTargets(TArray<FCinemafyScriptAct>& Acts);
+
+	/** True if every flag condition holds ("flag" set, "!flag" not set). */
+	static bool FlagsHold(const TArray<FString>& Conditions, const TSet<FName>& Flags);
 
 	/** "INT. BRIDGE - NIGHT" -> setting INT, location BRIDGE, time NIGHT. False if it isn't a scene heading. */
 	static bool ParseHeading(const FString& Line, FString& OutSetting, FString& OutLocation, FString& OutTime);

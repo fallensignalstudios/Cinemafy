@@ -8,6 +8,7 @@
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyScript.h"
 #include "CinemafyPrevis.h"
+#include "CinemafyStory.h"
 #include "GameFramework/Pawn.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
@@ -1098,6 +1099,65 @@ bool FCinemafyPrevisStagingTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Thane vaults the railing"), Vault && Vault->Place == TEXT("railing"));
 	const FCinemafyStagedBeat* Shot = Beats.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("KADE") && B.Prompt == TEXT("shoot"); });
 	TestTrue(TEXT("Kade shoots Thane"), Shot && Shot->Target == TEXT("ADMIRAL THANE"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyStoryFlowTest, "Cinemafy.Story.ChoicesDivertsAndFlags", CinemafyTests::Flags)
+bool FCinemafyStoryFlowTest::RunTest(const FString& Parameters)
+{
+	const FString Script = TEXT(
+		"INT. BRIDGE - NIGHT\n"
+		"\n"
+		"KADE: Stand down.\n"
+		"\n"
+		"* [Spare him] -> MED BAY ~ spared_thane\n"
+		"* {has_pistol} Shoot him -> #3\n"
+		"\n"
+		"INT. CORRIDOR - NIGHT\n"
+		"\n"
+		"KADE: Where is he?\n"
+		"-> END\n"
+		"\n"
+		"INT. HANGAR - DAY\n"
+		"\n"
+		"KADE: It's done.\n"
+		"\n"
+		"INT. MED BAY - DAY\n"
+		"? spared_thane\n"
+		"~ thane_alive\n"
+		"\n"
+		"THANE: You hesitated.\n");
+	UCinemafyScriptProject* Project = NewObject<UCinemafyScriptProject>();
+	Project->BreakDown(Script);
+	TArray<FCinemafyScriptScene*> Scenes = Project->GetAllScenes();
+	if (!TestEqual(TEXT("Four scenes"), Scenes.Num(), 4))
+	{
+		return true;
+	}
+	const FCinemafyScriptScene& Bridge = *Scenes[0];
+	TestEqual(TEXT("Two choices on the bridge"), Bridge.Choices.Num(), 2);
+	if (Bridge.Choices.Num() == 2)
+	{
+		TestEqual(TEXT("...the words"), Bridge.Choices[0].Text, FString(TEXT("Spare him")));
+		TestEqual(TEXT("...going to the med bay (by place)"), Bridge.Choices[0].TargetSceneId, Scenes[3]->Id);
+		TestTrue(TEXT("...setting a flag"), Bridge.Choices[0].SetFlags.Contains(TEXT("spared_thane")));
+		TestTrue(TEXT("A conditional choice"), Bridge.Choices[1].RequireFlags.Contains(TEXT("has_pistol")));
+		TestEqual(TEXT("...going to scene #3"), Bridge.Choices[1].TargetSceneId, Scenes[2]->Id);
+	}
+	TestEqual(TEXT("A divert to the end"), Scenes[1]->DivertSceneId, FString(TEXT("END")));
+	TestTrue(TEXT("Scene conditions and flags"), Scenes[3]->RequireFlags.Contains(TEXT("spared_thane")) && Scenes[3]->SetFlags.Contains(TEXT("thane_alive")));
+	TestEqual(TEXT("Choice lines aren't dialogue"), Bridge.DialogueLines, 1);
+
+	TArray<FCinemafyScriptChoice> Offered;
+	TSet<FName> NoFlags;
+	UCinemafyStorySubsystem::NextSceneAfter(Project, Bridge.Id, NoFlags, Offered);
+	TestEqual(TEXT("Without a pistol, only one choice is offered"), Offered.Num(), 1);
+	TSet<FName> Armed = { FName(TEXT("has_pistol")) };
+	UCinemafyStorySubsystem::NextSceneAfter(Project, Bridge.Id, Armed, Offered);
+	TestEqual(TEXT("With one, both are"), Offered.Num(), 2);
+	TestEqual(TEXT("The hangar leads on past the med bay when Thane wasn't spared"), UCinemafyStorySubsystem::NextSceneAfter(Project, Scenes[2]->Id, NoFlags, Offered), FString(TEXT("END")));
+	TSet<FName> Spared = { FName(TEXT("spared_thane")) };
+	TestEqual(TEXT("...and into it when he was"), UCinemafyStorySubsystem::NextSceneAfter(Project, Scenes[2]->Id, Spared, Offered), Scenes[3]->Id);
 	return true;
 }
 
