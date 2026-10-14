@@ -47,7 +47,8 @@ namespace CinemafyChoreoTake
 	void Shutdown();
 
 	/** Starts the take. Primary is the choreography whose button was pressed (it gets directed afterwards). */
-	void PerformAndRecord(ACinemafyChoreography* Primary);
+	/** bAskAboutProblems: show beats that can't work (e.g. an impossible vault) and ask before recording; scripts log them instead. */
+	void PerformAndRecord(ACinemafyChoreography* Primary, bool bAskAboutProblems = true);
 
 	/** Cuts shots around the last take of this choreography (and anyone who performed with it). */
 	int32 DirectShots(ACinemafyChoreography* Choreography);

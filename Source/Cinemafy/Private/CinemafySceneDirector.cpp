@@ -421,7 +421,7 @@ void ACinemafySceneDirector::Tick(float DeltaSeconds)
 			SlowMoDelay -= RealDelta;
 			if (SlowMoDelay < 0.f)
 			{
-				UGameplayStatics::SetGlobalTimeDilation(this, 0.3f);
+				UGameplayStatics::SetGlobalTimeDilation(this, SlowMoRate);
 			}
 		}
 		else
@@ -542,7 +542,8 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	{
 		// Live speed ramp: slow the world around the hit, restored in Tick (on real time).
 		SlowMoDelay = Shot.SlowMoTime;
-		SlowMoRemaining = 0.6f;
+		SlowMoRate = FMath::Clamp(Shot.SlowMoRate, 0.05f, 1.f);
+		SlowMoRemaining = Shot.SlowMoHold + 0.1f;
 	}
 
 	if (Shot.bSetEmotion && !Shot.bIsReaction && Shot.Subject)

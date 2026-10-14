@@ -3,6 +3,9 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CinemafyTypes.h"
+#include "CinemafyChoreographyTypes.h"
+#include "CinemafyPerformerProfile.h"
+#include "CinemafyScript.h"
 #include "CinemafyEditorLibrary.generated.h"
 
 class ACineCameraActor;
@@ -11,7 +14,9 @@ class ACinemafySceneDirector;
 class USoundWave;
 class UCinemafyDirectorStyleAsset;
 class ACinemafyChoreography;
+class USoundBase;
 class UCinemafyMoveLibrary;
+class UCinemafyPerformerProfile;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -222,6 +227,65 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
 	static UCinemafyMoveLibrary* CreateMoveLibraryFromFolder(const FString& ContentFolder);
+
+	/** Makes a Performer Profile asset from a preset (GASP, GASPALS, SignalForge, MetaHuman, generic) in /Game/Cinemafy/Performers. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static UCinemafyPerformerProfile* CreatePerformerProfile(ECinemafyPerformerPreset Preset, const FString& Name);
+
+	/** Saves what a choreography's auto-wiring found on its performer as a Performer Profile, and assigns it. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static UCinemafyPerformerProfile* SaveWiringAsProfile(ACinemafyChoreography* Choreography);
+
+	/** The wiring report for a choreography's performer (and its profile's check), as text. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static FString GetWiringReport(ACinemafyChoreography* Choreography);
+
+	// --- Script breakdown ---------------------------------------------------------------------------------------
+
+	/**
+	 * Reads a script (Fountain, Final Draft .fdx, or plain screenplay / game-script text) and breaks it into acts,
+	 * chapters and scenes in a Script Project asset under /Game/Cinemafy/Scripts. An existing project of that
+	 * name is updated in place (scene status and links are kept for scenes that still match).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static UCinemafyScriptProject* ImportScriptFile(const FString& FilePath, const FString& Name);
+
+	/** Re-reads a project's Script File. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static bool ReimportScriptProject(UCinemafyScriptProject* Project);
+
+	/** Picks a script file and imports it (the Hub's button). */
+	static UCinemafyScriptProject* ImportScriptWithDialog();
+
+	/**
+	 * Matches the Scene Directors in the open level to the project's scenes (explicit Script Scene Id first,
+	 * else by their lines) and updates each scene's status, director, sequence and level. Returns scenes mapped.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static int32 MapScriptScenesInLevel(UCinemafyScriptProject* Project);
+
+	/** Spawns a Scene Director for one scene, its lines filled from the script (speakers matched to actor labels). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static ACinemafySceneDirector* CreateDirectorForScene(UCinemafyScriptProject* Project, const FString& SceneId);
+
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static bool SetScriptSceneStatus(UCinemafyScriptProject* Project, const FString& SceneId, ECinemafySceneStatus Status);
+
+	/** Writes the project's checklist to Saved/Cinemafy/<Title>_Checklist.md. Returns the file path. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static FString ExportScriptChecklist(UCinemafyScriptProject* Project);
+
+	/** Measures a Traverse beat's obstacle now (height, depth, landing room) and refreshes its label. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static FCinemafyTraversalCheck CheckChoreographyTraversal(ACinemafyChoreography* Choreography, int32 BeatIndex);
+
+	/**
+	 * Gives a beat a line: its words, optional recorded audio, who it's said to, and whose line it waits for.
+	 * Empty text keeps the prompt's quoted words.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static bool SetChoreographyBeatLine(ACinemafyChoreography* Choreography, int32 BeatIndex, const FText& Text, USoundBase* Audio,
+		AActor* Listener, AActor* WaitForLineFrom);
 
 	static TArray<AActor*> GetSelectedActorsInOrder();
 };

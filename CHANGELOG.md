@@ -1,5 +1,124 @@
 # Changelog
 
+## 0.13.0: "Storytellers"
+The whole workflow is in [STORYTELLING](Docs/STORYTELLING.md).
+
+- **First-run tutorial:**
+  - A step-by-step walk from script to cut scene, with do-it-for-me buttons. It opens on a project's first
+    session and lives in the Hub afterwards.
+  - It stays off in unattended, commandlet and test runs, and as soon as any Cinemafy MCP tool is called
+    (the toolset reports each call).
+  - Sample story, sample set builder, and a branching game-script sample.
+- **Cast & Sets:**
+  - Script characters map to level actors or Blueprints, with performer profiles, starting weapons, a player
+    flag and scratch voices.
+  - Continuity **Looks** attach props, swap materials, add tags and keep a limp to a walk; Blueprints can also
+    react through `CinemafyContinuityReceiver`.
+  - Locations map to levels and ambience.
+  - **Cinemafy Marks** name the places the script talks about.
+- **Previs This Scene:** stages a scene straight from the script.
+  - Cast on set and dressed for continuity.
+  - A choreography per character from the action verbs, marks and targets.
+  - Lines on cue: beats can now wait for a specific line of another character.
+  - Mood, sequence and director set up, then recorded and cut.
+  - A report of what couldn't be staged.
+- **Story Board:** every scene as a card by act and chapter, colored by progress.
+  - Previs, Open and Direct on each card.
+  - Takes kept side by side, and scenes can be reordered.
+  - Master sequences per act and for the whole story.
+- **Voices:**
+  - Scratch voice-over from the platform's speech (macOS, Windows, Linux).
+  - Recorded voice-over swapped in by line id.
+  - Talking faces: audio-driven `Talk` curves baked onto Cinemafy Face.
+- **Branching stories for games:**
+  - Choices, diverts, flags and conditional scenes in the script.
+  - `UCinemafyStorySubsystem` plays them in game with choice UI, skipping, save/restore, and the player's own
+    pawn in their scenes.
+  - `Cinemafy Scene Trigger`.
+- **Mood from the script:** time of day, feeling and weather pick the director style, temp music, ambience
+  and, optionally, the sun and sky.
+- **Foley** under recorded takes, by event.
+- **Cinemafy Extras:** background life directed in a sentence.
+- **Dailies** with Movie Render Queue, and **review notes** on scenes.
+- **Paperwork:** voice-over scripts per actor, subtitles, a localization string table, shot lists and an HTML
+  storyboard.
+- Line ids on script dialogue; new MCP tools for all of the above.
+- New dependencies:
+  - Plugin: MovieRenderPipeline.
+  - Runtime modules: InputCore, AIModule.
+  - Editor modules: DesktopPlatform, the MovieRenderPipeline modules, ImageWrapper, Projects.
+
+## 0.12.0: "Productions"
+- **Planned traversal routes:**
+  - Vault and climb beats square up to the obstacle's face when the approach is oblique. They used to
+    refuse it.
+  - The route plans a run-up (vaults and gaps want speed, so a walking performer picks up to a run), a
+    takeoff and an exit: the landing, the top of a mantle, or the far side of a gap.
+  - The take follows the route: navmesh to the run-up start, then straight across the face. The next beat
+    measures from where the route comes out. The route is drawn in the viewport.
+- **Gaps and ledges:** the floor is walked for edges.
+  - A gap is jumped from its edge, and a ledge is dropped from. Each is judged against new limits: Max Gap
+    Width, Max Drop Height, Recovery Drop Height and Vault Run Up.
+  - Too wide, too high, or a far side out of reach is refused with the numbers.
+- **Transitions between actions:** each beat's in-between moves are planned from the beats around it.
+  - **Draw before the strike:** `sword attack` draws the sword if it isn't in hand. `shoot` with nothing
+    that shoots in hand draws a sidearm. From far off, the weapon comes out on the move; close in, a draw
+    clip plays before the strike, with no contact scheduled on it.
+  - **Brake out of a sprint:** before a jump, a climb or a melee charge, the performer gathers by dropping
+    to a run, 2.4 to 3.2 m before committing.
+  - **Roll or recovery:** a big drop or a long jump ends in a roll if the performer moves on, or a hard
+    landing and recovery if it stops. A fall seen during the take adds one even when it wasn't planned.
+  - The transitions show on beat labels ("+ draws the sword first, brakes out of the sprint") and are
+    logged as Transition events. Switch them off per beat with **Auto Transitions**. Set what's in hand at
+    the start with **Starting Weapon**.
+- **Script breakdown** ([SCRIPTS](Docs/SCRIPTS.md)): import a full script (Fountain, Final Draft or game
+  script) into a **Script Project**.
+  - The script is broken into acts, chapters and scenes. Where the script doesn't mark them, acts and
+    chapters are inferred, and the report says why each break is where it is.
+  - Per scene: cast, lines, estimated time, and continuity (injuries, props in hand, costumes and deaths
+    carried between scenes, with warnings).
+  - Finished work maps back:
+    - **Create Director For Scene** spawns a director with the scene's dialogue.
+    - Directing a linked scene marks it Directed.
+    - **Map Scenes In Level** matches directors by their lines.
+  - **Export Checklist** writes a Markdown production checklist.
+  - New MCP tools: `import_script`, `get_script_checklist`, `map_script_scenes`,
+    `create_director_for_scene`, `set_script_scene_status`.
+  - Sample: `Docs/samples/TheBridge.fountain`.
+
+## 0.11.0: "Scenes"
+- **Dialogue and choreography in one scene:**
+  - Quoted words in a prompt are a line: `walk "Stand down, Admiral"` says it while walking.
+  - A bare quote, `say`, or `answer "Make me."` is a **Say** beat: it faces its listener and holds for the line.
+  - `answer` / `after` (or the beat's **Wait For Line From**) holds a beat until the other character's line
+    ends, so Thane answers Kade, then she draws.
+  - Beats have **Dialogue**, **Dialogue Audio**, **Listener** and **Wait For Line From**. During the take the
+    audio plays on the performer with a subtitle, and `LineStart` / `LineEnd` events are logged.
+  - The director cuts the take as one scene: lines become dialogue or walk-and-talk lines that start on
+    their first word, the audio is laid into the cut, and strikes stay action.
+- **Performer profiles** (`UCinemafyPerformerProfile` data asset): gait, crouch, traversal and overlay wiring,
+  climb limits, move library and recording skips, written down once per character type.
+  - Presets: GASP, GASPALS, SignalForge, MetaHuman on GASP, generic Character.
+  - Map character classes to profiles in **Project Settings > Plugins > Cinemafy**, or set one per choreography.
+  - **Save Wiring As Profile** and **Check Wiring** buttons; missing hooks are named, not guessed around.
+- **Measured traversal:** each vault / climb beat measures its obstacle (height, depth, headroom, landing
+  room, approach angle) against the performer's limits.
+  - It says why before you record: "too tall (climbs up to 275 cm)", "no room to land on the far side",
+    "approaching at 70 degrees".
+  - The measured shape is drawn in the viewport (green works, red doesn't) and the label turns red.
+  - Perform & Record lists impossible beats and asks first. During the take they fail honestly (no fake
+    jump), and ankle-high obstacles are simply walked over.
+- **The director watches the fight:**
+  - Shots that land a hit frame both fighters: over the attacker's shoulder onto the hit, then over the
+    defender's shoulder into the strike.
+  - The killing blow gets a two-shot and a speed ramp, scaled to the style (gentle for calm styles, a hard
+    drop for action ones; none for styles that never ramp). Focus goes to the one who falls.
+  - Over-the-shoulders (and any shot with the counterpart in front) are rejected when the foreground
+    head or shoulders cover the subject's face; the framing tries nearby angles instead.
+- Scripted Perform & Record logs impossible beats instead of asking. New MCP tools:
+  `set_choreography_beat_line`, `check_choreography_traversal`, `create_performer_profile`,
+  `get_choreography_wiring`.
+
 ## 0.10.0: "Fights"
 - **Synchronized attacker and defender:**
   - An attack on a character makes the target react, its impact frame timed to the strike's contact.

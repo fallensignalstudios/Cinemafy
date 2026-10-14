@@ -6,6 +6,11 @@
 
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafyScript.h"
+#include "CinemafyPrevis.h"
+#include "CinemafyStory.h"
+#include "CinemafyMood.h"
+#include "CinemafyExtras.h"
 #include "GameFramework/Pawn.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
@@ -688,6 +693,511 @@ bool FCinemafyDialogueCastTest::RunTest(const FString& Parameters)
 		> Lib::ScoreAnimation(Death, Lib::TokenizeName(TEXT("/Game/CinemafyLibrary/Deaths/Deaths_Hit_Slow_Bleedout"))));
 	TestTrue(TEXT("...but never a plain hit reaction"),
 		Lib::ScoreAnimation(Lib::MakeReactionReading(ECinemafyHitReaction::Hit, 0.f), Lib::TokenizeName(TEXT("/Game/CinemafyLibrary/Deaths/Deaths_Hit_Left_Chest_Head"))) < 0.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyTraversalJudgeTest, "Cinemafy.Choreography.JudgesObstaclesBeforeRecording", CinemafyTests::Flags)
+bool FCinemafyTraversalJudgeTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+	const FCinemafyTraversalEnvelope Envelope; // GASP-like defaults
+	auto Judge = [&Envelope](float Height, float Depth, float Headroom, bool bLandingClear, float Angle = 0.f, const FCinemafyTraversalEnvelope* Override = nullptr)
+	{
+		FCinemafyTraversalCheck Check;
+		Check.Height = Height;
+		Check.Depth = Depth;
+		Check.Headroom = Headroom;
+		Check.ApproachAngle = Angle;
+		Lib::JudgeTraversal(Check, Override ? *Override : Envelope, bLandingClear, 35.f);
+		return Check;
+	};
+
+	TestEqual(TEXT("A kerb is stepped over"), Judge(20.f, 30.f, 250.f, true).Verdict, ECinemafyTraversalVerdict::StepOver);
+	TestEqual(TEXT("A waist-high crate with room beyond is vaulted"), Judge(100.f, 50.f, 250.f, true).Verdict, ECinemafyTraversalVerdict::Vault);
+	TestEqual(TEXT("A low wall with no room beyond, but wide enough to stand on, is mantled"), Judge(100.f, 75.f, 250.f, false).Verdict, ECinemafyTraversalVerdict::Mantle);
+	const FCinemafyTraversalCheck Cramped = Judge(100.f, 40.f, 250.f, false);
+	TestEqual(TEXT("A thin rail against a wall: no room to land"), Cramped.Verdict, ECinemafyTraversalVerdict::NoRoomToLand);
+	TestFalse(TEXT("...and that's a no"), Cramped.bPossible);
+	TestTrue(TEXT("...and it says so"), Cramped.Reason.Contains(TEXT("no room to land")));
+	const FCinemafyTraversalCheck Tall = Judge(310.f, 400.f, 250.f, false);
+	TestEqual(TEXT("A 3 m ledge is too tall"), Tall.Verdict, ECinemafyTraversalVerdict::TooTall);
+	TestTrue(TEXT("...with the numbers"), Tall.Reason.Contains(TEXT("310")) && Tall.Reason.Contains(TEXT("275")));
+	TestEqual(TEXT("A platform is climbed onto"), Judge(180.f, 400.f, 250.f, false).Verdict, ECinemafyTraversalVerdict::Mantle);
+	TestEqual(TEXT("Under a low ceiling there's no headroom"), Judge(180.f, 400.f, 50.f, false).Verdict, ECinemafyTraversalVerdict::NoHeadroom);
+	TestEqual(TEXT("Coming in at a glancing angle is refused"), Judge(100.f, 50.f, 250.f, true, 70.f).Verdict, ECinemafyTraversalVerdict::BadAngle);
+
+	FCinemafyTraversalEnvelope NoSystem;
+	NoSystem.bCanTraverse = false;
+	TestEqual(TEXT("Without traversal, a low box is jumped"), Judge(50.f, 50.f, 250.f, true, 0.f, &NoSystem).Verdict, ECinemafyTraversalVerdict::Jump);
+	TestEqual(TEXT("...and a crate is out of reach"), Judge(100.f, 50.f, 250.f, true, 0.f, &NoSystem).Verdict, ECinemafyTraversalVerdict::CannotTraverse);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoDialogueTest, "Cinemafy.Choreography.LinesAndActionInOneScene", CinemafyTests::Flags)
+bool FCinemafyChoreoDialogueTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+
+	// Prompts: quoted words are a line; speech words make it a Say beat; "answer" waits for the other line.
+	const FCinemafyPromptReading WalkTalk = Lib::ReadPrompt(TEXT("walk \"Stand down, Admiral\""));
+	TestEqual(TEXT("walk \"...\" still walks"), WalkTalk.Kind, ECinemafyActionKind::Move);
+	TestEqual(TEXT("...saying the line"), WalkTalk.Line, FString(TEXT("Stand down, Admiral")));
+	const FCinemafyPromptReading Bare = Lib::ReadPrompt(TEXT("\"Make me.\""));
+	TestEqual(TEXT("Just a quote is a Say beat"), Bare.Kind, ECinemafyActionKind::Say);
+	const FCinemafyPromptReading Answer = Lib::ReadPrompt(TEXT("answer \"Make me.\""));
+	TestEqual(TEXT("An answer is said"), Answer.Kind, ECinemafyActionKind::Say);
+	TestTrue(TEXT("...after the other line"), Answer.bAfterLine);
+	const FCinemafyPromptReading Draw = Lib::ReadPrompt(TEXT("sword after"));
+	TestEqual(TEXT("\"sword after\" draws"), Draw.Kind, ECinemafyActionKind::Equip);
+	TestTrue(TEXT("...once they've finished talking"), Draw.bAfterLine);
+	TestTrue(TEXT("The quote doesn't search animation names"), !Lib::ReadPrompt(TEXT("taunt \"Come on then\"")).Keywords.Contains(TEXT("come")));
+
+	// The take: walk-and-talk, a pause, then the draw and the strike.
+	CinemafyTests::FTestScene Scene;
+	APawn* Thane = Scene.World->SpawnActor<APawn>();
+	auto MakeBeat = [](const TCHAR* Prompt, float Start, float End, AActor* Target)
+	{
+		FCinemafyChoreoBeat Beat;
+		Beat.Prompt = Prompt;
+		Beat.Reading = UCinemafyChoreographyLibrary::ReadPrompt(Prompt);
+		Beat.StartTime = Start;
+		Beat.EndTime = End;
+		Beat.Target = Target;
+		return Beat;
+	};
+	TArray<FCinemafyChoreoBeat> Beats;
+	Beats.Add(MakeBeat(TEXT("walk \"Stand down, Admiral\""), 0.f, 4.f, nullptr));
+	Beats.Last().Listener = Thane;
+	Beats.Last().LineStartTime = 0.f;
+	Beats.Last().LineDuration = 2.5f;
+	Beats.Add(MakeBeat(TEXT("look"), 4.f, 5.f, Thane));
+	Beats.Add(MakeBeat(TEXT("sword after"), 7.f, 8.f, nullptr));
+	Beats.Add(MakeBeat(TEXT("sword attack"), 8.f, 10.f, Thane));
+	Beats.Last().ImpactTimes = { 8.6f };
+
+	const TArray<FCinemafyLine> Lines = Lib::BuildDirectorLines(Beats, Scene.Kara, 10.5f);
+	TestTrue(TEXT("At least the line, the beats and the strike"), Lines.Num() >= 3);
+	if (Lines.Num() < 3)
+	{
+		return true;
+	}
+	TestEqual(TEXT("The walk carries the words"), Lines[0].Text.ToString(), FString(TEXT("Stand down, Admiral")));
+	TestEqual(TEXT("...as walk-and-talk"), Lines[0].Moment, ECinemafyMoment::WalkAndTalk);
+	TestTrue(TEXT("...said to Thane"), Lines[0].Listener == Thane);
+	TestTrue(TEXT("The strike is still action"), Lines.Last().bAction && Lines.Last().ImpactTimes.Num() == 1);
+	float Total = 0.f;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		Total += Line.Duration + Line.PauseAfter;
+	}
+	TestTrue(TEXT("One scene: the lines cover the whole take"), FMath::IsNearlyEqual(Total, 10.5f, 0.01f));
+
+	// An answer that starts after its beat began is cut on its first word.
+	TArray<FCinemafyChoreoBeat> Reply;
+	Reply.Add(MakeBeat(TEXT("answer \"Make me.\""), 0.5f, 6.f, Scene.Kara));
+	Reply.Last().LineStartTime = 3.f;
+	Reply.Last().LineDuration = 1.2f;
+	const TArray<FCinemafyLine> ReplyLines = Lib::BuildDirectorLines(Reply, Thane, 6.f);
+	TestEqual(TEXT("A quiet listen, then the answer"), ReplyLines.Num(), 2);
+	if (ReplyLines.Num() == 2)
+	{
+		TestTrue(TEXT("...which starts on its first word"), FMath::IsNearlyEqual(ReplyLines[0].Duration, 3.f, 0.01f));
+		TestEqual(TEXT("...with its words"), ReplyLines[1].Text.ToString(), FString(TEXT("Make me.")));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyFightCoverageTest, "Cinemafy.Director.WatchesTheFight", CinemafyTests::Flags)
+bool FCinemafyFightCoverageTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(1);
+	Lines[0].bAction = true;
+	Lines[0].Duration = 6.f;
+	Lines[0].PauseAfter = 0.f;
+	Lines[0].ImpactTimes = { 1.5f, 3.0f, 4.5f };
+	Lines[0].bLethal = true;
+
+	for (const ECinemafyDirectorPreset Preset : { ECinemafyDirectorPreset::KineticAction, ECinemafyDirectorPreset::ClassicHollywood })
+	{
+		const FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(Preset);
+		for (int32 Seed = 1; Seed <= 6; ++Seed)
+		{
+			const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, Style, Seed);
+			int32 Ramps = 0;
+			for (const FCinemafyPlannedShot& Shot : Plan)
+			{
+				const bool bHasImpact = Lines[0].ImpactTimes.ContainsByPredicate([&Shot](float I) { return I >= Shot.StartTime && I < Shot.StartTime + Shot.Duration; });
+				if (bHasImpact)
+				{
+					const bool bBothSides = Shot.ShotType == ECinemafyShotType::OverTheShoulder || Shot.ShotType == ECinemafyShotType::MediumTwoShot
+						|| Shot.ShotType == ECinemafyShotType::WideTwoShot;
+					TestTrue(FString::Printf(TEXT("Seed %d: every hit shows both fighters (%s)"), Seed, *Shot.Reason), bBothSides);
+				}
+				Ramps += Shot.bSlowMo ? 1 : 0;
+				if (Shot.bSlowMo)
+				{
+					TestTrue(TEXT("The ramp is on the killing blow"), FMath::IsNearlyEqual(Shot.StartTime + Shot.SlowMoTime, 4.5f, 0.01f));
+				}
+			}
+			if (Style.SlowMoChance > 0.f)
+			{
+				TestEqual(FString::Printf(TEXT("Seed %d: exactly one ramp, on the kill"), Seed), Ramps, 1);
+			}
+		}
+	}
+
+	// Gentle styles ease into it; action styles drop hard.
+	const TArray<FCinemafyPlannedShot> Kinetic = UCinemafyDirectorLibrary::PlanScene(Lines, UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::KineticAction), 3);
+	const FCinemafyPlannedShot* KineticRamp = Kinetic.FindByPredicate([](const FCinemafyPlannedShot& Shot) { return Shot.bSlowMo; });
+	TestTrue(TEXT("An action style ramps hard"), KineticRamp && KineticRamp->SlowMoRate <= 0.35f);
+
+	// A shoulder in the foreground is framing; a shoulder over the face is a ruined shot.
+	const FVector Camera(0.f, 0.f, 160.f);
+	const FVector Face(400.f, 0.f, 160.f);
+	TestTrue(TEXT("Head straight in line covers the face"),
+		UCinemafyFramingLibrary::IsFaceCoveredByForeground(Camera, Face, FVector(120.f, 0.f, 160.f), FVector(0.f, 1.f, 0.f)));
+	TestFalse(TEXT("A shoulder to the side frames it"),
+		UCinemafyFramingLibrary::IsFaceCoveredByForeground(Camera, Face, FVector(120.f, -60.f, 160.f), FVector(0.f, 1.f, 0.f)));
+	TestFalse(TEXT("Someone behind the subject can't cover them"),
+		UCinemafyFramingLibrary::IsFaceCoveredByForeground(Camera, Face, FVector(500.f, 0.f, 160.f), FVector(0.f, 1.f, 0.f)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyTraversalRouteTest, "Cinemafy.Choreography.PlansGapsDropsAndRoutes", CinemafyTests::Flags)
+bool FCinemafyTraversalRouteTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+	const FCinemafyTraversalEnvelope Envelope;
+	auto Gap = [&Envelope](float Width, float Drop)
+	{
+		FCinemafyTraversalCheck Check;
+		Check.GapWidth = Width;
+		Check.DropHeight = Drop;
+		Lib::JudgeGap(Check, Envelope);
+		return Check;
+	};
+	TestEqual(TEXT("A 1.5 m gap is jumped"), Gap(150.f, 0.f).Verdict, ECinemafyTraversalVerdict::Gap);
+	TestEqual(TEXT("A 4 m gap is too wide"), Gap(400.f, 0.f).Verdict, ECinemafyTraversalVerdict::TooFar);
+	TestEqual(TEXT("A far side 1 m up can't be jumped to"), Gap(150.f, -100.f).Verdict, ECinemafyTraversalVerdict::TooTall);
+	TestEqual(TEXT("A 2 m ledge is a drop"), Gap(0.f, 200.f).Verdict, ECinemafyTraversalVerdict::Drop);
+	TestTrue(TEXT("...a 3 m one says it rolls"), Gap(0.f, 300.f).Reason.Contains(TEXT("roll")));
+	TestEqual(TEXT("A 10 m ledge is too high"), Gap(0.f, 1000.f).Verdict, ECinemafyTraversalVerdict::TooHighToDrop);
+
+	// Routes: a run-up straight at the takeoff, never behind the start, and out the far side.
+	FCinemafyTraversalCheck Vault;
+	Vault.Verdict = ECinemafyTraversalVerdict::Vault;
+	Vault.bPossible = true;
+	Vault.TakeoffPoint = FVector(500.f, 0.f, 0.f);
+	Vault.FrontPoint = FVector(500.f, 0.f, 40.f);
+	Vault.FarPoint = FVector(550.f, 0.f, 100.f);
+	Vault.LandingPoint = FVector(640.f, 0.f, 0.f);
+	Lib::PlanTraversalRoute(Vault, FVector::ZeroVector, Envelope);
+	TestTrue(TEXT("The run-up starts a vault's run-up length before the takeoff"), FMath::IsNearlyEqual(Vault.ApproachPoint.X, 500.f - Envelope.VaultRunUp, 1.f));
+	TestTrue(TEXT("...and exits on the landing"), Vault.ExitPoint.Equals(FVector(640.f, 0.f, 0.f), 1.f));
+	FCinemafyTraversalCheck Close = Vault;
+	Lib::PlanTraversalRoute(Close, FVector(450.f, 0.f, 0.f), Envelope);
+	TestTrue(TEXT("Starting close, the run-up never goes behind the performer"), Close.ApproachPoint.X >= 449.f);
+	FCinemafyTraversalCheck Mantle = Vault;
+	Mantle.Verdict = ECinemafyTraversalVerdict::Mantle;
+	Mantle.Depth = 300.f;
+	Lib::PlanTraversalRoute(Mantle, FVector::ZeroVector, Envelope);
+	TestTrue(TEXT("A mantle ends up on top"), FMath::IsNearlyEqual(Mantle.ExitPoint.Z, 100.f, 1.f));
+
+	// Transitions: draw before the strike, brake out of a sprint, roll out of a big landing.
+	CinemafyTests::FTestScene Scene;
+	APawn* Thane = Scene.World->SpawnActor<APawn>();
+	auto MakeBeat = [](const TCHAR* Prompt, AActor* Target = nullptr)
+	{
+		FCinemafyChoreoBeat Beat;
+		Beat.Prompt = Prompt;
+		Beat.Reading = Lib::ReadPrompt(Prompt);
+		Beat.Target = Target;
+		return Beat;
+	};
+	TArray<FCinemafyChoreoBeat> Beats;
+	Beats.Add(MakeBeat(TEXT("sprint")));
+	Beats.Add(MakeBeat(TEXT("jump")));
+	Beats.Last().TraversalCheck = Gap(200.f, 320.f);
+	Beats.Last().TraversalCheck.bPossible = true;
+	Beats.Add(MakeBeat(TEXT("run")));
+	Beats.Add(MakeBeat(TEXT("sword attack"), Thane));
+	Beats.Add(MakeBeat(TEXT("sword attack"), Thane));
+	Beats.Add(MakeBeat(TEXT("shoot"), Thane));
+	Lib::PlanTransitions(Beats, FString(), Envelope);
+	TestTrue(TEXT("Sprint into a jump: brakes first"), Beats[1].Transitions.bBrakeIn);
+	TestEqual(TEXT("...and rolls out of the 3 m landing (it keeps running)"), Beats[1].Transitions.Recovery, ECinemafyRecovery::Roll);
+	TestEqual(TEXT("The first sword attack draws the sword"), Beats[3].Transitions.DrawWeapon, FString(TEXT("sword")));
+	TestTrue(TEXT("...the second doesn't (it's in hand)"), Beats[4].Transitions.DrawWeapon.IsEmpty());
+	TestEqual(TEXT("Shooting with a sword in hand draws a sidearm"), Beats[5].Transitions.DrawWeapon, FString(TEXT("pistol")));
+	TestFalse(TEXT("No brake from a run"), Beats[3].Transitions.bBrakeIn);
+
+	TArray<FCinemafyChoreoBeat> Armed;
+	Armed.Add(MakeBeat(TEXT("sword attack"), Thane));
+	Lib::PlanTransitions(Armed, TEXT("sword"), Envelope);
+	TestTrue(TEXT("Starting with the sword out: nothing to draw"), Armed[0].Transitions.DrawWeapon.IsEmpty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyScriptBreakdownTest, "Cinemafy.Script.BreaksDownActsChaptersScenes", CinemafyTests::Flags)
+bool FCinemafyScriptBreakdownTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	FString Setting, Location, Time;
+	TestTrue(TEXT("A scene heading"), Script::ParseHeading(TEXT("INT. BRIDGE - NIGHT"), Setting, Location, Time));
+	TestEqual(TEXT("...its place"), Location, FString(TEXT("BRIDGE")));
+	TestEqual(TEXT("...its time"), Time, FString(TEXT("NIGHT")));
+	TestTrue(TEXT("En dashes and INT/EXT"), Script::ParseHeading(TEXT("EXT./INT. CAR \u2013 DAY"), Setting, Location, Time) && Setting == TEXT("INT/EXT") && Time == TEXT("DAY"));
+	TestFalse(TEXT("Not a heading"), Script::ParseHeading(TEXT("Interesting idea."), Setting, Location, Time));
+
+	// A screenplay with marked acts: cues, parentheticals, transitions, continuity.
+	const FString Screenplay = TEXT(
+		"Title: The Bridge\n"
+		"Author: Test\n"
+		"\n"
+		"# ACT ONE\n"
+		"\n"
+		"INT. BRIDGE - NIGHT\n"
+		"\n"
+		"Kade walks to the console. She draws her pistol.\n"
+		"\n"
+		"KADE\n"
+		"Stand down, Admiral.\n"
+		"\n"
+		"THANE\n"
+		"(coldly)\n"
+		"Make me.\n"
+		"\n"
+		"Thane is wounded. He limps away.\n"
+		"\n"
+		"FADE OUT.\n"
+		"\n"
+		"# ACT TWO\n"
+		"\n"
+		"EXT. HANGAR - DAY\n"
+		"\n"
+		"THANE\n"
+		"You'll regret this.\n"
+		"\n"
+		"Kade kills Thane.\n"
+		"\n"
+		"INT. CORRIDOR - CONTINUOUS\n"
+		"\n"
+		"THANE\n"
+		"Still here.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Screenplay, true, 5, Title, Report);
+	TestEqual(TEXT("The title page"), Title, FString(TEXT("The Bridge")));
+	TestEqual(TEXT("Two marked acts"), Acts.Num(), 2);
+	if (Acts.Num() == 2 && Acts[0].Chapters.Num() > 0 && Acts[0].Chapters[0].Scenes.Num() > 0 && Acts[1].Chapters.Num() > 0 && Acts[1].Chapters.Last().Scenes.Num() > 0)
+	{
+		TestFalse(TEXT("...not inferred"), Acts[0].bInferred);
+		const FCinemafyScriptScene& Bridge = Acts[0].Chapters[0].Scenes[0];
+		TestEqual(TEXT("Scene ids are act.chapter.scene"), Bridge.Id, FString(TEXT("1.1.1")));
+		TestEqual(TEXT("Two lines on the bridge"), Bridge.DialogueLines, 2);
+		TestTrue(TEXT("Kade and Thane are in it"), Bridge.Characters.Contains(TEXT("KADE")) && Bridge.Characters.Contains(TEXT("THANE")));
+		const FCinemafyScriptLine* Make = Bridge.Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("Make me."); });
+		TestTrue(TEXT("Parentheticals are how it's said"), Make && Make->Direction == TEXT("(coldly)"));
+		TestTrue(TEXT("Kade picks up her pistol"), Bridge.Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("KADE") && F.Category == TEXT("Carrying") && F.Fact.Contains(TEXT("pistol")); }));
+
+		const FCinemafyScriptScene& Hangar = Acts[1].Chapters[0].Scenes[0];
+		TestTrue(TEXT("Thane carries his wound into the hangar"), Hangar.CarriedIn.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("THANE") && F.Category == TEXT("Injury"); }));
+		TestTrue(TEXT("...and Kade her pistol"), Hangar.CarriedIn.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("KADE") && F.Fact.Contains(TEXT("pistol")); }));
+
+		const FCinemafyScriptScene& Corridor = Acts[1].Chapters.Last().Scenes.Last();
+		TestTrue(TEXT("The dead don't talk: flagged"), Corridor.Warnings.ContainsByPredicate([](const FString& W) { return W.Contains(TEXT("THANE")) && W.Contains(TEXT("died")); }));
+	}
+
+	// A game script: mission markers, bracketed scenes, NAME: lines, no blank lines.
+	const FString Game = TEXT(
+		"MISSION 1: Blackout\n"
+		"[Scene: Hangar]\n"
+		"KADE: We go in quiet.\n"
+		"VOSS: Quiet's my middle name.\n"
+		"[Scene: Corridor]\n"
+		"KADE: Lights.\n"
+		"MISSION 2: Fallout\n"
+		"[Scene: Reactor]\n"
+		"VOSS: It's going to blow!\n");
+	const TArray<FCinemafyScriptAct> GameActs = Script::BreakDownScript(Game, true, 5, Title, Report);
+	TestEqual(TEXT("A short game script is one act"), GameActs.Num(), 1);
+	if (GameActs.Num() == 1)
+	{
+		TestEqual(TEXT("Two missions are two chapters"), GameActs[0].Chapters.Num(), 2);
+		if (GameActs[0].Chapters.Num() == 2)
+		{
+			TestEqual(TEXT("...the first has two scenes"), GameActs[0].Chapters[0].Scenes.Num(), 2);
+			TestTrue(TEXT("...named by the script"), GameActs[0].Chapters[0].Title.Contains(TEXT("Blackout")));
+			const FCinemafyScriptScene& Hangar = GameActs[0].Chapters[0].Scenes[0];
+			TestEqual(TEXT("NAME: lines are dialogue"), Hangar.DialogueLines, 2);
+			TestTrue(TEXT("A director with those lines (reworded on the day) maps to it"),
+				Script::ScoreLinesAgainstScene({ TEXT("We go in quiet"), TEXT("Quiet is my middle name") }, Hangar) >= 0.99f);
+			TestTrue(TEXT("...and not to another scene"), Script::ScoreLinesAgainstScene({ TEXT("We go in quiet") }, GameActs[0].Chapters[1].Scenes[0]) < 0.5f);
+		}
+	}
+
+	// No act markers: three acts placed on the turns near the quarter marks.
+	FString Long;
+	for (int32 Index = 0; Index < 12; ++Index)
+	{
+		if (Index == 3)
+		{
+			Long += TEXT("FADE OUT.\n\n");
+		}
+		Long += FString::Printf(TEXT("INT. ROOM %d - %s\n\nKADE: Hello there, friend number %d.\n\n"), Index + 1, Index == 9 ? TEXT("YEARS LATER") : TEXT("DAY"), Index);
+	}
+	const TArray<FCinemafyScriptAct> Inferred = Script::BreakDownScript(Long, true, 5, Title, Report);
+	TestEqual(TEXT("Three inferred acts"), Inferred.Num(), 3);
+	if (Inferred.Num() == 3 && Inferred[1].Chapters.Num() > 0 && Inferred[2].Chapters.Num() > 0)
+	{
+		TestTrue(TEXT("...inferred"), Inferred[1].bInferred);
+		TestEqual(TEXT("Act Two opens after the fade out"), Inferred[1].Chapters[0].Scenes[0].Number, 4);
+		TestEqual(TEXT("Act Three opens on the time jump"), Inferred[2].Chapters[0].Scenes[0].Number, 10);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyPrevisStagingTest, "Cinemafy.Previs.StagesScenesFromTheScript", CinemafyTests::Flags)
+bool FCinemafyPrevisStagingTest::RunTest(const FString& Parameters)
+{
+	const FString Script = TEXT(
+		"INT. BRIDGE - NIGHT\n"
+		"\n"
+		"Kade steps off the lift. She draws her pistol.\n"
+		"\n"
+		"KADE\n"
+		"Stand down, Admiral.\n"
+		"\n"
+		"ADMIRAL THANE\n"
+		"Make me.\n"
+		"\n"
+		"Kade walks to the console. Thane turns to Kade.\n"
+		"\n"
+		"KADE\n"
+		"Last chance.\n"
+		"\n"
+		"Thane vaults the railing, Kade shoots Thane.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = UCinemafyScriptLibrary::BreakDownScript(Script, true, 5, Title, Report);
+	if (!TestTrue(TEXT("One scene"), Acts.Num() == 1 && Acts[0].Chapters.Num() == 1 && Acts[0].Chapters[0].Scenes.Num() == 1))
+	{
+		return true;
+	}
+	TArray<FString> NotStaged;
+	const TArray<FCinemafyStagedBeat> Beats = UCinemafyPrevisLibrary::StageScene(Acts[0].Chapters[0].Scenes[0], NotStaged);
+	auto Find = [&Beats](const TCHAR* Who, const TCHAR* Prompt) { return Beats.FindByPredicate([Who, Prompt](const FCinemafyStagedBeat& B) { return B.Character == Who && B.Prompt == Prompt; }); };
+
+	const FCinemafyStagedBeat* Steps = Find(TEXT("KADE"), TEXT("walk"));
+	TestTrue(TEXT("Kade steps off the lift: a walk to the lift"), Steps && Steps->Place == TEXT("lift"));
+	TestNotNull(TEXT("She draws her pistol (pronoun -> Kade)"), Find(TEXT("KADE"), TEXT("pistol")));
+	const FCinemafyStagedBeat* Answer = Find(TEXT("ADMIRAL THANE"), TEXT("say"));
+	TestTrue(TEXT("Thane's answer waits for Kade's first line"), Answer && Answer->WaitFor == TEXT("KADE") && Answer->WaitForLineNumber == 1 && Answer->Target == TEXT("KADE"));
+	const FCinemafyStagedBeat* Console = Beats.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("KADE") && B.Prompt == TEXT("walk") && B.Place == TEXT("console"); });
+	TestTrue(TEXT("Walking to the console waits for Thane's line"), Console && Console->WaitFor == TEXT("ADMIRAL THANE"));
+	TestTrue(TEXT("...and carries her next line (walk and talk)"), Console && Console->Line == TEXT("Last chance."));
+	const FCinemafyStagedBeat* Turn = Find(TEXT("ADMIRAL THANE"), TEXT("look"));
+	TestTrue(TEXT("Thane turns to Kade: a look at her"), Turn && Turn->Target == TEXT("KADE"));
+	const FCinemafyStagedBeat* Vault = Find(TEXT("ADMIRAL THANE"), TEXT("vault"));
+	TestTrue(TEXT("Thane vaults the railing"), Vault && Vault->Place == TEXT("railing"));
+	const FCinemafyStagedBeat* Shot = Beats.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("KADE") && B.Prompt == TEXT("shoot"); });
+	TestTrue(TEXT("Kade shoots Thane"), Shot && Shot->Target == TEXT("ADMIRAL THANE"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyStoryFlowTest, "Cinemafy.Story.ChoicesDivertsAndFlags", CinemafyTests::Flags)
+bool FCinemafyStoryFlowTest::RunTest(const FString& Parameters)
+{
+	const FString Script = TEXT(
+		"INT. BRIDGE - NIGHT\n"
+		"\n"
+		"KADE: Stand down.\n"
+		"\n"
+		"* [Spare him] -> MED BAY ~ spared_thane\n"
+		"* {has_pistol} Shoot him -> #3\n"
+		"\n"
+		"INT. CORRIDOR - NIGHT\n"
+		"\n"
+		"KADE: Where is he?\n"
+		"-> END\n"
+		"\n"
+		"INT. HANGAR - DAY\n"
+		"\n"
+		"KADE: It's done.\n"
+		"\n"
+		"INT. MED BAY - DAY\n"
+		"? spared_thane\n"
+		"~ thane_alive\n"
+		"\n"
+		"THANE: You hesitated.\n");
+	UCinemafyScriptProject* Project = NewObject<UCinemafyScriptProject>();
+	Project->BreakDown(Script);
+	TArray<FCinemafyScriptScene*> Scenes = Project->GetAllScenes();
+	if (!TestEqual(TEXT("Four scenes"), Scenes.Num(), 4))
+	{
+		return true;
+	}
+	const FCinemafyScriptScene& Bridge = *Scenes[0];
+	TestEqual(TEXT("Two choices on the bridge"), Bridge.Choices.Num(), 2);
+	if (Bridge.Choices.Num() == 2)
+	{
+		TestEqual(TEXT("...the words"), Bridge.Choices[0].Text, FString(TEXT("Spare him")));
+		TestEqual(TEXT("...going to the med bay (by place)"), Bridge.Choices[0].TargetSceneId, Scenes[3]->Id);
+		TestTrue(TEXT("...setting a flag"), Bridge.Choices[0].SetFlags.Contains(TEXT("spared_thane")));
+		TestTrue(TEXT("A conditional choice"), Bridge.Choices[1].RequireFlags.Contains(TEXT("has_pistol")));
+		TestEqual(TEXT("...going to scene #3"), Bridge.Choices[1].TargetSceneId, Scenes[2]->Id);
+	}
+	TestEqual(TEXT("A divert to the end"), Scenes[1]->DivertSceneId, FString(TEXT("END")));
+	TestTrue(TEXT("Scene conditions and flags"), Scenes[3]->RequireFlags.Contains(TEXT("spared_thane")) && Scenes[3]->SetFlags.Contains(TEXT("thane_alive")));
+	TestEqual(TEXT("Choice lines aren't dialogue"), Bridge.DialogueLines, 1);
+
+	TArray<FCinemafyScriptChoice> Offered;
+	TSet<FName> NoFlags;
+	UCinemafyStorySubsystem::NextSceneAfter(Project, Bridge.Id, NoFlags, Offered);
+	TestEqual(TEXT("Without a pistol, only one choice is offered"), Offered.Num(), 1);
+	TSet<FName> Armed = { FName(TEXT("has_pistol")) };
+	UCinemafyStorySubsystem::NextSceneAfter(Project, Bridge.Id, Armed, Offered);
+	TestEqual(TEXT("With one, both are"), Offered.Num(), 2);
+	TestEqual(TEXT("The hangar leads on past the med bay when Thane wasn't spared"), UCinemafyStorySubsystem::NextSceneAfter(Project, Scenes[2]->Id, NoFlags, Offered), FString(TEXT("END")));
+	TSet<FName> Spared = { FName(TEXT("spared_thane")) };
+	TestEqual(TEXT("...and into it when he was"), UCinemafyStorySubsystem::NextSceneAfter(Project, Scenes[2]->Id, Spared, Offered), Scenes[3]->Id);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyMoodTest, "Cinemafy.Story.ReadsMoodAndExtras", CinemafyTests::Flags)
+bool FCinemafyMoodTest::RunTest(const FString& Parameters)
+{
+	FCinemafyScriptScene Fight;
+	Fight.Heading = TEXT("EXT. HANGAR DECK - NIGHT");
+	Fight.Setting = TEXT("EXT");
+	Fight.TimeOfDay = TEXT("NIGHT");
+	Fight.bHasAction = true;
+	FCinemafyScriptLine Action;
+	Action.Text = TEXT("They fight in the rain. Kade slashes, Thane attacks.");
+	Fight.Lines.Add(Action);
+	const FCinemafySceneMood FightMood = UCinemafyMoodLibrary::ReadSceneMood(Fight, ECinemafyTimeOfDay::Unknown);
+	TestEqual(TEXT("A night fight is night"), FightMood.TimeOfDay, ECinemafyTimeOfDay::Night);
+	TestEqual(TEXT("...and action"), FightMood.Mood, FString(TEXT("action")));
+	TestEqual(TEXT("...cut kinetic"), FightMood.DirectorStyle, ECinemafyDirectorPreset::KineticAction);
+	TestTrue(TEXT("...in the rain"), FightMood.Weather.Contains(TEXT("rain")));
+	TestTrue(TEXT("...exterior"), FightMood.bExterior);
+
+	FCinemafyScriptScene Grief;
+	Grief.Heading = TEXT("INT. MED BAY - CONTINUOUS");
+	Grief.TimeOfDay = TEXT("CONTINUOUS");
+	FCinemafyScriptLine Tears;
+	Tears.Text = TEXT("Kade sits by the bed. Tears. She mourns him.");
+	Grief.Lines.Add(Tears);
+	const FCinemafySceneMood GriefMood = UCinemafyMoodLibrary::ReadSceneMood(Grief, ECinemafyTimeOfDay::Dusk);
+	TestEqual(TEXT("CONTINUOUS keeps the time of day"), GriefMood.TimeOfDay, ECinemafyTimeOfDay::Dusk);
+	TestEqual(TEXT("Grief reads sad"), GriefMood.Mood, FString(TEXT("sad")));
+	TestEqual(TEXT("...a sad dusk is lyrical"), GriefMood.DirectorStyle, ECinemafyDirectorPreset::GoldenHourLyrical);
+
+	FString Place;
+	TestEqual(TEXT("Crew works at consoles"), ACinemafyExtras::ReadDirection(TEXT("crew works at consoles"), Place), ECinemafyExtrasBehavior::Work);
+	TestEqual(TEXT("...at the console marks"), Place, FString(TEXT("console")));
+	TestEqual(TEXT("Marines patrol"), ACinemafyExtras::ReadDirection(TEXT("marines patrol the corridor"), Place), ECinemafyExtrasBehavior::Patrol);
+	TestEqual(TEXT("Two officers talk"), ACinemafyExtras::ReadDirection(TEXT("two officers talk"), Place), ECinemafyExtrasBehavior::Talk);
+	TestEqual(TEXT("A crowd mills about"), ACinemafyExtras::ReadDirection(TEXT("crowd mills about"), Place), ECinemafyExtrasBehavior::Wander);
 	return true;
 }
 

@@ -2,6 +2,7 @@
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyStoryLibrary.h"
 #include "CinemafyModule.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafySequencerUtils.h"
@@ -164,7 +165,7 @@ void FCinemafyChoreoMode::UpdateBanner()
 		return;
 	}
 	Banner->SetText(FText::Format(LOCTEXT("BannerBeats",
-		"Choreographing {0}: {1} beat(s).\nClick where something happens, then type it (walk, vault, sprint, climb, sword attack, taunt). Esc when done."),
+		"Choreographing {0}: {1} beat(s).\nClick where something happens, then type it (walk, vault, sprint, climb, sword attack, taunt, or a line in quotes). Esc when done."),
 		FText::FromString(PerformerLabel(Choreo->Performer)), Choreo->Beats.Num()));
 }
 
@@ -317,7 +318,7 @@ void FCinemafyChoreoMode::OpenPrompt(const FVector2D& ScreenPosition, const FVec
 
 	TSharedRef<SEditableTextBox> TextBox = SNew(SEditableTextBox)
 		.MinDesiredWidth(280.f)
-		.HintText(LOCTEXT("PromptHint", "walk, vault, sprint, climb, sword attack, taunt, wait 2..."))
+		.HintText(LOCTEXT("PromptHint", "walk, vault, sword attack, wait 2, walk \"Stand down, Admiral\", answer \"Make me\"..."))
 		.OnTextCommitted_Lambda([WeakSelf](const FText& Text, ETextCommit::Type Type)
 		{
 			if (Type == ETextCommit::OnEnter)
@@ -331,7 +332,7 @@ void FCinemafyChoreoMode::OpenPrompt(const FVector2D& ScreenPosition, const FVec
 
 	TSharedRef<SWrapBox> Chips = SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(4.f, 4.f));
 	for (const TCHAR* Word : { TEXT("walk"), TEXT("run"), TEXT("sprint"), TEXT("sneak"), TEXT("vault"), TEXT("climb"), TEXT("attack"),
-		TEXT("combo"), TEXT("shoot"), TEXT("taunt"), TEXT("wave"), TEXT("look"), TEXT("wait") })
+		TEXT("combo"), TEXT("shoot"), TEXT("taunt"), TEXT("wave"), TEXT("look"), TEXT("wait"), TEXT("say"), TEXT("answer") })
 	{
 		const FString Chip = Word;
 		Chips->AddSlot()
@@ -527,7 +528,7 @@ namespace CinemafyChoreoTake
 			for (USkeletalMeshComponent* Mesh : Meshes)
 			{
 				// Followers copy their leader's pose and faces are Cinemafy Face's job: record the bodies that animate.
-				if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->SkipRecordingComponents.Contains(Mesh->GetFName()))
+				if (!Mesh || !Mesh->GetSkeletalMeshAsset() || Mesh->LeaderPoseComponent.IsValid() || Choreo->GetSkipRecordingComponents().Contains(Mesh->GetFName()))
 				{
 					continue;
 				}
@@ -934,7 +935,7 @@ namespace CinemafyChoreoTake
 		bSessionActive = false;
 	}
 
-	void PerformAndRecord(ACinemafyChoreography* Primary)
+	void PerformAndRecord(ACinemafyChoreography* Primary, bool bAskAboutProblems)
 	{
 		if (!Primary || !GEditor)
 		{
@@ -954,6 +955,7 @@ namespace CinemafyChoreoTake
 		FCinemafyChoreoMode::Stop();
 
 		int32 Performers = 0;
+		TArray<FString> WontWork;
 		for (TActorIterator<ACinemafyChoreography> It(GetEditorWorld()); It; ++It)
 		{
 			ACinemafyChoreography* Choreo = *It;
@@ -963,12 +965,45 @@ namespace CinemafyChoreoTake
 			{
 				for (int32 Index = 0; Index < Choreo->Beats.Num(); ++Index)
 				{
-					if (Choreo->Beats[Index].Reading.Summary.IsEmpty())
+					FCinemafyChoreoBeat& Beat = Choreo->Beats[Index];
+					if (Beat.Reading.Summary.IsEmpty())
 					{
 						Choreo->ResolveBeat(Index);
 					}
+					else if (Beat.Reading.Kind == ECinemafyActionKind::Traverse)
+					{
+						// The level may have changed since the beat was placed: measure again.
+						Beat.TraversalCheck = Choreo->MeasureTraversal(Index);
+					}
+					const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
+					// Same rule as the take: only beats it will refuse are listed (NoObstacle still gets tried).
+					if (Beat.Reading.Kind == ECinemafyActionKind::Traverse && Check.Verdict != ECinemafyTraversalVerdict::NotChecked
+						&& Check.Verdict != ECinemafyTraversalVerdict::NoObstacle && !Check.bPossible)
+					{
+						WontWork.Add(FString::Printf(TEXT("%s, beat %d \"%s\": %s"), *GetNameSafe(Choreo->Performer), Index + 1, *Beat.Prompt, *Check.Reason));
+					}
 				}
+				Choreo->RefreshLabels();
 				++Performers;
+			}
+		}
+
+		for (const FString& Problem : WontWork)
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Choreography: won't work as placed: %s"), *Problem);
+		}
+		if (WontWork.Num() > 0 && bAskAboutProblems)
+		{
+			const FText Message = FText::Format(LOCTEXT("TraversalWontWork",
+				"These won't work as placed:\n\n{0}\n\nRecord anyway? (They'll be marked Failed in the take, not faked.)"),
+				FText::FromString(FString::Join(WontWork, TEXT("\n"))));
+			if (FMessageDialog::Open(EAppMsgType::YesNo, Message) != EAppReturnType::Yes)
+			{
+				for (TActorIterator<ACinemafyChoreography> It(GetEditorWorld()); It; ++It)
+				{
+					It->bPerformOnNextPlay = false;
+				}
+				return;
 			}
 		}
 
@@ -988,6 +1023,7 @@ namespace CinemafyChoreoTake
 		struct FTimedLine { float Start; FCinemafyLine Line; };
 		TArray<FTimedLine> Timed;
 		TArray<TPair<float, float>> Impacts; // absolute time, intensity
+		TArray<float> Kills; // absolute times of killing blows
 		float TakeEnd = 0.f;
 		for (const ACinemafyChoreography* Choreo : Ensemble)
 		{
@@ -999,20 +1035,42 @@ namespace CinemafyChoreoTake
 				{
 					Impacts.Add({ Time + Impact, 0.f });
 				}
+				if (Line.bLethal && Line.ImpactTimes.Num() > 0)
+				{
+					float LastImpact = Line.ImpactTimes[0];
+					for (float Impact : Line.ImpactTimes)
+					{
+						LastImpact = FMath::Max(LastImpact, Impact);
+					}
+					Kills.Add(Time + LastImpact);
+				}
 				Time += Line.Duration + Line.PauseAfter;
 			}
 			TakeEnd = FMath::Max(TakeEnd, Time);
 		}
 		Timed.StableSort([](const FTimedLine& A, const FTimedLine& B) { return A.Start < B.Start; });
 
-		// Lines that start together: the more intense one leads.
+		// Lines that start together: whoever speaks leads (their words and audio must survive), else the more intense one.
+		auto Speaks = [](const FTimedLine& T) { return !T.Line.Text.IsEmpty() || T.Line.Audio != nullptr; };
 		for (int32 Index = Timed.Num() - 1; Index > 0; --Index)
 		{
 			if (Timed[Index].Start - Timed[Index - 1].Start < 0.8f)
 			{
-				if (Timed[Index].Line.Intensity > Timed[Index - 1].Line.Intensity)
+				const bool bLaterSpeaks = Speaks(Timed[Index]);
+				const bool bEarlierSpeaks = Speaks(Timed[Index - 1]);
+				if (bLaterSpeaks && (bEarlierSpeaks || (Index == 1 && Timed[Index].Start > 0.05f)))
 				{
-					Timed[Index].Start = Timed[Index - 1].Start;
+					// Two people talking over each other, or a line just after the take starts: keep both,
+					// so every line's audio still lands on its first word.
+					continue;
+				}
+				if (bLaterSpeaks || (!bEarlierSpeaks && Timed[Index].Line.Intensity > Timed[Index - 1].Line.Intensity))
+				{
+					// A spoken line keeps its own start, so its audio lands on its first word.
+					if (!bLaterSpeaks)
+					{
+						Timed[Index].Start = Timed[Index - 1].Start;
+					}
 					Timed[Index - 1] = Timed[Index];
 				}
 				Timed.RemoveAt(Index);
@@ -1036,6 +1094,8 @@ namespace CinemafyChoreoTake
 				}
 			}
 			Line.bAction |= Line.ImpactTimes.Num() > 0;
+			// Whichever line the killing blow lands in carries it (lines get re-cut when performers are merged).
+			Line.bLethal = Kills.ContainsByPredicate([Start, End](float Kill) { return Kill >= Start && Kill < End; });
 			Lines.Add(Line);
 		}
 		return Lines;
@@ -1096,10 +1156,13 @@ namespace CinemafyChoreoTake
 		Director->Modify();
 		Director->Lines = MergeLines(Ensemble);
 		Director->bPlacePerformances = false;
-		Director->bPlaceDialogueAudio = false;
+		// The take's bodies are already baked; its spoken lines still need their audio in the cut.
+		Director->bPlaceDialogueAudio = Director->Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return Line.Audio != nullptr; });
 
 		const UMovieScene* MovieScene = Open->GetMovieScene();
 		Sequencer->SetLocalTimeDirectly(FFrameTime(MovieScene->GetTickResolution().AsFrameNumber(Choreo->TakeStartSeconds)));
+		// Foley under the take (impacts, landings, draws, falls), if the project has foley sounds set up.
+		UCinemafyStoryLibrary::BakeFoley(Open, Ensemble, Choreo->TakeStartSeconds);
 		return UCinemafyEditorLibrary::DirectSceneInSequencer(Director);
 	}
 }

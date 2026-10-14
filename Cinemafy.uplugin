@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 10,
-	"VersionName": "0.10.0",
+	"Version": 13,
+	"VersionName": "0.13.0",
 	"FriendlyName": "Cinemafy",
 	"Description": "Easy-to-use tools for premium, film-grade real-time cutscenes: lens kits, shot templates, procedural camera feel, eye-tracked focus, MetaHuman gaze, cinematic looks, an AI scene director a click-to-choreograph performance recorder, and Premiere-style editing in Sequencer.",
 	"Category": "Cinematics",
@@ -38,6 +38,10 @@
 		},
 		{
 			"Name": "MotionWarping",
+			"Enabled": true
+		},
+		{
+			"Name": "MovieRenderPipeline",
 			"Enabled": true
 		}
 	]

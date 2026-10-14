@@ -466,7 +466,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			}
 		}
 	}
-	int32 SlowMoBudget = 1;
+	// A killing blow gets the ramp (if the style ramps at all), so ordinary hits in that line don't spend it.
+	const float LethalImpact = Line.bAction && Line.bLethal && Impacts.Num() > 0 ? Impacts.Last() : -1.f;
+	int32 SlowMoBudget = LethalImpact >= 0.f ? 0 : 1;
+	int32 ImpactShots = 0;
 	float Time = StartTime;
 	FCinemafyPlannedShot Last = Previous ? *Previous : FCinemafyPlannedShot();
 	bool bHasLast = Previous != nullptr;
@@ -590,6 +593,38 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			}
 		}
 
+		// A hit needs both sides of it: who threw it and who took it. Shots that land an impact frame both fighters,
+		// alternating which side the camera favors; the killing blow gets them both, wide enough to see it all.
+		const float ShotStartInLine = Time - StartTime;
+		const bool bHasImpact = Line.bAction && Impacts.ContainsByPredicate([ShotStartInLine, Length](float I) { return I >= ShotStartInLine && I < ShotStartInLine + Length; });
+		const bool bKillShot = LethalImpact >= 0.f && LethalImpact >= ShotStartInLine && LethalImpact < ShotStartInLine + Length;
+		if (bHasImpact && Line.Listener && !(Line.bForceShot && Segment == 0) && Shot.ShotType != ECinemafyShotType::GroupShot)
+		{
+			++ImpactShots;
+			if (bKillShot)
+			{
+				Shot.ShotType = Intensity > 0.9f || (bHasLast && Last.ShotType == ECinemafyShotType::MediumTwoShot)
+					? ECinemafyShotType::WideTwoShot : ECinemafyShotType::MediumTwoShot;
+				Shot.Subject = Line.Listener;
+				Shot.Counterpart = Line.Speaker;
+				Shot.bIsReaction = false;
+				Why = TEXT("the killing blow, both of them in frame");
+			}
+			else if (!IsTwoShot(Shot.ShotType) && Shot.ShotType != ECinemafyShotType::OverTheShoulder)
+			{
+				const bool bOntoTheHit = ImpactShots % 2 == 1;
+				Shot.ShotType = ECinemafyShotType::OverTheShoulder;
+				Shot.Subject = bOntoTheHit ? Line.Listener.Get() : Line.Speaker.Get();
+				Shot.Counterpart = bOntoTheHit ? Line.Speaker.Get() : Line.Listener.Get();
+				Shot.bIsReaction = bOntoTheHit;
+				Why = bOntoTheHit ? TEXT("action, over the attacker's shoulder onto the hit") : TEXT("action, over the defender's shoulder into the strike");
+			}
+			else if (Shot.ShotType == ECinemafyShotType::OverTheShoulder && !Shot.Counterpart)
+			{
+				Shot.Counterpart = Shot.Subject == Line.Listener ? Line.Speaker.Get() : Line.Listener.Get();
+			}
+		}
+
 		if (Shot.ShotType == ECinemafyShotType::GroupShot)
 		{
 			Shot.Group = OthersInGroup(Shot.Subject, Shot.Counterpart);
@@ -597,6 +632,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 
 		// Singles focus on their subject; shots with both people in them focus on whoever's talking.
 		Shot.FocusOn = IsTwoShot(Shot.ShotType) ? Line.Speaker : Shot.Subject;
+		if (bKillShot)
+		{
+			Shot.FocusOn = Line.Listener; // The one who falls.
+		}
 
 		Shot.Lens = BiasLens(UCinemafyFramingLibrary::GetRecommendedPrime(Shot.ShotType), Style.LensBias);
 
@@ -654,7 +693,17 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		{
 			const float ShotStart = Time - StartTime;
 			const float* Impact = Impacts.FindByPredicate([ShotStart, Length](float I) { return I >= ShotStart && I < ShotStart + Length; });
-			if (Impact)
+			if (bKillShot && Style.SlowMoChance > 0.f)
+			{
+				// The ramp scales with the style: a gentle ease for styles that rarely ramp, the full drop for ones that love it.
+				const float Appetite = FMath::Clamp(Style.SlowMoChance / 0.15f, 0.f, 1.f);
+				Shot.bSlowMo = true;
+				Shot.SlowMoTime = LethalImpact - ShotStart;
+				Shot.SlowMoRate = FMath::Lerp(0.6f, 0.2f, Appetite);
+				Shot.SlowMoHold = FMath::Lerp(0.35f, 0.9f, Appetite);
+				Why += FString::Printf(TEXT(", speed ramp on the killing blow (x%.2f)"), Shot.SlowMoRate);
+			}
+			else if (Impact)
 			{
 				const float ImpactInShot = *Impact - ShotStart;
 				if (SlowMoBudget > 0 && Random.FRand() < Style.SlowMoChance)

@@ -24,7 +24,9 @@ public class Cinemafy : ModuleRules
 			"AssetRegistry",
 			"NavigationSystem",
 			"MotionWarping",
-			"DeveloperSettings"
+			"DeveloperSettings",
+			"InputCore",
+			"AIModule"
 		});
 	}
 }

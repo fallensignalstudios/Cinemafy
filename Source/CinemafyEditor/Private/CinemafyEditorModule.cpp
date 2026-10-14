@@ -3,9 +3,14 @@
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
 #include "SCinemafyHub.h"
+#include "SCinemafyStoryBoard.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreoTools.h"
+#include "CinemafyScript.h"
+#include "CinemafyStoryLibrary.h"
+#include "CinemafyTutorial.h"
+#include "HAL/PlatformProcess.h"
 #include "CinemafyEditCommands.h"
 #include "CinemafyEditLibrary.h"
 #include "SCinemafyEditPanel.h"
@@ -154,9 +159,76 @@ void FCinemafyEditorModule::StartupModule()
 		case ECinemafyChoreoRequest::Choreograph:      FCinemafyChoreoMode::Start(Choreography); break;
 		case ECinemafyChoreoRequest::PerformAndRecord: CinemafyChoreoTake::PerformAndRecord(Choreography); break;
 		case ECinemafyChoreoRequest::DirectShots:      CinemafyChoreoTake::DirectShots(Choreography); break;
+		case ECinemafyChoreoRequest::SaveProfile:
+			// The button gets a dialog; scripts get the asset and a log line.
+			if (UCinemafyPerformerProfile* Profile = UCinemafyEditorLibrary::SaveWiringAsProfile(Choreography))
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ProfileSaved",
+					"Saved {0} and assigned it.\n\n{1}\n\nAdd it under Project Settings > Plugins > Cinemafy > Performer Profiles to use it for every character of this class."),
+					FText::FromString(Profile->GetName()), FText::FromString(Profile->Validate(Choreography->Performer))));
+			}
+			else
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoPerformerProfile", "Pick a performer first: the profile is made from what's found on it."));
+			}
+			break;
+		case ECinemafyChoreoRequest::CheckWiring:
+			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyEditorLibrary::GetWiringReport(Choreography)));
+			break;
 		}
 	});
 	CinemafyChoreoTake::Initialize();
+
+	// First time in a project, with a person at the keyboard: the tutorial (it stays off for MCP-driven sessions).
+	UCinemafyTutorialLibrary::ScheduleAutoShow();
+
+	// Script project buttons: import, map the level's directors onto scenes, export the checklist.
+	ScriptRequestHandle = UCinemafyScriptProject::OnEditorRequest.AddLambda([](UCinemafyScriptProject* Project, ECinemafyScriptRequest Request)
+	{
+		switch (Request)
+		{
+		case ECinemafyScriptRequest::Import:
+			if (Project->ScriptFile.FilePath.IsEmpty())
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoScriptFile", "Set Script File first (a .fountain, .fdx or .txt script)."));
+			}
+			else if (UCinemafyEditorLibrary::ReimportScriptProject(Project))
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
+			}
+			else
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ScriptUnreadable", "Couldn't read {0}."), FText::FromString(Project->ScriptFile.FilePath)));
+			}
+			break;
+		case ECinemafyScriptRequest::MapScenes:
+		{
+			const int32 Mapped = UCinemafyEditorLibrary::MapScriptScenesInLevel(Project);
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ScenesMapped",
+				"Mapped {0} Scene Director(s) in this level to scenes. {1}% of the script is directed."), Mapped, FMath::RoundToInt(Project->GetProgress() * 100.f)));
+			break;
+		}
+		case ECinemafyScriptRequest::BuildCastAndSets:
+		{
+			const int32 Added = UCinemafyStoryLibrary::BuildCastAndSets(Project);
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CastBuilt",
+				"Added {0} cast / set entr(ies). Fill in characters, voices and looks under Cast & Sets; place Cinemafy Marks named the way the script talks (\"console\", \"lift\")."), Added));
+			break;
+		}
+		case ECinemafyScriptRequest::OpenStoryBoard:
+			UCinemafyStoryLibrary::OpenStoryBoard(Project);
+			break;
+		case ECinemafyScriptRequest::ExportChecklist:
+		{
+			const FString Path = UCinemafyEditorLibrary::ExportScriptChecklist(Project);
+			if (!Path.IsEmpty())
+			{
+				FPlatformProcess::LaunchFileInDefaultExternalApplication(*Path);
+			}
+			break;
+		}
+		}
+	});
 
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyShotBrowser::TabName,
 		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
@@ -169,6 +241,19 @@ void FCinemafyEditorModule::StartupModule()
 		}))
 		.SetDisplayName(LOCTEXT("ShotBrowserTab", "Cinemafy Shot Browser"))
 		.SetTooltipText(LOCTEXT("ShotBrowserTabTip", "Film strip of every camera cut in the open Level Sequence."))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyStoryBoard::TabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				[
+					SNew(SCinemafyStoryBoard)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("StoryBoardTab", "Cinemafy Story Board"))
+		.SetTooltipText(LOCTEXT("StoryBoardTabTip", "Every scene of your script as a card: previs, direct, track."))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyHub::TabName,
@@ -229,6 +314,7 @@ void FCinemafyEditorModule::ShutdownModule()
 {
 	ACinemafySceneDirector::OnEditorRequest.Remove(DirectorRequestHandle);
 	ACinemafyChoreography::OnEditorRequest.Remove(ChoreoRequestHandle);
+	UCinemafyScriptProject::OnEditorRequest.Remove(ScriptRequestHandle);
 	FCinemafyChoreoMode::Stop();
 	CinemafyChoreoTake::Shutdown();
 
@@ -236,6 +322,7 @@ void FCinemafyEditorModule::ShutdownModule()
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyShotBrowser::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyHub::TabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyStoryBoard::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyEditPanel::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyMulticam::TabName);
 	}

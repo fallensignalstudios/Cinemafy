@@ -702,6 +702,14 @@ struct FCinemafyAudioAnalysis
 	/** The most stressed moments (seconds from its start), loudest first: where camera moves should land. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
 	TArray<float> EmphasisTimes;
+
+	/** How open the mouth is, 0..1 at 50 Hz (drives Cinemafy Face's Talk for faces without a performance). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio", AdvancedDisplay)
+	TArray<float> TalkOpen;
+
+	/** How narrow (s, sh, f sounds), 0..1 at 50 Hz. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio", AdvancedDisplay)
+	TArray<float> TalkNarrow;
 };
 
 /** One line of dialogue in a scene script. */
@@ -740,6 +748,10 @@ struct FCinemafyLine
 	/** Moments of impact (seconds from the line's start). Empty = taken from the audio's loudest hits. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
 	TArray<float> ImpactTimes;
+
+	/** The last impact kills: the director holds both fighters in frame and ramps it (set from a choreography's death reactions). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
+	bool bLethal = false;
 
 	/** How the director read this line (set automatically when directing). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
@@ -922,6 +934,14 @@ struct FCinemafyPlannedShot
 	/** When the slowed impact happens, in seconds from the start of the shot. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	float SlowMoTime = 0.f;
+
+	/** How slow the ramp gets (time dilation at the hit). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float SlowMoRate = 0.3f;
+
+	/** How long it stays slow after the hit, in seconds of sequence time. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float SlowMoHold = 0.5f;
 
 	/** How this shot arrives (opening / scene break). Anything but Cut is a transition. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

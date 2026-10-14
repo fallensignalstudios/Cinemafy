@@ -67,6 +67,8 @@ private:
 		TArray<float> EmotionWeights;
 
 		float Articulation = 1.f;
+		float Talk = 0.f;
+		float TalkNarrow = 0.f;
 		FCinemafyLipSyncSettings LipSync;
 
 		bool bHasGaze = false;

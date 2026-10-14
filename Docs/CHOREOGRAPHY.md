@@ -99,6 +99,94 @@ The interaction model above (roles, a shared contact moment, an alignment target
 Contextual Animation scene. When paired scene assets are present, an adapter can play the scene for
 both roles instead of picking two independent clips, keeping the same events, outcomes and recording.
 
+## Performers: profiles
+
+A `UCinemafyPerformerProfile` is the explicit adapter for one kind of character. Resolution order for each
+hook: the choreography's own *Wiring* override, then the profile, then name-based discovery (only when
+there is no profile or it has *Auto Detect Missing* on). A hook the profile names but the character
+lacks is reported as `MISSING ...` in the wiring report, never silently replaced. Profiles also carry the
+**traversal envelope** (`MinHeight`, `MaxVaultHeight`, `MaxVaultDepth`, `MaxMantleHeight`, `MinLandingDepth`,
+`MinHeadroom`, `MaxApproachAngle`, or `bCanTraverse = false` with `MaxJumpHeight`). The profile is chosen
+from the choreography's *Profile*, else the class map in Project Settings (walking up the class hierarchy).
+
+## Traversal: measured before committing
+
+`UCinemafyChoreographyLibrary::CheckTraversal` traces the obstacle between the previous mark and the
+beat's mark: floor, front face (and approach angle), top, depth across the top, headroom above it, and a
+capsule overlap at the landing spot. `JudgeTraversal` turns the numbers into a typed verdict
+(`StepOver`, `Vault`, `Mantle`, `Jump`, `TooTall`, `NoRoomToLand`, `NoHeadroom`, `TooNarrow`, `BadAngle`,
+`NoObstacle`, `CannotTraverse`) and a plain-words reason. It is measured when the beat is read, again
+before the take, and again from the performer's real position when the beat starts. An impossible beat
+finishes `Failed` with the reason. It is never replaced by a jump. `NoObstacle` keeps the old behavior: the
+character's own traversal decides.
+
+## Routes: planned, then followed
+
+`CheckTraversal` also plans the route, and `PlanTraversalRoute` does the pure part:
+
+- **Squaring up:** if the approach is more than half the allowed angle off square, and a capsule can reach
+  a point one run-up out from the face, the obstacle is re-measured from there. The check is marked
+  `bLinedUp`.
+- **Approach point:** a run-up length before the takeoff, on the crossing line. The run-up is Vault Run Up
+  for vaults and gaps, shorter for mantles and drops, and never behind the start.
+- **Takeoff:** the face's foot, or a gap's edge.
+- **Exit:** the landing, the top of a mantle, or the far side of a gap.
+
+Edges are sudden steps down between neighbouring floor samples, so ramps don't count. A far side within
+reach makes it a `Gap`; otherwise it's a `Drop`. `JudgeGap` checks both against the envelope.
+
+In the take:
+
+- The performer goes to the approach point (navmesh, passing through), then runs at a point well past
+  the takeoff on the crossing line, so any sideways offset closes before the jump.
+- Gaps are jumped at the edge. Drops are stepped off, or jumped if the prompt says `jump`.
+- The next beat measures from the exit point.
+
+## Transitions
+
+`PlanTransitions` walks the beats in order, tracking what's in hand (starting from **Starting Weapon**)
+and the gait carried into each beat. It fills `FCinemafyBeatTransitions`:
+
+- **DrawWeapon:** for an attack whose weapon isn't in hand. A ranged attack with nothing ranged in hand
+  gets a pistol.
+- **bBrakeIn / BrakeDistance:** for jump-like traversals (`jump`, Jump, Gap, Mantle) and melee charges
+  entered at a sprint. The gait drops to Run inside BrakeDistance of the takeoff or target.
+- **Recovery:** Roll or Recover after a drop over Recovery Drop Height, or a gap over 70% of Max Gap
+  Width. It's a Roll when the next real beat moves on.
+
+In the take:
+
+- The draw happens on the move if the beat starts more than 6 m out (overlay only). Otherwise it plays
+  first in the act queue, as `TransitionClip`, with no contact.
+- Recoveries play after the Landing event. If the performer fell further than Recovery Drop Height, one is
+  added even when it wasn't planned.
+- A missing roll or recovery clip makes the beat a Fallback, with the reason.
+
+## Dialogue beats
+
+A beat's line comes from its **Dialogue** (or the prompt's quoted words) and optional **Dialogue Audio**.
+
+- **Timing:** the line starts with the beat, or, when the beat waits for a cue (`answer` / `after` /
+  **Wait For Line From**), when the other character's line ends. The cue registry is shared by every
+  choreography in the take.
+- **Duration:** the audio's length, else the words at **Words Per Second**.
+- **Say beats:** they hold until their line ends. Other beats don't, so a line can run under a walk.
+- **Logging:** the take records `LineStartTime` / `LineDuration` and `LineStart` / `LineEnd` events.
+
+`BuildDirectorLines` makes each spoken line its own director line, starting on its first word. Beats that
+start under someone's line ride along with it, except strikes, which still cut. `MergeLines` never drops a
+spoken line in favor of an unspoken one.
+
+## Fight coverage
+
+In the planner, a shot that contains an impact on a line with a defender (the line's Listener) must frame
+both fighters. It becomes an over-the-shoulder that alternates sides, or a two-shot. Lines whose last
+impact kills (`FCinemafyLine::bLethal`, set from Death reactions) give that impact a two-shot focused on the
+defender, and a speed ramp whose depth (`SlowMoRate`) and length (`SlowMoHold`) scale with the style's
+`SlowMoChance`. A style with no slow motion gets no ramp. `UCinemafyFramingLibrary::IsFaceCoveredByForeground`
+rejects framings where the counterpart's head or shoulders cover the subject's face. The obstacle-avoiding
+solver then tries its other angles.
+
 ## Bake-space contract
 
 - **Actor (capsule) transform** goes on the performer's transform track, sampled at the open
@@ -121,13 +209,8 @@ both roles instead of picking two independent clips, keeping the same events, ou
 
 These are real and worth doing. They're bigger than a patch:
 
-- **Performer adapter interface:** an explicit capability profile per character family (GASPALS,
-  Narrative, custom) instead of reflection discovery, with validated bindings.
-- **Geometry-aware traversal queries before committing:** obstacle front/top/far edge, landing
-  clearance, supported height envelopes, typed refusal reasons (`UnsupportedHeight`,
-  `LandingBlocked`...).
-- **Planned trajectories:** time-parameterized routes that plan vault entry speed and turn distance,
-  fed through the performer's own trajectory inputs.
+- **Planned trajectories:** time-parameterized routes (the route points and run-up gait are in; speed
+  profiles fed through the performer's own trajectory inputs are not).
 - **Validated move definitions:** promote name-matched candidates into curated entries with contact
   markers, entry windows, body masks and root-motion policy (Move Library is the start of this).
 - **Contextual Animation adapter** for paired content (the native synchronized interactions are in).
@@ -142,8 +225,7 @@ These are real and worth doing. They're bigger than a patch:
 - **Versioned takes** kept side by side, rather than replaced.
 - **Preview isolation:** suppress gameplay side effects (damage, quests, saves) during Perform &
   Record without suppressing animation notifies.
-- **Composition checks:** foreground shoulder occupancy in over-the-shoulders, subject cropping
-  across a move, and protecting both sides of an interaction in action coverage.
+- **Composition checks:** subject cropping across a move (shoulder occlusion and both-sides coverage are in).
 
 ## Licensing note
 

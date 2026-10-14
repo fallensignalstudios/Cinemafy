@@ -4,15 +4,18 @@
 #include "GameFramework/Actor.h"
 #include "CinemafyChoreographyTypes.h"
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafyPerformerProfile.h"
 #include "CinemafyChoreography.generated.h"
 
 class ACharacter;
 class AController;
 class APlayerController;
 class UAnimMontage;
+class UAudioComponent;
 class UTextRenderComponent;
 class ULevelSequence;
 class ACinemafySceneDirector;
+class UCinemafyPerformerProfile;
 
 /** Buttons on the choreography that the editor module answers. */
 UENUM()
@@ -23,7 +26,11 @@ enum class ECinemafyChoreoRequest : uint8
 	/** Play in editor, perform every choreography, record the takes and bake them into the open Level Sequence. */
 	PerformAndRecord,
 	/** Hand the recorded take to a Scene Director and cut shots around it. */
-	DirectShots
+	DirectShots,
+	/** Save what the auto-wiring found on the performer as a Performer Profile asset (and use it). */
+	SaveProfile,
+	/** Show the wiring report (and the profile's check against this character). */
+	CheckWiring
 };
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FCinemafyChoreoEditorRequest, class ACinemafyChoreography*, ECinemafyChoreoRequest);
@@ -51,6 +58,20 @@ struct FCinemafyPendingReaction
 	TWeakObjectPtr<UAnimSequenceBase> Clip;
 	TWeakObjectPtr<UAnimMontage> AttackMontage;
 	ECinemafyHitReaction Reaction = ECinemafyHitReaction::Hit;
+};
+
+/** What the wiring found on a performer: the names to put in a profile. */
+struct FCinemafyDetectedWiring
+{
+	FName SprintFunction;
+	FString SprintProperty;
+	FName WalkFunction;
+	FString WalkProperty;
+	FName CrouchFunction;
+	FName UncrouchFunction;
+	FName TraversalFunction;
+	FName OverlayFunction;
+	FString OverlayProperty;
 };
 
 /** Hooks into a performer (gait, traversal, overlay, crouch), found by reflection once per performance. */
@@ -86,6 +107,13 @@ public:
 	/** Who performs. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography")
 	TObjectPtr<ACharacter> Performer = nullptr;
+
+	/**
+	 * How to drive this performer. Empty = the profile Project Settings maps to its class, else guessed by name
+	 * (Save Wiring As Profile keeps what was guessed).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography")
+	TObjectPtr<UCinemafyPerformerProfile> Profile = nullptr;
 
 	/** The performance, in order. Each beat's Location is relative to this actor (move it to move the whole routine). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography", meta = (TitleProperty = "Prompt"))
@@ -130,6 +158,32 @@ public:
 	/** "wait" with no number. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Timing", meta = (ClampMin = "0.0"))
 	float DefaultWaitSeconds = 1.5f;
+
+	/** What the performer is holding when the take starts ("sword", "pistol"...; empty = nothing drawn). Attacks draw what they need. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Transitions")
+	FString StartingWeapon;
+
+	/** Re-plans every beat's in-between moves (draws, brakes, roll-outs) from the beats as they are now. */
+	void RefreshTransitions();
+
+	/** Show lines as subtitles while performing (the director bakes its own subtitles into the cut). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue")
+	bool bShowSubtitlesWhilePerforming = true;
+
+	/** Speaking pace for lines without audio, in words per second. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue", meta = (ClampMin = "0.5", ClampMax = "6.0"))
+	float WordsPerSecond = 2.6f;
+
+	/** Longest a beat waits for another character's line before giving up. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue", meta = (ClampMin = "1.0"))
+	float CueTimeout = 60.f;
+
+	/** How long a beat's line runs: its audio, else its words at WordsPerSecond. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
+	float GetLineSeconds(const FCinemafyChoreoBeat& Beat) const;
+
+	/** Who a beat's line is said to (its Listener, else a character target, else whoever this performer last spoke to). */
+	AActor* GetLineListener(int32 BeatIndex) const;
 
 	/** Give up on a beat after this long. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Timing", meta = (ClampMin = "1.0"))
@@ -232,6 +286,14 @@ public:
 	UFUNCTION(CallInEditor, Category = "Choreography", meta = (DisplayPriority = 2))
 	void DirectShots();
 
+	/** Saves what the auto-wiring found on the performer as a Performer Profile asset, and uses it from now on. */
+	UFUNCTION(CallInEditor, Category = "Choreography|Wiring", meta = (DisplayName = "Save Wiring As Profile"))
+	void SaveWiringAsProfile();
+
+	/** Shows what Cinemafy will drive on the performer, and anything the profile names that's missing. */
+	UFUNCTION(CallInEditor, Category = "Choreography|Wiring")
+	void CheckWiring();
+
 	/** Re-reads every prompt and re-picks animations (e.g. after adding animations to the project). */
 	UFUNCTION(CallInEditor, Category = "Choreography", meta = (DisplayPriority = 3))
 	void ReadPrompts();
@@ -261,8 +323,22 @@ public:
 	/** Rebuilds the beat labels in the viewport (prompts, plus outcomes after a take). */
 	void RefreshLabels();
 
+	/** The profile in effect (this choreography's, else Project Settings' for the performer's class). */
+	const UCinemafyPerformerProfile* GetProfile() const;
+	const UCinemafyMoveLibrary* GetMoveLibrary() const;
+	TArray<FName> GetSkipRecordingComponents() const;
+	/** What the performer can climb (the profile's, else GASP-like limits if it has a traversal function, else jumps only). */
+	FCinemafyTraversalEnvelope GetTraversalEnvelope();
+	/** Re-runs the wiring (editor checks, Save Wiring As Profile). */
+	void RefreshWiring();
+	/** Filled by the wiring: the names it found. */
+	FCinemafyDetectedWiring DetectedWiring;
+
 	/** Reads one beat's prompt and picks its animations. */
 	void ResolveBeat(int32 BeatIndex);
+
+	/** Measures a Traverse beat's obstacle from where the performer will be (the previous mark, or its feet). */
+	FCinemafyTraversalCheck MeasureTraversal(int32 BeatIndex, const FVector* FromOverride = nullptr);
 
 	/** Recorded while performing: the performer's transform over time (seconds since the take started). */
 	TArray<float> RecordedTimes;
@@ -314,6 +390,14 @@ private:
 
 	void DrawPath() const;
 
+	/** Starts the current beat's line: audio on the performer, a subtitle, and a note for anyone waiting on it. */
+	void StartLine();
+	/** Ends the running line once its time is up (lines can outlast their beat: walk-and-talk). */
+	void UpdateLine();
+	/** True once WaitForLineFrom's character has finished a line that was running or started after the beat began. */
+	bool IsCueReady() const;
+	AActor* GetCueActor(int32 BeatIndex) const;
+
 	TArray<FCinemafyMoveCandidate> Candidates;
 	FString CandidatesSkeleton;
 	void EnsureCandidates();
@@ -333,6 +417,19 @@ private:
 	float StuckTimer = 0.f;
 	float TraverseRetry = 0.f;
 	bool bTraversalStarted = false;
+	/** The obstacle turned out to be ankle-high: walk across instead of asking for a vault. */
+	bool bStepOverOnly = false;
+	/** Set by StartBeat when the beat can't be performed at all (finished on the next tick). */
+	FString PrecheckFailReason;
+	/** Holding the beat until another character's line ends. */
+	bool bWaitingForCue = false;
+	double CueAfterWorldTime = 0.0;
+	float CueWaitTime = 0.f;
+	/** The line being spoken: its beat, and when it ends (take seconds; -1 = none). */
+	int32 LineBeat = INDEX_NONE;
+	float LineEndTime = -1.f;
+	TWeakObjectPtr<UAudioComponent> LineAudio;
+	TWeakObjectPtr<AActor> LastAddressed;
 	bool bSawTraversal = false;
 	float ActDoneDelay = 0.f;
 	TArray<TObjectPtr<UAnimSequenceBase>> AnimQueue;
@@ -345,6 +442,16 @@ private:
 	float SavedMaxWalkSpeed = -1.f;
 	bool bStartedCrouched = false;
 	bool bWorldEnding = false;
+	FVector EffectiveFallbackSpeeds = FVector(180.f, 400.f, 650.f);
+	/** Transitions: what's in hand, a draw waiting for the strike, and the in-between clip playing (no contact on it). */
+	FString CurrentWeapon;
+	FString DrawPendingWeapon;
+	bool bBraked = false;
+	bool bRecovering = false;
+	float AirPeakZ = 0.f;
+	TObjectPtr<UAnimSequenceBase> TransitionClip = nullptr;
+	/** The best library clip for an in-between move (a draw, a roll, a recovery), or null. */
+	UAnimSequenceBase* PickTransitionClip(const FCinemafyPromptReading& Reading);
 	ECinemafyArrival CurrentArrival = ECinemafyArrival::StopAndFace;
 	/** Set when the approach ended short of the mark (geometry); the beat can still act, but it isn't a clean success. */
 	FString ShortfallReason;
