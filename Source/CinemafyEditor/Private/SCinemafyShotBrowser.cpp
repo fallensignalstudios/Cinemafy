@@ -90,6 +90,15 @@ void SCinemafyShotBrowser::Construct(const FArguments& InArgs)
 				.OnClicked_Lambda([this]() { CaptureThumbnails(); return FReply::Handled(); })
 			]
 			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.f, 0.f, 12.f, 0.f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Check", "Check Continuity"))
+				.ToolTipText(LOCTEXT("CheckTip", "Review every cut: line crossings, jump cuts, flash cuts, overlong shots."))
+				.OnClicked_Lambda([]() { UCinemafyEditorLibrary::CheckSequenceContinuity(); return FReply::Handled(); })
+			]
+			+ SHorizontalBox::Slot()
 			.FillWidth(1.f)
 			.VAlign(VAlign_Center)
 			[

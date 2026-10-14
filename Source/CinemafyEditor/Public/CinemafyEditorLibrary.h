@@ -132,6 +132,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 AnalyzeDirectorAudio(ACinemafySceneDirector* Director);
 
+	/**
+	 * Reviews every cut in the open Level Sequence: crossing the 180-degree line, jump cuts, flash cuts,
+	 * overlong shots, cutting a camera to itself. Shows a report. Returns the number of notes (-1 if no sequence).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 CheckSequenceContinuity();
+
 	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static ACinemafySceneDirector* CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style);

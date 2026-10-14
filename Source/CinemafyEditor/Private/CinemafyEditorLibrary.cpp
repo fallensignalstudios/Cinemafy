@@ -1211,6 +1211,11 @@ namespace
 	struct FObservedShot
 	{
 		ECinemafyShotType Type = ECinemafyShotType::MediumShot;
+		const AActor* Subject = nullptr;
+		const AActor* Camera = nullptr;
+		FVector CameraLocation = FVector::ZeroVector;
+		FVector ViewDirection = FVector::ForwardVector;
+		float StartSeconds = 0.f;
 		float Duration = 0.f;
 		float FocalLength = 0.f;
 		bool bLowAngle = false;
@@ -1235,7 +1240,7 @@ namespace
 		const FVector Right = Basis.GetUnitAxis(EAxis::Y);
 		const FVector Up = Basis.GetUnitAxis(EAxis::Z);
 
-		struct FSeen { FVector Eye; float Depth; float X; };
+		struct FSeen { FVector Eye; float Depth; float X; const AActor* Actor; };
 		TArray<FSeen> InFrame;
 		TArray<FSeen> Foreground;
 		for (const AActor* Character : Characters)
@@ -1251,12 +1256,12 @@ namespace
 			const float Y = FVector::DotProduct(Dir, Up) / (Depth * TanHalfV);
 			if (FMath::Abs(X) < 1.1f && FMath::Abs(Y) < 1.3f)
 			{
-				InFrame.Add({ Eye, Depth, X });
+				InFrame.Add({ Eye, Depth, X, Character });
 			}
 			else if (FMath::Abs(X) < 1.6f && Depth < 150.f)
 			{
 				// Just off the edge and very close: a foreground shoulder.
-				Foreground.Add({ Eye, Depth, X });
+				Foreground.Add({ Eye, Depth, X, Character });
 			}
 		}
 
@@ -1273,6 +1278,9 @@ namespace
 			Subject = &InFrame[0];
 		}
 		const float FrameHeight = 2.f * Subject->Depth * TanHalfV;
+		Out.Subject = Subject->Actor;
+		Out.CameraLocation = View.Location;
+		Out.ViewDirection = Forward;
 
 		bool bOverShoulder = false;
 		int32 PeersInFrame = 0;
@@ -1726,6 +1734,143 @@ int32 UCinemafyEditorLibrary::AnalyzeDirectorAudio(ACinemafySceneDirector* Direc
 			*Line.Note, A.LoudnessDb, A.SyllablesPerSecond, Line.AudioIntensity);
 	}
 	return Analyzed;
+}
+
+int32 UCinemafyEditorLibrary::CheckSequenceContinuity()
+{
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
+	const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	const UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!Sequencer.IsValid() || !CutTrack || !World)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("ContinuityNoSequence", "Open a Level Sequence with camera cuts in Sequencer to check its continuity."));
+		return -1;
+	}
+
+	TArray<AActor*> Characters;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->FindComponentByClass<USkeletalMeshComponent>() && !It->FindComponentByClass<UCameraComponent>())
+		{
+			Characters.Add(*It);
+		}
+	}
+
+	TArray<const UMovieSceneCameraCutSection*> Cuts;
+	for (const UMovieSceneSection* Section : CutTrack->GetAllSections())
+	{
+		const UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+		if (Cut && Cut->HasStartFrame() && Cut->HasEndFrame())
+		{
+			Cuts.Add(Cut);
+		}
+	}
+	Cuts.Sort([](const UMovieSceneCameraCutSection& A, const UMovieSceneCameraCutSection& B) { return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame(); });
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+	const FQualifiedFrameTime OriginalTime = Sequencer->GetLocalTime();
+	TArray<FString> Issues;
+	FObservedShot Previous;
+	bool bHasPrevious = false;
+
+	for (int32 Index = 0; Index < Cuts.Num(); ++Index)
+	{
+		const UMovieSceneCameraCutSection* Cut = Cuts[Index];
+		const FFrameNumber Start = Cut->GetInclusiveStartFrame();
+		const float StartSeconds = static_cast<float>(TickResolution.AsSeconds(FFrameTime(Start)));
+		const float Duration = static_cast<float>(TickResolution.AsSeconds(FFrameTime(Cut->GetExclusiveEndFrame() - Start)));
+		const FString Where = FString::Printf(TEXT("Shot %d (%.1fs)"), Index + 1, StartSeconds);
+
+		if (Duration < 0.5f)
+		{
+			Issues.Add(FString::Printf(TEXT("%s: flash cut, only %.2fs long."), *Where, Duration));
+		}
+		else if (Duration > 15.f)
+		{
+			Issues.Add(FString::Printf(TEXT("%s: %.0fs is a long time to hold one shot in a game. Consider a cutaway or a move."), *Where, Duration));
+		}
+
+		Sequencer->SetLocalTimeDirectly(FFrameTime(Start));
+		Sequencer->ForceEvaluate();
+
+		const AActor* CameraActor = nullptr;
+		for (const TWeakObjectPtr<UObject>& Bound : Sequencer->FindBoundObjects(Cut->GetCameraBindingID().GetGuid(), MovieSceneSequenceID::Root))
+		{
+			if ((CameraActor = Cast<AActor>(Bound.Get())) != nullptr)
+			{
+				break;
+			}
+		}
+		const UCameraComponent* Camera = CameraActor ? CameraActor->FindComponentByClass<UCameraComponent>() : nullptr;
+
+		FObservedShot Shot;
+		Shot.Camera = CameraActor;
+		Shot.StartSeconds = StartSeconds;
+		const bool bClassified = Camera && ClassifyShot(Camera, Characters, Shot);
+
+		if (bHasPrevious && CameraActor && CameraActor == Previous.Camera)
+		{
+			Issues.Add(FString::Printf(TEXT("%s: cuts from %s to itself, which isn't really a cut."), *Where, *CameraActor->GetActorLabel()));
+		}
+
+		if (bClassified && bHasPrevious && Previous.Subject && Shot.Subject)
+		{
+			if (Previous.Subject == Shot.Subject && Previous.Type == Shot.Type && Previous.Camera != Shot.Camera)
+			{
+				const float AngleChange = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Previous.ViewDirection, Shot.ViewDirection), -1.f, 1.f)));
+				if (AngleChange < 30.f)
+				{
+					Issues.Add(FString::Printf(TEXT("%s: jump cut on %s (same framing, only %.0f degrees apart). Change the size or the angle."),
+						*Where, *Shot.Subject->GetActorLabel(), AngleChange));
+				}
+			}
+			else if (Previous.Subject != Shot.Subject)
+			{
+				// A reverse: both cameras should be on the same side of the line between these two.
+				const float SideBefore = UCinemafyFramingLibrary::GetSideOfLine(Previous.CameraLocation, Previous.Subject, Shot.Subject);
+				const float SideAfter = UCinemafyFramingLibrary::GetSideOfLine(Shot.CameraLocation, Previous.Subject, Shot.Subject);
+				if (FMath::Abs(SideBefore) > 15.f && FMath::Abs(SideAfter) > 15.f && FMath::Sign(SideBefore) != FMath::Sign(SideAfter))
+				{
+					Issues.Add(FString::Printf(TEXT("%s: crosses the line between %s and %s. Screen direction flips on this cut."),
+						*Where, *Previous.Subject->GetActorLabel(), *Shot.Subject->GetActorLabel()));
+				}
+			}
+		}
+
+		if (bClassified)
+		{
+			Previous = Shot;
+			bHasPrevious = true;
+		}
+		else if (CameraActor)
+		{
+			Previous = FObservedShot();
+			Previous.Camera = CameraActor;
+			bHasPrevious = true;
+		}
+	}
+
+	Sequencer->SetLocalTimeDirectly(ConvertFrameTime(OriginalTime.Time, OriginalTime.Rate, TickResolution));
+	Sequencer->ForceEvaluate();
+
+	FString Report;
+	if (Issues.Num() == 0)
+	{
+		Report = FString::Printf(TEXT("%d cuts checked: no continuity problems found. Clean edit!"), Cuts.Num());
+	}
+	else
+	{
+		Report = FString::Printf(TEXT("%d cuts checked, %d note(s):\n\n"), Cuts.Num(), Issues.Num());
+		for (const FString& Issue : Issues)
+		{
+			Report += TEXT("- ") + Issue + TEXT("\n");
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy continuity: %s"), *Issue);
+		}
+	}
+	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
+	return Issues.Num();
 }
 
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style)
