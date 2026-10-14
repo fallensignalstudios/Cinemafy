@@ -9,6 +9,7 @@
 #include "CinemafyChoreoTools.h"
 #include "CinemafyScript.h"
 #include "CinemafyStoryLibrary.h"
+#include "CinemafyTutorial.h"
 #include "HAL/PlatformProcess.h"
 #include "CinemafyEditCommands.h"
 #include "CinemafyEditLibrary.h"
@@ -177,6 +178,9 @@ void FCinemafyEditorModule::StartupModule()
 		}
 	});
 	CinemafyChoreoTake::Initialize();
+
+	// First time in a project, with a person at the keyboard: the tutorial (it stays off for MCP-driven sessions).
+	UCinemafyTutorialLibrary::ScheduleAutoShow();
 
 	// Script project buttons: import, map the level's directors onto scenes, export the checklist.
 	ScriptRequestHandle = UCinemafyScriptProject::OnEditorRequest.AddLambda([](UCinemafyScriptProject* Project, ECinemafyScriptRequest Request)

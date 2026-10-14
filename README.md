@@ -12,6 +12,23 @@ living MetaHuman eyes and grading looks. It was built for *Sovereign Call*'s in-
 
 ---
 
+## From script to screen
+
+New here? Open the **Cinemafy Hub** and click **Tutorial**. It also opens on its own the first time a project
+loads. In short:
+
+1. **Import a script** (Fountain, Final Draft, or text).
+2. Open the **Story Board**: every scene as a card.
+3. Fill **Cast & Sets** and place **Marks** named the way your script talks.
+4. Add **Scratch Voices**.
+5. Hit **Previs** on a scene: the cast takes their marks, acts the scene out, says their lines on cue, and
+   the director shoots and cuts it.
+6. Refine anything.
+7. **Cut Together** for the whole story, then render **Dailies** and the **Paperwork**.
+
+For games, the same script can branch and play in game. The full walk-through is in
+[STORYTELLING](Docs/STORYTELLING.md).
+
 ## Install
 
 1. Clone into your project's `Plugins/` folder:

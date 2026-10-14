@@ -1,5 +1,6 @@
 """Cinemafy toolset: AI-callable access to Cinemafy's editor tools."""
 
+import functools
 import random
 
 import unreal
@@ -7,6 +8,32 @@ import unreal
 import toolset_registry
 
 _lib = unreal.CinemafyEditorLibrary
+_automation_noted = False
+
+
+def _note_automation():
+    """An agent is driving Cinemafy: close the first-run tutorial and keep it from opening on its own."""
+    global _automation_noted
+    if _automation_noted:
+        return
+    _automation_noted = True
+    try:
+        unreal.CinemafyTutorialLibrary.note_automation_session()
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def _tool(fn):
+    """toolset_registry.tool_call, noting each call as automation first (same signature and docs)."""
+    is_static = isinstance(fn, staticmethod)
+    inner = fn.__func__ if is_static else fn
+
+    @functools.wraps(inner)
+    def wrapper(*args, **kwargs):
+        _note_automation()
+        return inner(*args, **kwargs)
+
+    return toolset_registry.tool_call(staticmethod(wrapper) if is_static else wrapper)
 _seq_lib = unreal.LevelSequenceEditorBlueprintLibrary
 
 
@@ -19,7 +46,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Scene Director ---------------------------------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def create_scene_director(characters: list[unreal.Actor],
                               style: unreal.CinemafyDirectorPreset) -> unreal.CinemafySceneDirector:
@@ -41,7 +68,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError('Cinemafy could not create a director for these characters.')
         return director
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def direct_scene(director: unreal.CinemafySceneDirector) -> list[unreal.CinemafyPlannedShot]:
         """Plans the director's scene and bakes cameras and timed camera cuts into the open Level
@@ -61,7 +88,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError('The director planned no shots.')
         return list(director.last_plan)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def reroll_scene(director: unreal.CinemafySceneDirector) -> list[unreal.CinemafyPlannedShot]:
         """Directs the same scene again with a new random seed for a different take. Locked shots
@@ -76,7 +103,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         director.set_editor_property('seed', random.randint(1, 2 ** 31 - 1))
         return CinemafyTools.direct_scene(director)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def clear_directed_shots(director: unreal.CinemafySceneDirector) -> None:
         """Removes the director's camera cuts from the open Level Sequence. Its cameras are kept.
@@ -87,7 +114,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         CinemafyTools._require_open_sequence()
         _lib.clear_directed_shots(director)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def toggle_shot_lock(director: unreal.CinemafySceneDirector, shot_index: int) -> bool:
         """Locks or unlocks one shot of the director's current cut. Locked shots survive re-rolls.
@@ -102,7 +129,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         CinemafyTools._require_shot(director, shot_index)
         return _lib.toggle_shot_lock(director, shot_index)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def swap_shot_for_alternate(director: unreal.CinemafySceneDirector,
                                 shot_index: int) -> list[unreal.CinemafyPlannedShot]:
@@ -121,7 +148,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError(f'Shot {shot_index} has no alternative.')
         return list(director.last_plan)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def nudge_shot_cut(director: unreal.CinemafySceneDirector, shot_index: int,
                        delta_seconds: float) -> list[unreal.CinemafyPlannedShot]:
@@ -143,7 +170,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError(f'Could not move the cut before shot {shot_index}.')
         return list(director.last_plan)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def save_take(director: unreal.CinemafySceneDirector, name: str) -> int:
         """Saves the director's current cut as a named take.
@@ -159,7 +186,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise ValueError('The director has no cut to save. Direct the scene first.')
         return _lib.save_director_take(director, name)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def load_take(director: unreal.CinemafySceneDirector,
                   take_index: int) -> list[unreal.CinemafyPlannedShot]:
@@ -181,7 +208,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Cameras ----------------------------------------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def create_shot(subject: unreal.Actor, shot_type: unreal.CinemafyShotType,
                     counterpart: unreal.Actor | None = None, flip_side: bool = False,
@@ -213,7 +240,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError('Cinemafy could not create the shot.')
         return camera
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def apply_look(cameras: list[unreal.CineCameraActor], look: unreal.CinemafyLook,
                    strength: float = 1.0) -> None:
@@ -226,7 +253,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         CinemafyTools._apply_to_cameras(cameras, lambda: _lib.apply_look_to_selection(look, strength))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def set_letterbox(cameras: list[unreal.CineCameraActor], aspect_ratio: float = 2.39) -> None:
         """Constrains each camera to a cinema aspect ratio with real letterbox bars.
@@ -239,7 +266,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise ValueError('aspect_ratio must be positive.')
         CinemafyTools._apply_to_cameras(cameras, lambda: _lib.set_letterbox_on_selection(aspect_ratio))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def apply_prime(cameras: list[unreal.CineCameraActor], prime: unreal.CinemafyPrime,
                     f_stop: float = 2.8) -> None:
@@ -254,7 +281,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise ValueError('f_stop must be positive.')
         CinemafyTools._apply_to_cameras(cameras, lambda: _lib.apply_prime_to_selection(prime, f_stop))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def apply_camera_feel(cameras: list[unreal.CineCameraActor], feel: unreal.CinemafyCameraFeel) -> None:
         """Gives each camera procedural operator motion, from tripod drift to run-and-gun handheld.
@@ -265,7 +292,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         CinemafyTools._apply_to_cameras(cameras, lambda: _lib.apply_camera_feel_to_selection(feel))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def apply_camera_move(cameras: list[unreal.CineCameraActor], move: unreal.CinemafyCameraMove) -> None:
         """Adds an eased camera move to each camera, sized for that move. Key its Progress 0 to 1 in
@@ -279,7 +306,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Characters and lighting ------------------------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_gaze(characters: list[unreal.Actor]) -> None:
         """Gives each character living eyes: saccades, blinks and a head that follows the look.
@@ -291,7 +318,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         CinemafyTools._require_actors(characters)
         CinemafyTools._with_selection(characters, _lib.add_gaze_to_selection)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_listening(characters: list[unreal.Actor], temperament: unreal.CinemafyTemperament) -> None:
         """Makes each character react while others talk (nods, blinks, glances). With exactly two
@@ -304,7 +331,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         CinemafyTools._require_actors(characters)
         CinemafyTools._with_selection(characters, lambda: _lib.add_listening_to_selection(temperament))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def set_face_emotion(characters: list[unreal.Actor], emotion: unreal.CinemafyEmotion) -> None:
         """Sets each character's facial emotion, adding a Cinemafy Face component if needed.
@@ -317,7 +344,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         CinemafyTools._require_actors(characters)
         CinemafyTools._with_selection(characters, lambda: _lib.apply_face_emotion_to_selection(emotion))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def create_light_rig(subject: unreal.Actor, style: unreal.CinemafyLightingStyle,
                          camera: unreal.Actor | None = None) -> unreal.CinemafyLightRig:
@@ -341,7 +368,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Sequence ---------------------------------------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def set_up_gameplay_blend(blend_in_seconds: float = 1.0, blend_out_seconds: float = 1.0,
                               include_animations: bool = True) -> None:
@@ -358,7 +385,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         if not _lib.set_up_gameplay_blend_for_open_sequence(blend_in_seconds, blend_out_seconds, include_animations):
             raise RuntimeError('Could not set up the gameplay blend.')
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def render_camera_frame(camera: unreal.CineCameraActor, frame: int, file_path: str,
                             width: int = 1280) -> str:
@@ -431,7 +458,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError(f'The frame could not be written to {file_path}.')
         return file_path
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def capture_game_view(file_path: str) -> str:
         """Saves what the player sees during play-in-editor, including Cinemafy's titles, subtitles,
@@ -476,7 +503,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Choreography -------------------------------------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def create_choreography(performer: unreal.Character) -> unreal.CinemafyChoreography:
         """Creates a Cinemafy Choreography for a character (or returns the one it already has).
@@ -499,7 +526,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         choreo.set_editor_property('performer', performer)
         return choreo
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_choreography_beat(choreography: unreal.CinemafyChoreography, prompt: str, location: unreal.Vector,
                               target: unreal.Actor = None) -> str:
@@ -524,7 +551,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         anims = [a.get_name() for a in beat.get_editor_property('chosen_animations') if a]
         return reading.get_editor_property('summary') + (' using ' + ', '.join(anims) if anims else '')
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def read_choreography_prompt(prompt: str) -> unreal.CinemafyPromptReading:
         """Shows how the choreographer reads a prompt, without adding it anywhere.
@@ -537,7 +564,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyChoreographyLibrary.read_prompt(prompt)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def perform_and_record_choreography(choreography: unreal.CinemafyChoreography) -> str:
         """Starts play-in-editor; every choreography in the level performs and is recorded. When the take
@@ -556,7 +583,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         _lib.perform_and_record_choreography(choreography)
         return 'Recording started; the take bakes into Sequencer when the performance finishes.'
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def direct_choreography(choreography: unreal.CinemafyChoreography) -> list[unreal.CinemafyPlannedShot]:
         """Cuts coverage around a recorded choreography take with a Scene Director.
@@ -574,7 +601,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         director = choreography.get_editor_property('scene_director')
         return list(director.last_plan) if director else []
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def set_choreography_beat_line(choreography: unreal.CinemafyChoreography, beat_index: int, text: str = '',
                                    audio: unreal.SoundBase = None, listener: unreal.Actor = None,
@@ -599,7 +626,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         beat = choreography.get_editor_property('beats')[beat_index]
         return beat.get_editor_property('reading').get_editor_property('summary')
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def check_choreography_traversal(choreography: unreal.CinemafyChoreography, beat_index: int) -> str:
         """Measures a vault / climb beat's obstacle (height, depth, headroom, landing room, approach angle)
@@ -617,7 +644,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         return '{}{}: {}'.format('' if check.get_editor_property('possible') else 'WON\'T WORK, ',
                                  str(verdict).split('.')[-1], check.get_editor_property('reason'))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def create_performer_profile(preset: unreal.CinemafyPerformerPreset, name: str) -> unreal.CinemafyPerformerProfile:
         """Makes a Performer Profile (how to drive one kind of character: gait, crouch, traversal, overlays,
@@ -636,7 +663,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError('Could not create the profile.')
         return profile
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def get_choreography_wiring(choreography: unreal.CinemafyChoreography, save_as_profile: bool = False) -> str:
         """Reports how Cinemafy drives a choreography's performer (gait, crouch, traversal, overlay hooks, climb
@@ -655,7 +682,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Script breakdown (acts, chapters, scenes, continuity checklist) -------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def import_script(file_path: str, name: str = '') -> str:
         """Reads a full script (Fountain .fountain, Final Draft .fdx, or plain screenplay / game-script text) and
@@ -675,7 +702,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError('Could not read a script from ' + file_path)
         return project.get_editor_property('breakdown_report')
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def get_script_checklist(project: unreal.CinemafyScriptProject) -> str:
         """The production checklist for a script: progress per act and chapter, each scene's status, director and
@@ -690,7 +717,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return project.build_checklist()
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def map_script_scenes(project: unreal.CinemafyScriptProject) -> str:
         """Matches the Scene Directors in the open level to the script's scenes (by Script Scene Id, else by their
@@ -705,7 +732,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         mapped = _lib.map_script_scenes_in_level(project)
         return '{} director(s) mapped; {:.0f}% of the script directed.'.format(mapped, project.get_progress() * 100.0)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def create_director_for_scene(project: unreal.CinemafyScriptProject, scene_id: str) -> unreal.CinemafySceneDirector:
         """Spawns a Scene Director for one scene of the script, its lines filled from the script's dialogue
@@ -723,7 +750,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise ValueError('No scene ' + scene_id + ' in the project (or no level open).')
         return director
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def set_script_scene_status(project: unreal.CinemafyScriptProject, scene_id: str, status: unreal.CinemafySceneStatus) -> bool:
         """Sets a scene's production status (NOT_STARTED, BLOCKING, RECORDED, DIRECTED, FINAL, CUT).
@@ -740,7 +767,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     # --- Cast, sets and previs ----------------------------------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def build_cast_and_sets(project: unreal.CinemafyScriptProject) -> str:
         """Adds a cast entry for every speaking character and a set for every location of a script project, matching
@@ -757,7 +784,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
                 for m in project.get_editor_property('cast_members')]
         return '{} entr(ies) added. Cast: {}'.format(added, '; '.join(cast))
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def place_mark(mark_name: str, set_name: str = '') -> unreal.CinemafyMark:
         """Drops a named Cinemafy Mark where the viewport is looking. Previs sends characters to marks named the way
@@ -772,7 +799,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyStoryLibrary.place_mark(mark_name, set_name)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def previs_scene(project: unreal.CinemafyScriptProject, scene_id: str, record: bool = True) -> str:
         """Stages a scene straight from the script: cast on set, continuity applied, a choreography per character
@@ -789,7 +816,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyStoryLibrary.previs_scene(project, scene_id, record)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
@@ -806,7 +833,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         count = unreal.CinemafyStoryLibrary.generate_scratch_voices(project, scene_id, replace_existing_scratch)
         return '{} line(s) voiced.'.format(count)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def assign_recorded_voices(project: unreal.CinemafyScriptProject, content_folder: str) -> str:
         """Swaps scratch reads for recorded voice-over: sounds in the folder named by line id or <scene>_<line>
@@ -822,7 +849,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         count = unreal.CinemafyStoryLibrary.assign_recorded_voices(project, content_folder)
         return '{} line(s) matched.'.format(count)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def apply_scene_mood(project: unreal.CinemafyScriptProject, scene_id: str, light_the_level: bool = False) -> str:
         """Reads a scene's mood from its heading and words (time of day, action / tense / sad / warm..., weather) and
@@ -839,7 +866,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyStoryLibrary.apply_scene_mood(project, scene_id, light_the_level)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_extras(direction: str, location: unreal.Vector, extra_classes: list, count: int = 4, radius: float = 1200.0) -> unreal.CinemafyExtras:
         """Puts directable background characters on set: "crew works at consoles" (at Cinemafy Marks named console),
@@ -856,8 +883,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         Returns:
             The Cinemafy Extras actor.
         """
-        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
-        extras = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.CinemafyExtras, location)
+        extras = unreal.get_editor_subsystem(unreal.EditorActorSubsystem).spawn_actor_from_class(unreal.CinemafyExtras, location)
         extras.set_editor_property('direction', direction)
         extras.set_editor_property('extra_classes', extra_classes)
         extras.set_editor_property('count', count)
@@ -865,7 +891,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         extras.populate()
         return extras
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def render_dailies(project: unreal.CinemafyScriptProject, scene_id: str = '') -> str:
         """Renders dailies with Movie Render Queue (720p JPEG frames, in play-in-editor), one job per scene sequence.
@@ -881,7 +907,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         jobs = unreal.CinemafyStoryLibrary.render_dailies(project, scene_id)
         return '{} daily job(s) rendering to Saved/Cinemafy/Dailies.'.format(jobs)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_review_note(project: unreal.CinemafyScriptProject, scene_id: str, text: str, at_seconds: float = -1.0) -> bool:
         """Adds a review note to a scene (shown on the Story Board and in the checklist until resolved).
@@ -897,7 +923,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyStoryLibrary.add_review_note(project, scene_id, text, at_seconds)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def export_paperwork(project: unreal.CinemafyScriptProject) -> str:
         """Writes production paperwork: voice-over scripts per actor (Markdown + CSV, line ids as file names),
@@ -912,9 +938,29 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyStoryLibrary.export_paperwork(project)
 
+    @_tool
+    @staticmethod
+    def import_sample_story(build_set: bool = True) -> str:
+        """Imports Cinemafy's sample script (a three-scene bridge confrontation) and, optionally, builds a small set
+        for it in front of the viewport (floor, crate, marks) and casts template characters if the project has them.
+
+        Args:
+            build_set: Also build the sample set in the open level.
+
+        Returns:
+            The breakdown report, and what the set builder did.
+        """
+        project = unreal.CinemafyTutorialLibrary.import_sample_script()
+        if not project:
+            raise RuntimeError('The sample script was not found in the plugin.')
+        report = project.get_editor_property('breakdown_report')
+        if build_set:
+            report += '\n' + unreal.CinemafyTutorialLibrary.build_sample_set(project)
+        return report
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def edit_at_playhead(operation: str) -> bool:
         """Runs a Premiere-style edit on the open Level Sequence at the playhead. Ripple edits move every
@@ -946,7 +992,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise ValueError('Unknown edit: ' + operation + '. Use one of ' + ', '.join(operations))
         return bool(operations[operation]())
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_transition_at_nearest_cut(transition: unreal.CinemafyTransition, seconds: float = 0.7,
                                       wipe_direction: unreal.CinemafyWipeDirection = unreal.CinemafyWipeDirection.ALTERNATE) -> bool:
@@ -964,7 +1010,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         CinemafyTools._require_open_sequence()
         return unreal.CinemafyEditLibrary.add_transition_at_nearest_cut(transition, seconds, wipe_direction)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def add_title_at_playhead(style: unreal.CinemafyTitleStyle, title: str, subtitle: str = '', body: str = '',
                               seconds: float = 4.0) -> bool:
@@ -990,7 +1036,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         card.set_editor_property('duration', seconds)
         return unreal.CinemafyEditLibrary.add_title_at_playhead(card)
 
-    @toolset_registry.tool_call
+    @_tool
     @staticmethod
     def duck_music_under_dialogue(duck_decibels: float = -10.0) -> int:
         """Dips the sequence's music under every other sound (dialogue), with smooth ramps.

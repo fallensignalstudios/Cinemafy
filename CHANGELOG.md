@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.13.0: "Storytellers"
+The whole workflow is in [STORYTELLING](Docs/STORYTELLING.md).
+
+- **First-run tutorial:**
+  - A step-by-step walk from script to cut scene, with do-it-for-me buttons. It opens on a project's first
+    session and lives in the Hub afterwards.
+  - It stays off in unattended, commandlet and test runs, and as soon as any Cinemafy MCP tool is called
+    (the toolset reports each call).
+  - Sample story, sample set builder, and a branching game-script sample.
+- **Cast & Sets:**
+  - Script characters map to level actors or Blueprints, with performer profiles, starting weapons, a player
+    flag and scratch voices.
+  - Continuity **Looks** attach props, swap materials, add tags and keep a limp to a walk; Blueprints can also
+    react through `CinemafyContinuityReceiver`.
+  - Locations map to levels and ambience.
+  - **Cinemafy Marks** name the places the script talks about.
+- **Previs This Scene:** stages a scene straight from the script.
+  - Cast on set and dressed for continuity.
+  - A choreography per character from the action verbs, marks and targets.
+  - Lines on cue: beats can now wait for a specific line of another character.
+  - Mood, sequence and director set up, then recorded and cut.
+  - A report of what couldn't be staged.
+- **Story Board:** every scene as a card by act and chapter, colored by progress.
+  - Previs, Open and Direct on each card.
+  - Takes kept side by side, and scenes can be reordered.
+  - Master sequences per act and for the whole story.
+- **Voices:**
+  - Scratch voice-over from the platform's speech (macOS, Windows, Linux).
+  - Recorded voice-over swapped in by line id.
+  - Talking faces: audio-driven `Talk` curves baked onto Cinemafy Face.
+- **Branching stories for games:**
+  - Choices, diverts, flags and conditional scenes in the script.
+  - `UCinemafyStorySubsystem` plays them in game with choice UI, skipping, save/restore, and the player's own
+    pawn in their scenes.
+  - `Cinemafy Scene Trigger`.
+- **Mood from the script:** time of day, feeling and weather pick the director style, temp music, ambience
+  and, optionally, the sun and sky.
+- **Foley** under recorded takes, by event.
+- **Cinemafy Extras:** background life directed in a sentence.
+- **Dailies** with Movie Render Queue, and **review notes** on scenes.
+- **Paperwork:** voice-over scripts per actor, subtitles, a localization string table, shot lists and an HTML
+  storyboard.
+- Line ids on script dialogue; new MCP tools for all of the above.
+- New dependencies:
+  - Plugin: MovieRenderPipeline.
+  - Runtime modules: InputCore, AIModule.
+  - Editor modules: DesktopPlatform, the MovieRenderPipeline modules, ImageWrapper, Projects.
+
 ## 0.12.0: "Productions"
 - **Planned traversal routes:**
   - Vault and climb beats square up to the obstacle's face when the approach is oblique. They used to

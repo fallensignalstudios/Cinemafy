@@ -36,7 +36,8 @@ public class CinemafyEditor : ModuleRules
 			"MovieRenderPipelineCore",
 			"MovieRenderPipelineEditor",
 			"MovieRenderPipelineRenderPasses",
-			"ImageWrapper"
+			"ImageWrapper",
+			"Projects"
 		});
 	}
 }

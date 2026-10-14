@@ -23,6 +23,24 @@ Try it with [samples/TheBridge.fountain](samples/TheBridge.fountain).
 | Game scripts | `KADE: line` dialogue, `[Scene: Hangar]` / `SCENE 12: Hangar` markers, and `MISSION 3: Blackout`, `CHAPTER 2`, `LEVEL`, `QUEST` or `EPISODE` markers, even with no blank lines. |
 | Act markers | `ACT ONE`, `ACT 2`, `PART III`, `PROLOGUE`, `EPILOGUE`, `COLD OPEN`, or `#` sections. |
 
+## Branching (games)
+
+Choices, diverts and flags go right in the script:
+
+- `* [Choice] -> target ~ flag`
+- `{condition}` before a choice
+- `-> target` to divert
+- `~ flag` to set a flag, and `? flag` to make a scene conditional
+
+They are played in game by the Story Player. See [STORYTELLING](STORYTELLING.md#8-games-the-story-player)
+and `samples/Mutiny_Branching.txt`.
+
+## Line ids and voice-over
+
+Every dialogue line gets a stable **line id**: speaker initials plus a hash of who says what. Voice-over
+files, subtitles and localization key on it, and recorded or scratch audio stays attached to its line
+across re-imports.
+
 ## Structure, marked or inferred
 
 **Acts** come from the script's own markers when it has them.

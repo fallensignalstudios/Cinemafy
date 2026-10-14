@@ -1,0 +1,28 @@
+Title: Mutiny (branching sample)
+
+MISSION 1: The Bridge
+[Scene: Bridge]
+Kade walks to the console. She draws her pistol.
+KADE: Stand down, Admiral.
+THANE: Make me.
+* [Spare him] -> Brig ~ spared_thane
+* {has_backup} Call the marines -> Marines Arrive ~ backup_called
+* Shoot him -> Aftermath ~ !spared_thane
+
+[Scene: Marines Arrive]
+Marines rush in and surround Thane.
+VOSS: Hands where we can see them!
+-> Brig
+
+MISSION 2: Consequences
+[Scene: Brig]
+? spared_thane
+THANE: You'll regret this mercy.
+KADE: Maybe. But not today.
+-> END
+
+[Scene: Aftermath]
+? !spared_thane
+Kade kneels by the empty command chair.
+KADE: It's done.
+-> END
