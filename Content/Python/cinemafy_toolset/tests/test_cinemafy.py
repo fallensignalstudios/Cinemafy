@@ -306,6 +306,16 @@ class CinemafyToolsTestCase(ToolCallTestCase):
         self.assertEqual(int.from_bytes(header[16:20], 'big'), 200)
         self.assertEqual(int.from_bytes(header[20:24], 'big'), 100)
 
+    def test_capture_game_view_raises_without_pie(self):
+        """Raises when play-in-editor isn't running."""
+        with self.assertToolRaisesRuntimeError():
+            CinemafyTools.capture_game_view('/tmp/game.png')
+
+    def test_capture_game_view_raises_for_relative_path(self):
+        """Raises when file_path isn't an absolute .png path."""
+        with self.assertToolRaisesRuntimeError():
+            CinemafyTools.capture_game_view('game.png')
+
     def test_eye_focus_distance_is_on_the_subject(self):
         """Solves Eye Focus to the subject's focal-plane distance without waiting for a tick."""
         camera = self._camera()

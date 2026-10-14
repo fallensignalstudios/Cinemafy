@@ -431,6 +431,47 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError(f'The frame could not be written to {file_path}.')
         return file_path
 
+    @toolset_registry.tool_call
+    @staticmethod
+    def capture_game_view(file_path: str) -> str:
+        """Saves what the player sees during play-in-editor, including Cinemafy's titles, subtitles,
+        transitions and letterbox bars, to a PNG. The file appears within a few frames, after this
+        returns; poll for it.
+
+        Args:
+            file_path: Absolute path of the .png to write. Existing files are overwritten.
+
+        Returns:
+            The path the image will be written to.
+        """
+        import os
+        if not file_path.lower().endswith('.png') or not os.path.isabs(file_path):
+            raise ValueError('file_path must be an absolute path ending in .png.')
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
+        if world is None:
+            raise RuntimeError('Play-in-editor is not running. Start it first.')
+
+        shots = os.path.join(unreal.Paths.convert_relative_path_to_full(unreal.Paths.screen_shot_dir()))
+        before = set(os.listdir(shots)) if os.path.isdir(shots) else set()
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        # The engine's own UI-inclusive screenshot; it is written at the end of a later frame.
+        unreal.SystemLibrary.execute_console_command(world, 'Shot showui')
+
+        state = {'ticks': 0}
+
+        def collect(_delta):
+            state['ticks'] += 1
+            new = [f for f in (os.listdir(shots) if os.path.isdir(shots) else []) if f not in before and f.lower().endswith('.png')]
+            if new or state['ticks'] > 300:
+                unreal.unregister_slate_post_tick_callback(state['handle'])
+                if new:
+                    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                    os.replace(os.path.join(shots, sorted(new)[-1]), file_path)
+
+        state['handle'] = unreal.register_slate_post_tick_callback(collect)
+        return file_path
+
     # --- Helpers ----------------------------------------------------------------------
 
     # --- Choreography -------------------------------------------------------------------
