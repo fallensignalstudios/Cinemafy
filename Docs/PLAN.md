@@ -16,4 +16,4 @@ test or revert one at a time. Status is updated as work lands.
 | 9 | **Shot Browser v2:** director reasons on cards, Direct / Re-roll / Learn buttons, pacing strip | The storyboard becomes the director's control room | ✅ |
 | 10 | **Continuity checker:** 180° across the actual cuts, jump cuts, flash cuts, all in one report | Catch editing mistakes in any sequence, hand-cut or directed | ✅ |
 | 11 | **Cinemafy Hub:** one dockable panel for every tool | The Tools menu is getting long | ✅ |
-| 12 | **Docs:** getting-started guide, changelog, architecture notes | So future-you (and teammates) can pick it up fast | ⏳ |
+| 12 | **Docs:** getting-started guide, changelog, architecture notes | So future-you (and teammates) can pick it up fast | ✅ |

@@ -6,7 +6,9 @@ Cinemafy packages the rules real DPs, focus pullers and colorists follow into on
 cinema lens kits, coverage shots that frame themselves, human camera feel, eye-tracked focus,
 living MetaHuman eyes and grading looks. It was built for *Sovereign Call*'s in-engine cutscenes.
 
-> Status: **v0.1 scaffold (beta)**. The core systems are in. See the [roadmap](Docs/ROADMAP.md) for what's next.
+> Status: **v0.6 (beta)**. New here? Start with **[Getting Started](Docs/GETTING_STARTED.md)** (15 minutes to a
+> directed scene). Also see the [changelog](CHANGELOG.md), [architecture](Docs/ARCHITECTURE.md),
+> [roadmap](Docs/ROADMAP.md) and [build notes](Docs/BUILD_NOTES.md).
 
 ---
 
@@ -257,7 +259,8 @@ their own curves to `SpeechCurves`, or key `ManualSpeechEnergy`. Tune `SpeechThr
 Cinemafy.uplugin
 Source/
   Cinemafy/            Runtime: components, anim node, lens/look/framing libraries
-  CinemafyEditor/      Editor: Tools menu, Shot Browser, undoable actions
+  CinemafyEditor/      Editor: Tools menu, Hub, Shot Browser, undoable actions
   CinemafyAnimGraph/   Anim Blueprint node (UncookedOnly)
+Docs/                  Getting started, architecture, roadmap, build notes, plan
 Docs/ROADMAP.md
 ```
