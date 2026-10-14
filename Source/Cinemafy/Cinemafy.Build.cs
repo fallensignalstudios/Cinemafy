@@ -26,7 +26,8 @@ public class Cinemafy : ModuleRules
 			"MotionWarping",
 			"DeveloperSettings",
 			"InputCore",
-			"AIModule"
+			"AIModule",
+			"Projects"
 		});
 	}
 }

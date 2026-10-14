@@ -5,8 +5,9 @@ workflow. On a project's first editor session, the same walk-through opens as a 
 back any time from **Hub > Tutorial**.
 
 ```
-Script ─► Story Board ─► Cast & Sets ─► Scratch voices ─► Previs ─► Refine ─► Cut together ─► Dailies & paperwork
-                                                                                   └─► Story Player (games)
+Script ─► Story Board ─► Cast & Sets ─► Scratch voices ─► Pre-flight ─► Previs ─► Refine ─► Cut together ─► Dailies ─► Final render
+   ▲                                                                                          └─► Story Player (games)
+   └── revisions: re-import, Update Changed
 ```
 
 ## 1. Bring the script
@@ -34,7 +35,10 @@ Every scene appears as a card, grouped by act and chapter.
 - **Card buttons:** Previs, Open (the scene's sequence) and Direct. The **...** menu has status, staging
   without recording, dressing the cast, mood, lighting, scratch voices, review notes, dailies, takes, and
   moving the scene earlier or later.
-- **Toolbar:** Import, Cast & Sets, Scratch Voices, Map Scenes, Cut Together, Dailies, Paperwork, Checklist.
+- **Badges:** Out of date (the pages changed since it was staged), rewritten or new in this revision, lines
+  to re-record, open notes and continuity warnings.
+- **Toolbar:** Import, Cast & Sets, Scratch Voices, Update Changed, Map Scenes, Cut Together, Dailies, Final
+  Render, Pre-flight, Paperwork, Checklist.
 
 ## 3. Cast & Sets
 
@@ -85,9 +89,27 @@ hero shots.
 `<scene>_<line>` (`2_1_3_04`). Then **Assign Recorded Voices** swaps them in. Re-Direct a scene and the cut
 re-times to the real performances.
 
-## 5. Previs
+## 5. Pre-flight and Previs
 
-**Previs** on a card stages the scene from the script:
+**Previs** on a card first says what it will change in the level, and runs the **pre-flight check**:
+
+| Finding | Fix button |
+| --- | --- |
+| No cast yet, or no set for the location | Build Cast & Sets |
+| A character isn't on set and has no Character Class | Cast a template character (GASP / Third Person), or open Cast & Sets |
+| No mark or prop for a place the script names | Place the mark (in front of the camera; drag it where it belongs) |
+| Not enough start marks for the characters brought in | Place a start mark |
+| No nav mesh | Add a Nav Mesh Bounds Volume over the cast and marks |
+| Lines with no voice | Scratch voices |
+| The scene is set in another level | Open that level |
+| The script changed since it was staged | Update Changed |
+
+It also lists what Previs won't stage (sentences it doesn't understand), continuity warnings and open notes.
+**Fix All** runs every fix except opening another level. Go ahead with blockers left, and Previs does what it
+can. The board's **Pre-flight** button checks the whole project, and `check_scene` (MCP) does the same with
+`fix=True` to fix as well.
+
+Then Previs stages the scene from the script:
 
 1. The cast is put on set: found by label, or spawned at start marks.
 2. Each character is dressed for continuity.
@@ -132,6 +154,10 @@ in play. In edited sequences they hold their loops, because takes don't record e
 **Mood:** **Set the mood** applies the director style, music and ambience for the scene's time of day and
 feeling. **Light the set** also turns the level's sun and sky to the time of day.
 
+**Performance from the page:** parentheticals set each line's emotion and intensity, so `(furious)` plays
+furious in the face, the body and the cut, and `(whispering)` whispers in the scratch voice. See
+[SCRIPTS](SCRIPTS.md#parentheticals).
+
 **Foley:** set sounds for impact, takeoff, land, draw, holster, roll and body_fall under **Project Settings
 > Cinemafy > Foley Sounds**. Directed takes then get a **Cinemafy Foley** track at those moments.
 
@@ -142,6 +168,19 @@ feeling. **Light the set** also turns the level's sun and sky to the time of day
 - **Map Scenes:** finds Scene Directors already in the level by their lines, and updates progress.
 - **Dailies:** Movie Render Queue, 720p frames per scene, to `Saved/Cinemafy/Dailies`. This replaces the
   jobs in the editor's render queue.
+- **Final Render:** the delivery render, from the toolbar (the film or an act) or a card's **...** menu (one
+  scene):
+  - 1080p or 4K, cinematic quality and 8 temporal samples
+  - PNG frames (EXR over MCP when the engine has it)
+  - the mixed audio as WAV
+  - to `Saved/Cinemafy/Final/<project>/<scene, act or Film>`
+  - `render_final` (MCP) can also encode a movie through Movie Render Queue's command-line encoder (set up
+    ffmpeg under Project Settings).
+  - Acts and the film play in the first staged scene's level.
+  - Like Dailies, it replaces the jobs in the editor's render queue.
+- **Revisions:** re-import a rewritten script and the board flags what changed. **Update Changed** brings
+  staged scenes up to the new pages without losing hand edits, and lines to re-record land in the paperwork.
+  See [SCRIPTS](SCRIPTS.md#revisions).
 - **Review notes:** add them on cards. Open notes show on the board and in the checklist.
 - **Paperwork** (`Saved/Cinemafy/Paperwork`):
   - voice-over recording scripts per actor (Markdown + CSV, with cues, directions, line-id file names and
@@ -191,3 +230,6 @@ closed:
   won't open on its own in that project again
 
 Reopen it from **Hub > Tutorial**.
+
+The same goes for confirmations: Previs, Dailies, Final Render and Light the set ask first in the editor UI, but
+MCP tools and Blueprint/Python calls never ask.

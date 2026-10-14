@@ -12,6 +12,9 @@
 #include "CinemafyMood.h"
 #include "CinemafyExtras.h"
 #include "GameFramework/Pawn.h"
+#include "Interfaces/IPluginManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafyFramingLibrary.h"
@@ -1278,6 +1281,80 @@ bool FCinemafyRevisionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("...and was never staged, so it isn't out of date"), Scenes[1]->IsOutOfDate());
 	TestEqual(TEXT("The brig is new"), static_cast<int32>(Scenes[2]->Revision), static_cast<int32>(ECinemafySceneRevision::New));
 	TestTrue(TEXT("The report counts it all"), Project->RevisionReport.Contains(TEXT("1 rewritten, 1 new, 0 removed, 1 line(s) to re-record")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGoldenSampleTest, "Cinemafy.Golden.StagesTheSampleScript", CinemafyTests::Flags)
+bool FCinemafyGoldenSampleTest::RunTest(const FString& Parameters)
+{
+	// The sample the tutorial imports, end to end: breakdown, continuity, staging, delivery.
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("Cinemafy"));
+	FString Text;
+	if (!Plugin.IsValid() || !FFileHelper::LoadFileToString(Text, *(Plugin->GetBaseDir() / TEXT("Docs/samples/TheBridge.fountain"))))
+	{
+		AddWarning(TEXT("Docs/samples/TheBridge.fountain isn't next to the plugin: golden test skipped."));
+		return true;
+	}
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = UCinemafyScriptLibrary::BreakDownScript(Text, true, 5, Title, Report);
+	TestEqual(TEXT("The sample's title"), Title, FString(TEXT("The Bridge")));
+	TArray<const FCinemafyScriptScene*> Scenes;
+	for (const FCinemafyScriptAct& Act : Acts)
+	{
+		for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+			{
+				Scenes.Add(&Scene);
+			}
+		}
+	}
+	TestEqual(TEXT("Two acts"), Acts.Num(), 2);
+	if (!TestEqual(TEXT("Five scenes"), Scenes.Num(), 5))
+	{
+		return true;
+	}
+
+	TArray<TArray<FCinemafyStagedBeat>> Staged;
+	for (const FCinemafyScriptScene* Scene : Scenes)
+	{
+		TArray<FString> NotStaged;
+		Staged.Add(UCinemafyPrevisLibrary::StageScene(*Scene, NotStaged));
+		TestTrue(FString::Printf(TEXT("Scene %s stages something"), *Scene->Id), Staged.Last().Num() > 0);
+	}
+	auto Find = [](const TArray<FCinemafyStagedBeat>& Beats, const TCHAR* Who, TFunction<bool(const FCinemafyStagedBeat&)> Test)
+	{
+		return Beats.FindByPredicate([Who, &Test](const FCinemafyStagedBeat& B) { return B.Character == Who && Test(B); });
+	};
+
+	// The bridge: Kade off the lift, gun drawn; Thane answers without turning, then turns.
+	const FCinemafyStagedBeat* Lift = Find(Staged[0], TEXT("KADE"), [](const FCinemafyStagedBeat& B) { return B.Prompt == TEXT("walk") && B.Place == TEXT("lift"); });
+	TestNotNull(TEXT("Kade steps off the lift"), Lift);
+	TestNotNull(TEXT("Kade draws her pistol"), Find(Staged[0], TEXT("KADE"), [](const FCinemafyStagedBeat& B) { return B.Prompt == TEXT("pistol"); }));
+	const FCinemafyStagedBeat* MakeMe = Find(Staged[0], TEXT("ADMIRAL THANE"), [](const FCinemafyStagedBeat& B) { return B.Line == TEXT("Make me."); });
+	TestTrue(TEXT("Thane's answer waits for Kade and keeps its direction"), MakeMe && MakeMe->WaitFor == TEXT("KADE") && MakeMe->LineDirection == TEXT("(not turning)"));
+
+	// The hangar fight: the vault over the crate, and the kill aimed at Thane.
+	const FCinemafyStagedBeat* Vault = Find(Staged[2], TEXT("KADE"), [](const FCinemafyStagedBeat& B) { return B.Prompt == TEXT("vault"); });
+	TestTrue(TEXT("Kade vaults the cargo crate"), Vault && Vault->Place.Contains(TEXT("crate")));
+	TestNotNull(TEXT("Kade's kill is aimed at Thane"), Find(Staged[2], TEXT("KADE"), [](const FCinemafyStagedBeat& B) { return B.Target == TEXT("ADMIRAL THANE") && B.Line.IsEmpty(); }));
+
+	// Continuity: the pistol comes along; the med bay puts it away.
+	TestTrue(TEXT("Kade carries her pistol into the hangar"), Scenes[2]->CarriedIn.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("KADE") && F.Fact.Contains(TEXT("pistol")); }));
+	TestNotNull(TEXT("She holsters it in the med bay"), Find(Staged[3], TEXT("KADE"), [](const FCinemafyStagedBeat& B) { return B.Prompt.Contains(TEXT("holster")); }));
+
+	// Every line reads as a delivery without surprises, and the parenthetical one is still a calm read.
+	for (const FCinemafyScriptScene* Scene : Scenes)
+	{
+		for (const FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+			{
+				const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(Line.Direction, Line.Text);
+				TestTrue(FString::Printf(TEXT("A sane read of \"%s\""), *Line.Text), Delivery.Rate > 0.f && Delivery.Volume > 0.f && Delivery.Intensity >= 0.f && Delivery.Intensity <= 1.f);
+			}
+		}
+	}
 	return true;
 }
 

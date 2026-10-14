@@ -17,7 +17,9 @@
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "MoviePipelineAntiAliasingSetting.h"
 #include "MoviePipelineDeferredPasses.h"
+#include "MoviePipelineGameOverrideSetting.h"
 #include "MoviePipelineImageSequenceOutput.h"
 #include "MoviePipelineOutputSetting.h"
 #include "MoviePipelinePIEExecutor.h"
@@ -149,6 +151,155 @@ int32 UCinemafyStoryLibrary::RenderDailies(UCinemafyScriptProject* Project, cons
 		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: rendering %d daily(ies) to %s."), Jobs, *Root);
 	}
 	return Jobs;
+}
+
+namespace CinemafyFinalRender
+{
+	/** A pipeline setting by class path, for the ones that live in optional modules (EXR, WAV, the encoder). */
+	UMoviePipelineSetting* AddByPath(UMoviePipelinePrimaryConfig* Config, const TArray<const TCHAR*>& Paths)
+	{
+		for (const TCHAR* Path : Paths)
+		{
+			UClass* Class = FindObject<UClass>(nullptr, Path);
+			if (!Class)
+			{
+				Class = LoadObject<UClass>(nullptr, Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+			}
+			if (Class && Class->IsChildOf(UMoviePipelineSetting::StaticClass()))
+			{
+				return Config->FindOrAddSettingByClass(Class);
+			}
+		}
+		return nullptr;
+	}
+}
+
+FString UCinemafyStoryLibrary::RenderFinal(UCinemafyScriptProject* Project, const FString& What, bool b4K, bool bEXR, int32 TemporalSamples, bool bEncodeMovie)
+{
+	using namespace CinemafyFinalRender;
+	UMoviePipelineQueueSubsystem* Queues = GEditor ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!Project || !Queues || !World)
+	{
+		return TEXT("Not rendered: no script project, render queue or level.");
+	}
+	if (Queues->IsRendering())
+	{
+		return TEXT("Not rendered: a render is already running.");
+	}
+
+	// What to render: a scene, an act's master, or the film.
+	ULevelSequence* Sequence = nullptr;
+	FSoftObjectPath Map(World);
+	FString Name;
+	TArray<FString> Report;
+	if (What.StartsWith(TEXT("act:")))
+	{
+		const FString ActId = What.Mid(4).TrimStartAndEnd();
+		FCinemafyScriptAct* Act = Project->Acts.FindByPredicate([&ActId](const FCinemafyScriptAct& A) { return A.Id == ActId; });
+		if (!Act)
+		{
+			return FString::Printf(TEXT("Not rendered: no act %s."), *ActId);
+		}
+		if (Act->MasterSequence.IsNull())
+		{
+			BuildMasterSequences(Project);
+		}
+		Sequence = Act->MasterSequence.LoadSynchronous();
+		Name = FString::Printf(TEXT("Act%s"), *ActId);
+	}
+	else if (What.IsEmpty() || What.Equals(TEXT("film"), ESearchCase::IgnoreCase))
+	{
+		if (Project->FilmSequence.IsNull())
+		{
+			BuildMasterSequences(Project);
+		}
+		Sequence = Project->FilmSequence.LoadSynchronous();
+		Name = TEXT("Film");
+	}
+	else if (FCinemafyScriptScene* Scene = Project->FindScene(What))
+	{
+		Sequence = Scene->Sequence.LoadSynchronous();
+		if (!Scene->Level.IsNull())
+		{
+			Map = Scene->Level.ToSoftObjectPath();
+		}
+		Name = Scene->Id.Replace(TEXT("."), TEXT("_"));
+	}
+	if (!Sequence)
+	{
+		return FString::Printf(TEXT("Not rendered: \"%s\" has no sequence yet (Previs or Direct it, or Cut Together for acts and the film)."), *What);
+	}
+	if (!What.IsEmpty() && !Project->FindScene(What))
+	{
+		// Masters play every scene in one level: the first staged scene's.
+		for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+		{
+			if (!Scene->Level.IsNull())
+			{
+				Map = Scene->Level.ToSoftObjectPath();
+				break;
+			}
+		}
+	}
+
+	UMoviePipelineQueue* Queue = Queues->GetQueue();
+	Queue->DeleteAllJobs();
+	UMoviePipelineExecutorJob* Job = Queue->AllocateNewJob(UMoviePipelineExecutorJob::StaticClass());
+	Job->JobName = FString::Printf(TEXT("Final %s"), *Name);
+	Job->Sequence = FSoftObjectPath(Sequence);
+	Job->Map = Map;
+
+	UMoviePipelinePrimaryConfig* Config = Job->GetConfiguration();
+	Config->FindOrAddSettingByClass(UMoviePipelineDeferredPassBase::StaticClass());
+	if (UMoviePipelineAntiAliasingSetting* AntiAliasing = Cast<UMoviePipelineAntiAliasingSetting>(Config->FindOrAddSettingByClass(UMoviePipelineAntiAliasingSetting::StaticClass())))
+	{
+		AntiAliasing->SpatialSampleCount = 1;
+		AntiAliasing->TemporalSampleCount = FMath::Clamp(TemporalSamples, 1, 64);
+		AntiAliasing->bOverrideAntiAliasing = true;
+		AntiAliasing->AntiAliasingMethod = EAntiAliasingMethod::AAM_None;
+		AntiAliasing->EngineWarmUpCount = 32;
+	}
+	Config->FindOrAddSettingByClass(UMoviePipelineGameOverrideSetting::StaticClass());
+
+	bool bExrFrames = false;
+	if (bEXR)
+	{
+		bExrFrames = AddByPath(Config, { TEXT("/Script/MovieRenderPipelineRenderPasses.MoviePipelineImageSequenceOutput_EXR") }) != nullptr;
+		if (!bExrFrames)
+		{
+			Report.Add(TEXT("EXR output isn't available in this engine: rendering PNG."));
+		}
+	}
+	if (!bExrFrames)
+	{
+		Config->FindOrAddSettingByClass(UMoviePipelineImageSequenceOutput_PNG::StaticClass());
+	}
+	const bool bAudio = AddByPath(Config, { TEXT("/Script/MovieRenderPipelineCore.MoviePipelineWaveOutput"), TEXT("/Script/MovieRenderPipelineRenderPasses.MoviePipelineWaveOutput") }) != nullptr;
+	if (!bAudio)
+	{
+		Report.Add(TEXT("WAV output isn't available in this engine: no audio mixdown."));
+	}
+	if (bEncodeMovie && !AddByPath(Config, { TEXT("/Script/MovieRenderPipelineCore.MoviePipelineCommandLineEncoder"), TEXT("/Script/MovieRenderPipelineRenderPasses.MoviePipelineCommandLineEncoder") }))
+	{
+		Report.Add(TEXT("The command-line encoder isn't available: frames and audio only."));
+	}
+
+	const FString Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cinemafy") / TEXT("Final") / CinemafyPaperwork::ProjectFolderName(Project) / Name);
+	const FIntPoint Resolution = b4K ? FIntPoint(3840, 2160) : FIntPoint(1920, 1080);
+	if (UMoviePipelineOutputSetting* Output = Cast<UMoviePipelineOutputSetting>(Config->FindOrAddSettingByClass(UMoviePipelineOutputSetting::StaticClass())))
+	{
+		Output->OutputDirectory.Path = Folder;
+		Output->OutputResolution = Resolution;
+		Output->FileNameFormat = TEXT("{sequence_name}.{frame_number}");
+	}
+	Queues->RenderQueueWithExecutor(UMoviePipelinePIEExecutor::StaticClass());
+
+	Report.Insert(FString::Printf(TEXT("Rendering %s (%s) at %dx%d, %d temporal samples, %s frames%s%s, to %s."), *Name, *Sequence->GetName(), Resolution.X, Resolution.Y,
+		FMath::Clamp(TemporalSamples, 1, 64), bExrFrames ? TEXT("EXR") : TEXT("PNG"), bAudio ? TEXT(" + WAV audio") : TEXT(""), bEncodeMovie ? TEXT(" + a movie") : TEXT(""), *Folder), 0);
+	const FString Text = FString::Join(Report, TEXT("\n"));
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: %s"), *Text);
+	return Text;
 }
 
 bool UCinemafyStoryLibrary::AddReviewNote(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Text, float AtSeconds)

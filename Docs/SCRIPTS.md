@@ -41,6 +41,49 @@ Every dialogue line gets a stable **line id**: speaker initials plus a hash of w
 files, subtitles and localization key on it, and recorded or scratch audio stays attached to its line
 across re-imports.
 
+## Parentheticals
+
+A line's parenthetical is how it's played. Cinemafy reads it for a feeling, how strongly, and how it
+sounds:
+
+| Parenthetical | Played as |
+| --- | --- |
+| `(shouting)`, `(furious)`, `(angrily)`, `(roaring)` | angry, strong, louder and quicker |
+| `(whispering)`, `(quietly)`, `(under her breath)` | soft and low (scratch voices whisper) |
+| `(through tears)`, `(sobbing)`, `(sadly)` | sad |
+| `(terrified)`, `(scared)`, `(trembling)` | afraid |
+| `(shocked)`, `(stunned)` | surprised |
+| `(disgusted)`, `(revolted)` | disgusted |
+| `(coldly)`, `(flatly)`, `(sarcastic)` | cold and restrained |
+| `(smiling)`, `(laughing)`, `(warmly)` | happy |
+| `(nervous)`, `(hesitant)`, `(uneasy)` | worried, slower |
+| `(firmly)`, `(determined)`, `(defiant)` | determined |
+
+Directors made from the script set each line's emotion and intensity from it. That steers the face, the body
+casting and the cut. Scratch voices use the pace, volume and whisper. A line with no parenthetical that is
+written in capitals, or has `!!`, is shouted. `(V.O.)` and `(O.S.)` are left alone.
+
+## Revisions
+
+Re-import a revised script (the asset's **Import** button, or `reimport_script_project`) and Cinemafy compares
+it with what you had. Every scene keeps its production work (status, sequence, takes, notes, director) when its
+heading or first line still match. The project's **Revision Report** lists:
+
+- scenes **rewritten**, **new** and **removed** (removed scenes' sequences and directors stay in the project)
+- lines to **re-record:** rewritten lines that had real voice-over. The old words are kept beside the new ones
+  for the booth, the paperwork marks them, and **Assign Recorded Voices** clears the flag once a new take is in.
+
+A scene staged (Previs, or a director made from it) from older pages is **Out of date** on the Story Board.
+**Update Changed** (board toolbar, or `update_changed_scenes`) brings the open level's out-of-date scenes up to
+the new pages:
+
+- previs'd scenes are re-staged without recording. Choreographies changed by hand since Previs made them are
+  kept, renamed `Edited_...` and out of takes, so you can copy your beats across.
+- directors get their lines refilled. Lines whose words didn't change keep every tweak (speaker, listener,
+  audio, emotion).
+
+`script_revision` reports the same over MCP.
+
 ## Structure, marked or inferred
 
 **Acts** come from the script's own markers when it has them.

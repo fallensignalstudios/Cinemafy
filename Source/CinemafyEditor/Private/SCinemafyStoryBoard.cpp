@@ -69,6 +69,18 @@ namespace CinemafyStoryBoardUI
 			"Dailies render with Movie Render Queue to Saved/Cinemafy/Dailies. This replaces the jobs in the editor's render queue. Go ahead?")) == EAppReturnType::Ok;
 	}
 
+	/** Asks first (it replaces the render queue and takes a while), then renders and says where it went. */
+	void RenderFinalAsked(UCinemafyScriptProject* P, const FString& What, bool b4K)
+	{
+		const FText Ask = FText::Format(NSLOCTEXT("CinemafyStoryBoard", "FinalConfirm",
+			"Final render of {0} at {1}: full quality frames (PNG) and the mixed audio (WAV) through Movie Render Queue, to Saved/Cinemafy/Final. It replaces the jobs in the editor's render queue and can take a while. Go ahead?"),
+			FText::FromString(What.IsEmpty() ? FString(TEXT("the whole film")) : What), b4K ? FText::FromString(TEXT("4K")) : FText::FromString(TEXT("1080p")));
+		if (FMessageDialog::Open(EAppMsgType::OkCancel, Ask) == EAppReturnType::Ok)
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::RenderFinal(P, What, b4K, false, 8, false)));
+		}
+	}
+
 	FString AskText(const FText& Title, const FText& Hint)
 	{
 		FString Result;
@@ -285,6 +297,41 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 						UCinemafyStoryLibrary::RenderDailies(P, FString());
 					}
 				})) ]
+			+ SWrapBox::Slot()
+			[
+				SNew(SComboButton)
+				.ToolTipText(LOCTEXT("FinalTip", "The delivery render: full quality frames and mixed audio for the film or an act."))
+				.ButtonContent()[ SNew(STextBlock).Text(LOCTEXT("Final", "Final Render")) ]
+				.OnGetMenuContent_Lambda([this]()
+				{
+					FMenuBuilder Menu(true, nullptr);
+					TWeakObjectPtr<UCinemafyScriptProject> Weak = Project;
+					auto Add = [&Menu, Weak](const FText& Label, const FString& What, bool b4K)
+					{
+						Menu.AddMenuEntry(Label, FText::GetEmpty(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([Weak, What, b4K]()
+						{
+							if (UCinemafyScriptProject* P = Weak.Get())
+							{
+								CinemafyStoryBoardUI::RenderFinalAsked(P, What, b4K);
+							}
+						})));
+					};
+					if (const UCinemafyScriptProject* P = Project.Get())
+					{
+						Add(LOCTEXT("FinalFilm", "The film (1080p)"), FString(), false);
+						Add(LOCTEXT("FinalFilm4K", "The film (4K)"), FString(), true);
+						for (const FCinemafyScriptAct& ScriptAct : P->Acts)
+						{
+							Add(FText::Format(LOCTEXT("FinalAct", "Act {0}: {1} (1080p)"), FText::FromString(ScriptAct.Id), FText::FromString(ScriptAct.Title)), TEXT("act:") + ScriptAct.Id, false);
+						}
+					}
+					else
+					{
+						Menu.AddMenuEntry(LOCTEXT("FinalNeedProject", "Import or pick a script first"), FText::GetEmpty(), FSlateIcon(), FUIAction());
+					}
+					return Menu.MakeWidget();
+				})
+			]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Preflight", "Pre-flight"), LOCTEXT("PreflightTip", "Check the whole project for what's missing (cast, marks, nav mesh, voices, revisions) and fix it."),
 				WithProject([](UCinemafyScriptProject* P)
 				{
@@ -541,6 +588,8 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 						UCinemafyStoryLibrary::RenderDailies(P, SceneId);
 					}
 				});
+				Entry(LOCTEXT("FinalScene", "Final render (1080p)"), [SceneId](UCinemafyScriptProject* P) { CinemafyStoryBoardUI::RenderFinalAsked(P, SceneId, false); });
+				Entry(LOCTEXT("FinalScene4K", "Final render (4K)"), [SceneId](UCinemafyScriptProject* P) { CinemafyStoryBoardUI::RenderFinalAsked(P, SceneId, true); });
 				Entry(LOCTEXT("CheckScene", "Pre-flight check"), [SceneId](UCinemafyScriptProject* P)
 				{
 					UCinemafyPreflightLibrary::ShowPreflight(P, SceneId, FText::Format(LOCTEXT("CheckSceneTitle", "Pre-flight: {0}"), FText::FromString(SceneId)), FText::GetEmpty(), FText::GetEmpty());

@@ -881,6 +881,27 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def render_final(project: unreal.CinemafyScriptProject, what: str = '', uhd: bool = False, exr: bool = False,
+                     temporal_samples: int = 8, encode_movie: bool = False) -> str:
+        """The delivery render through Movie Render Queue: cinematic quality, temporal anti-aliasing, PNG (or EXR)
+        frames and the mixed audio as WAV, to Saved/Cinemafy/Final. Replaces the jobs in the editor's render queue
+        and renders in play-in-editor (finishes on its own).
+
+        Args:
+            project: The Script Project asset.
+            what: A scene id ("1.2.3"), "act:<id>" for an act's master, or empty for the whole film.
+            uhd: 3840x2160 instead of 1920x1080.
+            exr: EXR frames instead of PNG (when the engine has EXR output).
+            temporal_samples: Temporal samples per frame (motion blur and anti-aliasing quality).
+            encode_movie: Also encode a movie with the command-line encoder (ffmpeg set up in Project Settings).
+
+        Returns:
+            What is rendering and where it goes, or why it wasn't rendered.
+        """
+        return unreal.CinemafyStoryLibrary.render_final(project, what, uhd, exr, temporal_samples, encode_movie)
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

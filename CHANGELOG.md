@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.14.0: "Rewrites and delivery"
+- **Parentheticals drive the performance:** `(furious)`, `(whispering)`, `(through tears)`, `(coldly)` and friends set
+  each line's emotion and intensity. That in turn drives the face, the body casting and the cut, and the
+  scratch voice's pace, volume and whisper.
+- **Script revisions:**
+  - Re-importing a revised script fingerprints every scene and reports what was rewritten, added and removed
+    (`Revision Report` on the project).
+  - Rewritten lines that had recorded voice-over are flagged **re-record**, with the old words for the booth.
+    The paperwork lists them, and Assign Recorded Voices clears the flag.
+  - Scenes staged from older pages show **Out of date** on the Story Board.
+  - **Update Changed** re-stages them. Choreographies you edited by hand are kept as `Edited_...`, and
+    directors keep the tweaks on lines whose words didn't change.
+- **Pre-flight check:**
+  - Before Previs, the board says what it will change in the level and checks the scene: the cast on set
+    or castable, marks or props for the places the script names, start marks, a nav mesh, voices, the
+    right level, and stale pages.
+  - Fix buttons place the marks, add a nav mesh, read scratch voices, cast a template character, build Cast
+    & Sets or open the right level. **Fix All** does the lot.
+  - A project-wide **Pre-flight** button, and the `check_scene` MCP tool.
+- **Final Render:**
+  - The delivery render for a scene, an act or the film: 1080p or 4K, cinematic quality, temporal
+    anti-aliasing, PNG (or EXR) frames and the mixed audio as WAV.
+  - Optionally a movie through the command-line encoder.
+  - Output in `Saved/Cinemafy/Final`, and the `render_final` MCP tool.
+- **Confirmations:** Previs, Dailies, Final Render and Light the set say what they'll change before they do
+  it, in the editor UI. MCP tools never ask.
+- **Golden test:** `Cinemafy.Golden.StagesTheSampleScript` breaks down and stages the tutorial's sample script
+  end to end.
+- New MCP tools: `script_revision`, `update_changed_scenes`, `check_scene`, `render_final`.
+
 ## 0.13.0: "Storytellers"
 The whole workflow is in [STORYTELLING](Docs/STORYTELLING.md).
 

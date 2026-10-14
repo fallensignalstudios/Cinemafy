@@ -135,6 +135,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 RenderDailies(UCinemafyScriptProject* Project, const FString& SceneId);
 
+	/**
+	 * The delivery render: full quality through Movie Render Queue (cinematic game settings, temporal anti-aliasing),
+	 * PNG frames (or EXR when the engine has it), the mixed audio as WAV, and optionally a movie through the
+	 * command-line encoder (set up ffmpeg under Project Settings > Movie Pipeline CLI Encoder).
+	 * What: a scene id ("1.2.3"), "act:<id>" (an act's master), or empty for the whole film (masters are built if
+	 * missing). Output in Saved/Cinemafy/Final. Replaces the jobs in the editor's render queue. Returns a report.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString RenderFinal(UCinemafyScriptProject* Project, const FString& What, bool b4K = false, bool bEXR = false, int32 TemporalSamples = 8, bool bEncodeMovie = false);
+
 	/** Adds a review note to a scene (from you, now). AtSeconds = where in the scene (-1 = the whole scene). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static bool AddReviewNote(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Text, float AtSeconds = -1.f);
