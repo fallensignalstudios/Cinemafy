@@ -859,4 +859,79 @@ bool FCinemafyFightCoverageTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyTraversalRouteTest, "Cinemafy.Choreography.PlansGapsDropsAndRoutes", CinemafyTests::Flags)
+bool FCinemafyTraversalRouteTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+	const FCinemafyTraversalEnvelope Envelope;
+	auto Gap = [&Envelope](float Width, float Drop)
+	{
+		FCinemafyTraversalCheck Check;
+		Check.GapWidth = Width;
+		Check.DropHeight = Drop;
+		Lib::JudgeGap(Check, Envelope);
+		return Check;
+	};
+	TestEqual(TEXT("A 1.5 m gap is jumped"), Gap(150.f, 0.f).Verdict, ECinemafyTraversalVerdict::Gap);
+	TestEqual(TEXT("A 4 m gap is too wide"), Gap(400.f, 0.f).Verdict, ECinemafyTraversalVerdict::TooFar);
+	TestEqual(TEXT("A far side 1 m up can't be jumped to"), Gap(150.f, -100.f).Verdict, ECinemafyTraversalVerdict::TooTall);
+	TestEqual(TEXT("A 2 m ledge is a drop"), Gap(0.f, 200.f).Verdict, ECinemafyTraversalVerdict::Drop);
+	TestTrue(TEXT("...a 3 m one says it rolls"), Gap(0.f, 300.f).Reason.Contains(TEXT("roll")));
+	TestEqual(TEXT("A 10 m ledge is too high"), Gap(0.f, 1000.f).Verdict, ECinemafyTraversalVerdict::TooHighToDrop);
+
+	// Routes: a run-up straight at the takeoff, never behind the start, and out the far side.
+	FCinemafyTraversalCheck Vault;
+	Vault.Verdict = ECinemafyTraversalVerdict::Vault;
+	Vault.bPossible = true;
+	Vault.TakeoffPoint = FVector(500.f, 0.f, 0.f);
+	Vault.FrontPoint = FVector(500.f, 0.f, 40.f);
+	Vault.FarPoint = FVector(550.f, 0.f, 100.f);
+	Vault.LandingPoint = FVector(640.f, 0.f, 0.f);
+	Lib::PlanTraversalRoute(Vault, FVector::ZeroVector, Envelope);
+	TestTrue(TEXT("The run-up starts a vault's run-up length before the takeoff"), FMath::IsNearlyEqual(Vault.ApproachPoint.X, 500.f - Envelope.VaultRunUp, 1.f));
+	TestTrue(TEXT("...and exits on the landing"), Vault.ExitPoint.Equals(FVector(640.f, 0.f, 0.f), 1.f));
+	FCinemafyTraversalCheck Close = Vault;
+	Lib::PlanTraversalRoute(Close, FVector(450.f, 0.f, 0.f), Envelope);
+	TestTrue(TEXT("Starting close, the run-up never goes behind the performer"), Close.ApproachPoint.X >= 449.f);
+	FCinemafyTraversalCheck Mantle = Vault;
+	Mantle.Verdict = ECinemafyTraversalVerdict::Mantle;
+	Mantle.Depth = 300.f;
+	Lib::PlanTraversalRoute(Mantle, FVector::ZeroVector, Envelope);
+	TestTrue(TEXT("A mantle ends up on top"), FMath::IsNearlyEqual(Mantle.ExitPoint.Z, 100.f, 1.f));
+
+	// Transitions: draw before the strike, brake out of a sprint, roll out of a big landing.
+	CinemafyTests::FTestScene Scene;
+	APawn* Thane = Scene.World->SpawnActor<APawn>();
+	auto MakeBeat = [](const TCHAR* Prompt, AActor* Target = nullptr)
+	{
+		FCinemafyChoreoBeat Beat;
+		Beat.Prompt = Prompt;
+		Beat.Reading = Lib::ReadPrompt(Prompt);
+		Beat.Target = Target;
+		return Beat;
+	};
+	TArray<FCinemafyChoreoBeat> Beats;
+	Beats.Add(MakeBeat(TEXT("sprint")));
+	Beats.Add(MakeBeat(TEXT("jump")));
+	Beats.Last().TraversalCheck = Gap(200.f, 320.f);
+	Beats.Last().TraversalCheck.bPossible = true;
+	Beats.Add(MakeBeat(TEXT("run")));
+	Beats.Add(MakeBeat(TEXT("sword attack"), Thane));
+	Beats.Add(MakeBeat(TEXT("sword attack"), Thane));
+	Beats.Add(MakeBeat(TEXT("shoot"), Thane));
+	Lib::PlanTransitions(Beats, FString(), Envelope);
+	TestTrue(TEXT("Sprint into a jump: brakes first"), Beats[1].Transitions.bBrakeIn);
+	TestEqual(TEXT("...and rolls out of the 3 m landing (it keeps running)"), Beats[1].Transitions.Recovery, ECinemafyRecovery::Roll);
+	TestEqual(TEXT("The first sword attack draws the sword"), Beats[3].Transitions.DrawWeapon, FString(TEXT("sword")));
+	TestTrue(TEXT("...the second doesn't (it's in hand)"), Beats[4].Transitions.DrawWeapon.IsEmpty());
+	TestEqual(TEXT("Shooting with a sword in hand draws a sidearm"), Beats[5].Transitions.DrawWeapon, FString(TEXT("pistol")));
+	TestFalse(TEXT("No brake from a run"), Beats[3].Transitions.bBrakeIn);
+
+	TArray<FCinemafyChoreoBeat> Armed;
+	Armed.Add(MakeBeat(TEXT("sword attack"), Thane));
+	Lib::PlanTransitions(Armed, TEXT("sword"), Envelope);
+	TestTrue(TEXT("Starting with the sword out: nothing to draw"), Armed[0].Transitions.DrawWeapon.IsEmpty());
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

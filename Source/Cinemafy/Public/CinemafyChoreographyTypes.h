@@ -56,6 +56,44 @@ enum class ECinemafyBeatOutcome : uint8
 	TimedOut   UMETA(DisplayName = "Timed Out")
 };
 
+/** How a performer comes out of a big landing. */
+UENUM(BlueprintType)
+enum class ECinemafyRecovery : uint8
+{
+	None     UMETA(DisplayName = "None"),
+	/** Moving on: a roll keeps the momentum. */
+	Roll     UMETA(DisplayName = "Roll"),
+	/** Stopping: a hard landing and a recovery to standing. */
+	Recover  UMETA(DisplayName = "Recover")
+};
+
+/** The in-between moves a real performer adds around a beat, planned from what comes before and after it. */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyBeatTransitions
+{
+	GENERATED_BODY()
+
+	/** Draw this weapon first (the attack needs it and it isn't in hand). Empty = nothing to draw. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Transitions")
+	FString DrawWeapon;
+
+	/** Ease off from a sprint before committing (a gather step before a jump, a check before a strike). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Transitions")
+	bool bBrakeIn = false;
+
+	/** How far out the brake starts (cm before the takeoff / target). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Transitions")
+	float BrakeDistance = 0.f;
+
+	/** How the landing ends (planned from the measured drop; a big fall in the take adds one anyway). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Transitions")
+	ECinemafyRecovery Recovery = ECinemafyRecovery::None;
+
+	/** Plain words, e.g. "draws the sword first, brakes out of the sprint". */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Transitions")
+	FString Summary;
+};
+
 /** How a movement beat treats its mark. */
 UENUM(BlueprintType)
 enum class ECinemafyArrival : uint8
@@ -86,7 +124,9 @@ enum class ECinemafyPerformanceEventKind : uint8
 	Reaction    UMETA(DisplayName = "Reaction"),
 	/** A line of dialogue started / finished. */
 	LineStart   UMETA(DisplayName = "Line Start"),
-	LineEnd     UMETA(DisplayName = "Line End")
+	LineEnd     UMETA(DisplayName = "Line End"),
+	/** An in-between move: a draw before a strike, a brake out of a sprint, a roll out of a landing. */
+	Transition  UMETA(DisplayName = "Transition")
 };
 
 /** One moment in a take: what, when (take seconds), where, and whether it was observed or estimated. */
@@ -148,7 +188,15 @@ enum class ECinemafyTraversalVerdict : uint8
 	TooNarrow      UMETA(DisplayName = "Too Narrow to Stand On"),
 	BadAngle       UMETA(DisplayName = "Approach Too Steep"),
 	NoObstacle     UMETA(DisplayName = "Nothing There"),
-	CannotTraverse UMETA(DisplayName = "Can't Traverse")
+	CannotTraverse UMETA(DisplayName = "Can't Traverse"),
+	/** A gap in the floor: run and jump it from the edge. */
+	Gap            UMETA(DisplayName = "Jump the Gap"),
+	/** The floor drops away: go off the ledge (with a recovery if it's high). */
+	Drop           UMETA(DisplayName = "Drop Down"),
+	/** A gap wider than the performer can jump. */
+	TooFar         UMETA(DisplayName = "Gap Too Wide"),
+	/** A drop higher than the performer can survive gracefully. */
+	TooHighToDrop  UMETA(DisplayName = "Drop Too High")
 };
 
 /** An obstacle measured from where the performer approaches it. Distances in cm. */
@@ -187,6 +235,34 @@ struct CINEMAFY_API FCinemafyTraversalCheck
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
 	FVector LandingPoint = FVector::ZeroVector;
+
+	/** The obstacle face's outward normal (flat); crossing straight means moving along -FaceNormal. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal|Route")
+	FVector FaceNormal = FVector::ZeroVector;
+
+	/** Where to be, squared up and at speed, before committing (the run-up starts here). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal|Route")
+	FVector ApproachPoint = FVector::ZeroVector;
+
+	/** Where the performer leaves the floor (the obstacle's face, or a gap's edge). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal|Route")
+	FVector TakeoffPoint = FVector::ZeroVector;
+
+	/** Where the performer ends up: the landing beyond a vault, the top of a mantle, the far side of a gap. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal|Route")
+	FVector ExitPoint = FVector::ZeroVector;
+
+	/** The approach was too oblique, so the route squares up to the face first. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal|Route")
+	bool bLinedUp = false;
+
+	/** Gaps: edge to edge, in cm. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	float GapWidth = 0.f;
+
+	/** How far below the starting floor the performer lands (negative = higher). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
+	float DropHeight = 0.f;
 
 	/** In plain words: what was measured and why it will or won't work. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Traversal")
@@ -302,6 +378,14 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	/** The words this beat says (Dialogue, else the prompt's quotes). */
 	FText GetLineText() const { return Dialogue.IsEmpty() ? FText::FromString(Reading.Line) : Dialogue; }
 	bool HasLine() const { return DialogueAudio != nullptr || !Dialogue.IsEmpty() || !Reading.Line.IsEmpty(); }
+
+	/** Let the director add the in-between moves (draw before a strike, brake before a jump, roll out of a fall). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Transitions")
+	bool bAutoTransitions = true;
+
+	/** The in-between moves planned for this beat (refreshed when beats change). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Transitions")
+	FCinemafyBeatTransitions Transitions;
 
 	/** Traversal beats: the obstacle as measured from the approach (refreshed when the beat is read). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Director")

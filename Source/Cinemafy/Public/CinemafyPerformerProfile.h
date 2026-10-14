@@ -64,6 +64,22 @@ struct CINEMAFY_API FCinemafyTraversalEnvelope
 	/** Jump height when there's no traversal system. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traversal", meta = (EditCondition = "!bCanTraverse"))
 	float MaxJumpHeight = 60.f;
+
+	/** Widest gap it can jump at a run. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traversal")
+	float MaxGapWidth = 220.f;
+
+	/** Highest drop it can jump or step down. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traversal")
+	float MaxDropHeight = 500.f;
+
+	/** Landings from higher than this get a roll (moving) or a recovery (standing). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traversal")
+	float RecoveryDropHeight = 220.f;
+
+	/** Run-up wanted before a vault (cm of straight approach at speed). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Traversal")
+	float VaultRunUp = 220.f;
 };
 
 /**

@@ -67,8 +67,31 @@ public:
 	static FCinemafyTraversalCheck CheckTraversal(const UObject* WorldContextObject, FVector From, FVector Toward,
 		const FCinemafyTraversalEnvelope& Envelope, float CapsuleRadius, float CapsuleHalfHeight, const TArray<AActor*>& IgnoreActors);
 
+	static FCinemafyTraversalCheck CheckTraversalImpl(const UObject* WorldContextObject, FVector From, FVector Toward,
+		const FCinemafyTraversalEnvelope& Envelope, float CapsuleRadius, float CapsuleHalfHeight, const TArray<AActor*>& IgnoreActors, bool bAllowLineUp);
+
 	/** Turns measured numbers into a verdict (the pure part of CheckTraversal, testable without a level). */
 	static void JudgeTraversal(FCinemafyTraversalCheck& Check, const FCinemafyTraversalEnvelope& Envelope, bool bLandingClear, float CapsuleRadius);
+
+	/** Same for a gap or a ledge: GapWidth (0 = no far side, a plain drop) and DropHeight against the envelope. */
+	static void JudgeGap(FCinemafyTraversalCheck& Check, const FCinemafyTraversalEnvelope& Envelope);
+
+	/**
+	 * Where the route goes once the verdict is in: an approach point squared up to the face with room for a
+	 * run-up (never behind the start), the takeoff, and the exit (landing, top, or far side).
+	 */
+	static void PlanTraversalRoute(FCinemafyTraversalCheck& Check, const FVector& From, const FCinemafyTraversalEnvelope& Envelope);
+
+	/**
+	 * Plans the in-between moves for a whole choreography by walking it in order with the performer's state
+	 * (weapon in hand, gait): draws before strikes that need a weapon not in hand, a brake out of a sprint
+	 * before jumps, climbs and melee, and a roll or recovery after big landings.
+	 * StartingWeapon: what's in hand when the take starts (empty = nothing drawn).
+	 */
+	static void PlanTransitions(TArray<FCinemafyChoreoBeat>& Beats, const FString& StartingWeapon, const FCinemafyTraversalEnvelope& Envelope);
+
+	/** True for weapons that shoot (pistol, pistols, rifle, bow, wand). */
+	static bool IsRangedWeapon(const FString& Weapon);
 
 	/** Builds the lines the Scene Director cuts from: one per recorded beat, timed to the take. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")

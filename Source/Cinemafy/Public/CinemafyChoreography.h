@@ -159,6 +159,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Timing", meta = (ClampMin = "0.0"))
 	float DefaultWaitSeconds = 1.5f;
 
+	/** What the performer is holding when the take starts ("sword", "pistol"...; empty = nothing drawn). Attacks draw what they need. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Transitions")
+	FString StartingWeapon;
+
+	/** Re-plans every beat's in-between moves (draws, brakes, roll-outs) from the beats as they are now. */
+	void RefreshTransitions();
+
 	/** Show lines as subtitles while performing (the director bakes its own subtitles into the cut). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue")
 	bool bShowSubtitlesWhilePerforming = true;
@@ -436,6 +443,15 @@ private:
 	bool bStartedCrouched = false;
 	bool bWorldEnding = false;
 	FVector EffectiveFallbackSpeeds = FVector(180.f, 400.f, 650.f);
+	/** Transitions: what's in hand, a draw waiting for the strike, and the in-between clip playing (no contact on it). */
+	FString CurrentWeapon;
+	FString DrawPendingWeapon;
+	bool bBraked = false;
+	bool bRecovering = false;
+	float AirPeakZ = 0.f;
+	TObjectPtr<UAnimSequenceBase> TransitionClip = nullptr;
+	/** The best library clip for an in-between move (a draw, a roll, a recovery), or null. */
+	UAnimSequenceBase* PickTransitionClip(const FCinemafyPromptReading& Reading);
 	ECinemafyArrival CurrentArrival = ECinemafyArrival::StopAndFace;
 	/** Set when the approach ended short of the mark (geometry); the beat can still act, but it isn't a clean success. */
 	FString ShortfallReason;

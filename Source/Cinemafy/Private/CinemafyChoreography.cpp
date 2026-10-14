@@ -459,10 +459,14 @@ FCinemafyTraversalCheck ACinemafyChoreography::MeasureTraversal(int32 BeatIndex,
 	{
 		for (int32 Index = BeatIndex - 1; Index >= 0; --Index)
 		{
-			const ECinemafyActionKind PreviousKind = Beats[Index].Reading.Kind;
+			const FCinemafyChoreoBeat& Previous = Beats[Index];
+			const ECinemafyActionKind PreviousKind = Previous.Reading.Kind;
 			if (PreviousKind != ECinemafyActionKind::Look && PreviousKind != ECinemafyActionKind::Wait)
 			{
-				From = GetBeatWorldLocation(Index);
+				// After a vault or climb the performer is where the route came out, not where the obstacle was clicked.
+				const bool bRouted = PreviousKind == ECinemafyActionKind::Traverse && Previous.TraversalCheck.bPossible
+					&& !Previous.TraversalCheck.ExitPoint.IsNearlyZero();
+				From = bRouted ? Previous.TraversalCheck.ExitPoint : GetBeatWorldLocation(Index);
 				break;
 			}
 		}
@@ -1049,6 +1053,8 @@ void ACinemafyChoreography::Perform()
 	LineAudio.Reset();
 	LastAddressed.Reset();
 	bWaitingForCue = false;
+	CurrentWeapon = StartingWeapon == TEXT("unarmed") ? FString() : StartingWeapon;
+	RefreshTransitions();
 	HeldPoses.Reset();
 
 	// Characters we act on who have no choreography of their own in this take: we drive their reactions and they're
@@ -1302,6 +1308,18 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 	TickBeat(DeltaSeconds);
 }
 
+void ACinemafyChoreography::RefreshTransitions()
+{
+	UCinemafyChoreographyLibrary::PlanTransitions(Beats, StartingWeapon, GetTraversalEnvelope());
+}
+
+UAnimSequenceBase* ACinemafyChoreography::PickTransitionClip(const FCinemafyPromptReading& Reading)
+{
+	EnsureCandidates();
+	const TArray<int32> Picks = UCinemafyChoreographyLibrary::PickAnimations(Reading, Candidates, 1, UsedAnimations);
+	return Picks.Num() > 0 ? Cast<UAnimSequenceBase>(Candidates[Picks[0]].Path.TryLoad()) : nullptr;
+}
+
 float ACinemafyChoreography::GetLineSeconds(const FCinemafyChoreoBeat& Beat) const
 {
 	if (Beat.DialogueAudio)
@@ -1486,6 +1504,10 @@ void ACinemafyChoreography::StartBeat()
 	StuckTimer = 0.f;
 	ShortfallReason.Reset();
 	FallbackReason.Reset();
+	bBraked = false;
+	bRecovering = false;
+	DrawPendingWeapon.Reset();
+	TransitionClip = nullptr;
 	CurrentArrival = UCinemafyChoreographyLibrary::ResolveArrival(Beats, CurrentBeat);
 	AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, Beat.Prompt);
 
@@ -1513,9 +1535,42 @@ void ACinemafyChoreography::StartBeat()
 		ApplyGait(ECinemafyGait::Run);
 	}
 
-	if (!Reading.Weapon.IsEmpty() && !ApplyOverlay(Reading.Weapon) && Reading.Kind != ECinemafyActionKind::Equip)
+	const FString& DrawWeapon = Beat.Transitions.DrawWeapon;
+	if (!DrawWeapon.IsEmpty() && DrawWeapon != CurrentWeapon && Beat.ChosenAnimations.Num() > 0)
 	{
-		FallbackReason = FString::Printf(TEXT("No overlay state fits \"%s\"; performed in the current stance"), *Reading.Weapon);
+		// The strike needs a weapon that isn't in hand. A long way out, it comes out on the move (overlay only);
+		// close in, it's a proper draw right before the strike.
+		if (Distance > 600.f)
+		{
+			if (ApplyOverlay(DrawWeapon))
+			{
+				CurrentWeapon = DrawWeapon;
+				AddEvent(ECinemafyPerformanceEventKind::Transition, false, FString::Printf(TEXT("draws the %s on the move"), *DrawWeapon));
+			}
+			else
+			{
+				FallbackReason = FString::Printf(TEXT("No overlay state fits \"%s\"; performed in the current stance"), *DrawWeapon);
+			}
+		}
+		else
+		{
+			DrawPendingWeapon = DrawWeapon;
+		}
+	}
+	else if (!Reading.Weapon.IsEmpty())
+	{
+		if (ApplyOverlay(Reading.Weapon))
+		{
+			CurrentWeapon = Reading.Weapon == TEXT("unarmed") ? FString() : Reading.Weapon;
+		}
+		else if (Reading.Kind != ECinemafyActionKind::Equip)
+		{
+			FallbackReason = FString::Printf(TEXT("No overlay state fits \"%s\"; performed in the current stance"), *Reading.Weapon);
+		}
+	}
+	if (Reading.Kind == ECinemafyActionKind::Equip && Reading.Keywords.ContainsByPredicate([](const FString& Word) { return Word.StartsWith(TEXT("holster")); }))
+	{
+		CurrentWeapon.Reset();
 	}
 
 	// Route.
@@ -1545,6 +1600,7 @@ void ACinemafyChoreography::StartBeat()
 	if (Reading.Kind == ECinemafyActionKind::Traverse)
 	{
 		Beat.TraversalCheck = MeasureTraversal(CurrentBeat, &Here);
+		RefreshTransitions(); // The brake and the landing depend on what was just measured.
 		const ECinemafyTraversalVerdict Verdict = Beat.TraversalCheck.Verdict;
 		if (Verdict == ECinemafyTraversalVerdict::StepOver)
 		{
@@ -1553,6 +1609,36 @@ void ACinemafyChoreography::StartBeat()
 		else if (!Beat.TraversalCheck.bPossible && Verdict != ECinemafyTraversalVerdict::NotChecked && Verdict != ECinemafyTraversalVerdict::NoObstacle)
 		{
 			PrecheckFailReason = TEXT("Didn't try: ") + Beat.TraversalCheck.Reason;
+		}
+		else if (Beat.TraversalCheck.bPossible && !Beat.TraversalCheck.TakeoffPoint.IsNearlyZero())
+		{
+			// The planned route: get to the run-up start (around things, on the navmesh), then go straight at it.
+			PathPoints.Reset();
+			PathIndex = 0;
+			const FVector RunUpStart = Beat.TraversalCheck.ApproachPoint;
+			if (FVector::Dist2D(Here, RunUpStart) > 60.f)
+			{
+				if (bUseNavMesh)
+				{
+					if (UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(this, Here, RunUpStart))
+					{
+						if (Path->IsValid() && Path->PathPoints.Num() > 2 && Path->GetPathLength() < FVector::Dist(Here, RunUpStart) * 3.f)
+						{
+							for (int32 Index = 1; Index < Path->PathPoints.Num() - 1; ++Index)
+							{
+								PathPoints.Add(Path->PathPoints[Index]);
+							}
+						}
+					}
+				}
+				PathPoints.Add(RunUpStart);
+			}
+			// Vaults and gaps want speed: walking into one is a mantle, or a short jump.
+			const bool bWantsSpeed = Verdict == ECinemafyTraversalVerdict::Vault || Verdict == ECinemafyTraversalVerdict::Gap;
+			if (bWantsSpeed && !Reading.bHasGait && CurrentGait == ECinemafyGait::Walk)
+			{
+				ApplyGait(ECinemafyGait::Run);
+			}
 		}
 	}
 
@@ -1699,6 +1785,27 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 			}
 		}
 
+		// Out of a full sprint into a jump, a climb or a strike: ease off first (a gather step).
+		if (Beat.Transitions.bBrakeIn && !bBraked && CurrentGait == ECinemafyGait::Sprint)
+		{
+			const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
+			FVector Commit = Point;
+			if (Reading.Kind == ECinemafyActionKind::Traverse && Check.bPossible && !Check.TakeoffPoint.IsNearlyZero())
+			{
+				Commit = Check.TakeoffPoint;
+			}
+			else if (Reading.Kind == ECinemafyActionKind::Attack && Beat.Target)
+			{
+				Commit = Beat.Target->GetActorLocation();
+			}
+			if (FVector::Dist2D(Here, Commit) < Beat.Transitions.BrakeDistance)
+			{
+				ApplyGait(ECinemafyGait::Run);
+				bBraked = true;
+				AddEvent(ECinemafyPerformanceEventKind::Transition, false, TEXT("brakes out of the sprint"));
+			}
+		}
+
 		if (Reading.Kind == ECinemafyActionKind::Traverse && bStepOverOnly)
 		{
 			// Ankle-high: just walk across it.
@@ -1711,10 +1818,50 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		}
 		if (Reading.Kind == ECinemafyActionKind::Traverse)
 		{
-			const float Distance = FVector::Dist2D(Here, Point);
-			// Keep running at it; ask the character's own traversal as soon as it's in range.
-			const FVector Beyond = Point + (Point - Here).GetSafeNormal2D() * 300.f;
-			SteerTo(Beyond, 10.f);
+			const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
+			const bool bRouted = Check.bPossible && !Check.TakeoffPoint.IsNearlyZero();
+
+			// First the run-up start (passing through, no stop), then straight across the face.
+			if (bRouted && PathPoints.IsValidIndex(PathIndex))
+			{
+				if (SteerTo(PathPoints[PathIndex], 45.f))
+				{
+					++PathIndex;
+				}
+				return;
+			}
+
+			const FVector Takeoff = bRouted ? Check.TakeoffPoint : Point;
+			FVector Across = bRouted && !Check.ExitPoint.IsNearlyZero() ? (Check.ExitPoint - Check.TakeoffPoint).GetSafeNormal2D() : FVector::ZeroVector;
+			if (Across.IsNearlyZero())
+			{
+				Across = (Takeoff - Here).GetSafeNormal2D();
+			}
+			const float Distance = FVector::Dist2D(Here, Takeoff);
+			// Aim at a point well past the takeoff on the crossing line, so any sideways offset closes before the jump.
+			SteerTo(Takeoff + Across * 300.f, 10.f);
+
+			if (bRouted && (Check.Verdict == ECinemafyTraversalVerdict::Gap || Check.Verdict == ECinemafyTraversalVerdict::Drop))
+			{
+				// Leave from the edge: a jump for gaps (and drops the prompt asked to jump), a step off for the rest.
+				const float Lead = Performer->GetVelocity().Size2D() * 0.1f + 20.f;
+				const bool bAtEdge = Distance < Lead || FVector::DotProduct(Here - Takeoff, Across) > -5.f;
+				if (bAtEdge)
+				{
+					const bool bJump = Check.Verdict == ECinemafyTraversalVerdict::Gap
+						|| Reading.Keywords.ContainsByPredicate([](const FString& Word) { return Word == TEXT("jump") || Word == TEXT("leap") || Word == TEXT("hop"); });
+					if (bJump)
+					{
+						Performer->Jump();
+					}
+					AddEvent(ECinemafyPerformanceEventKind::ActionStart, false, bJump ? TEXT("jumps from the edge") : TEXT("steps off the edge"));
+					Phase = EPhase::Act;
+					PhaseTime = 0.f;
+					bTraversalStarted = true;
+				}
+				return;
+			}
+
 			if (Distance < TraversalRange && Rig.Traverse)
 			{
 				TraverseRetry -= DeltaSeconds;
@@ -1836,6 +1983,27 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 			case ECinemafyActionKind::Attack:
 			case ECinemafyActionKind::Perform:
 			case ECinemafyActionKind::Equip:
+				if (!DrawPendingWeapon.IsEmpty() && AnimQueue.Num() > 0)
+				{
+					// Draw first, then the strike: the weapon comes out before it's used.
+					const FString Weapon = DrawPendingWeapon;
+					DrawPendingWeapon.Reset();
+					if (ApplyOverlay(Weapon))
+					{
+						CurrentWeapon = Weapon;
+					}
+					else
+					{
+						FallbackReason = FString::Printf(TEXT("No overlay state fits \"%s\"; performed in the current stance"), *Weapon);
+					}
+					if (UAnimSequenceBase* DrawClip = PickTransitionClip(UCinemafyChoreographyLibrary::ReadPrompt(TEXT("draw ") + Weapon)))
+					{
+						AnimQueue.Insert(DrawClip, 0);
+						TransitionClip = DrawClip;
+					}
+					AddEvent(ECinemafyPerformanceEventKind::Transition, false, FString::Printf(TEXT("draws the %s%s"), *Weapon,
+						TransitionClip ? *(TEXT(" (") + GetNameSafe(TransitionClip) + TEXT(")")) : TEXT("")));
+				}
 				if (PlayNextAnimation())
 				{
 					AddEvent(ECinemafyPerformanceEventKind::ActionStart, false, GetNameSafe(ActiveMontage.Get()));
@@ -1864,12 +2032,31 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 	{
 		if (Reading.Kind == ECinemafyActionKind::Traverse)
 		{
+			if (bRecovering)
+			{
+				// Rolling keeps the momentum; a recovery stands its ground.
+				if (Beat.Transitions.Recovery != ECinemafyRecovery::Recover)
+				{
+					SteerTo(Here + Performer->GetActorForwardVector() * 300.f, 10.f, 0.6f);
+				}
+				if (!IsAnimationBusy())
+				{
+					FinishBeat(ECinemafyBeatOutcome::Succeeded);
+				}
+				return;
+			}
+
 			// Keep the input going so the landing flows straight into the next move.
 			SteerTo(Here + Performer->GetActorForwardVector() * 300.f, 10.f, 0.6f);
 			const bool bTraversingNow = IsTraversing();
 			if (bTraversingNow && !bSawTraversal)
 			{
 				AddEvent(ECinemafyPerformanceEventKind::Takeoff, false, FallbackReason.IsEmpty() ? TEXT("traversal") : TEXT("fallback"));
+				AirPeakZ = Here.Z;
+			}
+			if (bTraversingNow)
+			{
+				AirPeakZ = FMath::Max(AirPeakZ, Here.Z);
 			}
 			bSawTraversal |= bTraversingNow;
 			if (PhaseTime > 0.35f && !bSawTraversal && FVector::Dist2D(Here, Point) >= 70.f)
@@ -1882,6 +2069,43 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 			else if (PhaseTime > 0.3f && bSawTraversal && !bTraversingNow)
 			{
 				AddEvent(ECinemafyPerformanceEventKind::Landing);
+
+				// A big landing ends in a roll or a recovery: planned from the measured drop, or seen in the take.
+				const float Fell = AirPeakZ - Here.Z;
+				ECinemafyRecovery Recovery = Beat.Transitions.Recovery;
+				if (Recovery == ECinemafyRecovery::None && Beat.bAutoTransitions && Fell > GetTraversalEnvelope().RecoveryDropHeight)
+				{
+					Recovery = Performer->GetVelocity().Size2D() > 200.f ? ECinemafyRecovery::Roll : ECinemafyRecovery::Recover;
+					Beat.Transitions.Recovery = Recovery;
+				}
+				if (Recovery != ECinemafyRecovery::None)
+				{
+					FCinemafyPromptReading Landing;
+					Landing.Kind = ECinemafyActionKind::Traverse;
+					Landing.Keywords = Recovery == ECinemafyRecovery::Roll
+						? TArray<FString>{ TEXT("roll"), TEXT("land|landing|recovery") }
+						: TArray<FString>{ TEXT("land|landing|recover|recovery"), TEXT("hard|heavy") };
+					UAnimSequenceBase* Clip = PickTransitionClip(Landing);
+					if (!Clip && Recovery == ECinemafyRecovery::Recover)
+					{
+						Landing.Keywords = { TEXT("recover|recovery|getup") };
+						Clip = PickTransitionClip(Landing);
+					}
+					if (Clip)
+					{
+						AnimQueue = { Clip };
+						TransitionClip = Clip;
+						if (PlayNextAnimation())
+						{
+							bRecovering = true;
+							AddEvent(ECinemafyPerformanceEventKind::Transition, false, FString::Printf(TEXT("%s out of a %.0f cm fall (%s)"),
+								Recovery == ECinemafyRecovery::Roll ? TEXT("rolls") : TEXT("recovers"), Fell, *GetNameSafe(Clip)));
+							return;
+						}
+					}
+					FallbackReason = FString::Printf(TEXT("Landed from %.0f cm with no %s clip (add one with \"%s\" in its name)"), Fell,
+						Recovery == ECinemafyRecovery::Roll ? TEXT("roll") : TEXT("landing recovery"), Recovery == ECinemafyRecovery::Roll ? TEXT("roll") : TEXT("land"));
+				}
 				FinishBeat(ECinemafyBeatOutcome::Succeeded);
 			}
 			else if (PhaseTime > 5.f)
@@ -2010,7 +2234,7 @@ bool ACinemafyChoreography::PlayNextAnimation()
 
 	// When does it land? An authored hit/impact/contact notify is taken as the contact. A damage or trace
 	// *window* only brackets it, and with nothing at all it's a labeled guess at 40%.
-	if (Beat.Reading.Kind == ECinemafyActionKind::Attack)
+	if (Beat.Reading.Kind == ECinemafyActionKind::Attack && Clip != TransitionClip)
 	{
 		float Contact = Clip->GetPlayLength() * 0.4f;
 		bool bEstimated = true;
@@ -2376,6 +2600,7 @@ void ACinemafyChoreography::RefreshLabels()
 	{
 		return;
 	}
+	RefreshTransitions();
 
 	for (int32 Index = 0; Index < Beats.Num(); ++Index)
 	{
@@ -2403,6 +2628,10 @@ void ACinemafyChoreography::RefreshLabels()
 		{
 			Text += TEXT("\n") + Check.Reason;
 		}
+		if (!Beat.Transitions.Summary.IsEmpty())
+		{
+			Text += TEXT("\n+ ") + Beat.Transitions.Summary;
+		}
 		Label->SetTextRenderColor(bProblem || bWontWork ? FColor(255, 60, 60) : bFallback ? FColor(255, 170, 40) : ColorForKind(Beat.Reading.Kind));
 		Label->SetText(FText::FromString(Text));
 		Label->RegisterComponent();
@@ -2425,7 +2654,15 @@ void ACinemafyChoreography::DrawPath() const
 		const FCinemafyChoreoBeat& Beat = Beats[Index];
 		const FVector Point = GetBeatWorldLocation(Index);
 		const FColor Color = ColorForKind(Beat.Reading.Kind);
-		if (Beat.Reading.Kind != ECinemafyActionKind::Look)
+		const bool bRoutedTraversal = Beat.Reading.Kind == ECinemafyActionKind::Traverse && Beat.TraversalCheck.bPossible
+			&& !Beat.TraversalCheck.TakeoffPoint.IsNearlyZero();
+		if (bRoutedTraversal)
+		{
+			// The route below draws the run-up and the crossing; the path carries on from where it comes out.
+			DrawDebugLine(World, Previous + FVector(0, 0, 5), Beat.TraversalCheck.ApproachPoint + FVector(0, 0, 5), Color, false, -1.f, SDPG_Foreground, 3.f);
+			Previous = Beat.TraversalCheck.ExitPoint.IsNearlyZero() ? Point : Beat.TraversalCheck.ExitPoint;
+		}
+		else if (Beat.Reading.Kind != ECinemafyActionKind::Look)
 		{
 			DrawDebugLine(World, Previous + FVector(0, 0, 5), Point + FVector(0, 0, 5), Color, false, -1.f, SDPG_Foreground, 3.f);
 			Previous = Point;
@@ -2452,6 +2689,16 @@ void ACinemafyChoreography::DrawPath() const
 			{
 				DrawDebugLine(World, Check.FarPoint, Check.LandingPoint, CheckColor, false, -1.f, SDPG_Foreground, 1.f);
 				DrawDebugCircle(World, Check.LandingPoint + FVector(0, 0, 2), 35.f, 16, CheckColor, false, -1.f, SDPG_Foreground, 1.5f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+			}
+			if (Check.bPossible && !Check.TakeoffPoint.IsNearlyZero())
+			{
+				// The planned route: to the run-up start, the straight run at the takeoff, and out the other side.
+				const FColor RouteColor(120, 220, 255);
+				const FVector Lift(0, 0, 8);
+				DrawDebugLine(World, Check.ApproachPoint + Lift, Check.TakeoffPoint + Lift, RouteColor, false, -1.f, SDPG_Foreground, 2.5f);
+				DrawDebugDirectionalArrow(World, Check.TakeoffPoint + Lift, (Check.ExitPoint.IsNearlyZero() ? Check.FarPoint : Check.ExitPoint) + Lift,
+					25.f, RouteColor, false, -1.f, SDPG_Foreground, 1.5f);
+				DrawDebugCircle(World, Check.ApproachPoint + FVector(0, 0, 3), 22.f, 12, RouteColor, false, -1.f, SDPG_Foreground, 1.5f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 			}
 		}
 		if (Beat.Target)

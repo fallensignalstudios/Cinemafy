@@ -1068,8 +1068,149 @@ void UCinemafyChoreographyLibrary::JudgeTraversal(FCinemafyTraversalCheck& Check
 	Set(ECinemafyTraversalVerdict::TooNarrow, false, FString::Printf(TEXT("%s: too deep to vault (%.0f cm max) and too narrow to stand on"), *Size, Envelope.MaxVaultDepth));
 }
 
+void UCinemafyChoreographyLibrary::JudgeGap(FCinemafyTraversalCheck& Check, const FCinemafyTraversalEnvelope& Envelope)
+{
+	auto Set = [&Check](ECinemafyTraversalVerdict Verdict, bool bPossible, const FString& Reason)
+	{
+		Check.Verdict = Verdict;
+		Check.bPossible = bPossible;
+		Check.Reason = Reason;
+	};
+	const bool bRecovery = Check.DropHeight > Envelope.RecoveryDropHeight;
+	const FString Landing = bRecovery ? TEXT(", lands into a roll") : FString();
+
+	if (Check.GapWidth > 0.f)
+	{
+		const float Climb = -Check.DropHeight;
+		const float MaxUp = Envelope.bCanTraverse ? 60.f : Envelope.MaxJumpHeight;
+		if (Check.GapWidth > Envelope.MaxGapWidth)
+		{
+			Set(ECinemafyTraversalVerdict::TooFar, false, FString::Printf(TEXT("A %.0f cm gap: too wide to jump (%.0f cm max)"), Check.GapWidth, Envelope.MaxGapWidth));
+		}
+		else if (Climb > MaxUp)
+		{
+			Set(ECinemafyTraversalVerdict::TooTall, false, FString::Printf(TEXT("A %.0f cm gap, but the far side is %.0f cm higher (jumps up to %.0f)"), Check.GapWidth, Climb, MaxUp));
+		}
+		else if (Check.DropHeight > Envelope.MaxDropHeight)
+		{
+			Set(ECinemafyTraversalVerdict::TooHighToDrop, false, FString::Printf(TEXT("A %.0f cm gap down to %.0f cm below: too far to fall (%.0f cm max)"),
+				Check.GapWidth, Check.DropHeight, Envelope.MaxDropHeight));
+		}
+		else
+		{
+			Set(ECinemafyTraversalVerdict::Gap, true, FString::Printf(TEXT("A %.0f cm gap: jumps it from the edge%s"), Check.GapWidth, *Landing));
+		}
+		return;
+	}
+
+	if (Check.DropHeight > Envelope.MaxDropHeight)
+	{
+		Set(ECinemafyTraversalVerdict::TooHighToDrop, false, FString::Printf(TEXT("A %.0f cm drop: too high (%.0f cm max)"), Check.DropHeight, Envelope.MaxDropHeight));
+		return;
+	}
+	Set(ECinemafyTraversalVerdict::Drop, true, FString::Printf(TEXT("A %.0f cm drop: goes off the ledge%s"), Check.DropHeight, *Landing));
+}
+
+void UCinemafyChoreographyLibrary::PlanTraversalRoute(FCinemafyTraversalCheck& Check, const FVector& From, const FCinemafyTraversalEnvelope& Envelope)
+{
+	if (Check.TakeoffPoint.IsNearlyZero())
+	{
+		return;
+	}
+	const FVector Takeoff = Check.TakeoffPoint;
+	const FVector Cross = (Takeoff - From).GetSafeNormal2D();
+
+	// Speed matters for vaults and gaps; a mantle or a step down only needs to arrive square.
+	float RunUp = 100.f;
+	switch (Check.Verdict)
+	{
+	case ECinemafyTraversalVerdict::Vault:
+	case ECinemafyTraversalVerdict::Gap:  RunUp = Envelope.VaultRunUp; break;
+	case ECinemafyTraversalVerdict::Jump: RunUp = 150.f; break;
+	case ECinemafyTraversalVerdict::Drop: RunUp = 60.f; break;
+	default: break;
+	}
+	// Never plan a run-up behind where the performer starts.
+	RunUp = FMath::Min(RunUp, FVector::Dist2D(From, Takeoff));
+	Check.ApproachPoint = Takeoff - Cross * RunUp;
+	Check.ApproachPoint.Z = From.Z;
+
+	const FVector OffTheFar = Check.FarPoint + Cross * 60.f;
+	switch (Check.Verdict)
+	{
+	case ECinemafyTraversalVerdict::Mantle:
+		Check.ExitPoint = Check.FrontPoint + Cross * FMath::Min(Check.Depth * 0.5f, 60.f);
+		Check.ExitPoint.Z = Check.FarPoint.Z;
+		break;
+	case ECinemafyTraversalVerdict::StepOver:
+		Check.ExitPoint = Check.FarPoint + Cross * 40.f;
+		break;
+	default:
+		Check.ExitPoint = !Check.LandingPoint.IsNearlyZero() ? Check.LandingPoint : OffTheFar;
+		break;
+	}
+}
+
+namespace CinemafyTraversalProbe
+{
+	/** Walks the floor toward the mark: the first edge where it drops away, and where (if anywhere) it comes back up. */
+	bool FindEdge(const UWorld* World, const FVector& From, const FVector& Direction, float Reach, float FloorZ, float MinHeight,
+		const FCollisionQueryParams& Params, FVector& OutEdge, FVector& OutBelow, FVector& OutFarSide, bool& bOutFarSide)
+	{
+		constexpr float Step = 15.f;
+		constexpr float Abyss = 2000.f;
+		FHitResult Hit;
+		bool bEdge = false;
+		bOutFarSide = false;
+		// An edge is a sudden step down between neighbouring samples (a ramp going down is not an edge).
+		float LastZ = FloorZ;
+		float EdgeZ = FloorZ;
+		for (float Along = 20.f; Along <= Reach; Along += Step)
+		{
+			const FVector Probe = From + Direction * Along;
+			const bool bFloor = World->LineTraceSingleByChannel(Hit, FVector(Probe.X, Probe.Y, LastZ + 50.f), FVector(Probe.X, Probe.Y, LastZ - Abyss), ECC_Visibility, Params);
+			const FVector Ground = bFloor ? Hit.ImpactPoint : FVector(Probe.X, Probe.Y, LastZ - Abyss);
+			if (!bEdge)
+			{
+				if (LastZ - Ground.Z > MinHeight)
+				{
+					bEdge = true;
+					EdgeZ = LastZ;
+					OutEdge = From + Direction * (Along - Step);
+					OutEdge.Z = LastZ;
+					OutBelow = Ground;
+				}
+				else
+				{
+					LastZ = Ground.Z;
+				}
+			}
+			else if (EdgeZ - Ground.Z <= MinHeight)
+			{
+				// The floor comes back near our level: the far side of a gap.
+				bOutFarSide = true;
+				OutFarSide = Ground;
+				return true;
+			}
+		}
+		return bEdge;
+	}
+
+	bool IsRouteClear(const UWorld* World, const FVector& A, const FVector& B, float Radius, float HalfHeight, const FCollisionQueryParams& Params)
+	{
+		const FVector Lift(0.f, 0.f, HalfHeight + 5.f);
+		return !World->SweepTestByChannel(A + Lift, B + Lift, FQuat::Identity, ECC_Pawn, FCollisionShape::MakeCapsule(Radius * 0.9f, HalfHeight * 0.9f), Params);
+	}
+}
+
 FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObject* WorldContextObject, FVector From, FVector Toward,
 	const FCinemafyTraversalEnvelope& Envelope, float CapsuleRadius, float CapsuleHalfHeight, const TArray<AActor*>& IgnoreActors)
+{
+	return CheckTraversalImpl(WorldContextObject, From, Toward, Envelope, CapsuleRadius, CapsuleHalfHeight, IgnoreActors, true);
+}
+
+FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversalImpl(const UObject* WorldContextObject, FVector From, FVector Toward,
+	const FCinemafyTraversalEnvelope& Envelope, float CapsuleRadius, float CapsuleHalfHeight, const TArray<AActor*>& IgnoreActors, bool bAllowLineUp)
 {
 	FCinemafyTraversalCheck Check;
 	const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
@@ -1092,6 +1233,7 @@ FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObje
 	{
 		FloorZ = Hit.ImpactPoint.Z;
 	}
+	const FVector Feet(From.X, From.Y, FloorZ);
 
 	// The front face: the lowest probe height that hits something on the way to (and a little past) the mark.
 	const float Reach = FVector::Dist2D(From, Toward) + 150.f;
@@ -1108,13 +1250,73 @@ FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObje
 			break;
 		}
 	}
+
+	// No face, but maybe the floor ends: a gap to jump or a ledge to go off.
+	FVector Edge, Below, FarSide;
+	bool bFarSide = false;
+	const bool bEdge = CinemafyTraversalProbe::FindEdge(World, Feet, Direction, Reach, FloorZ, Envelope.MinHeight, Params, Edge, Below, FarSide, bFarSide);
+	const bool bEdgeFirst = bEdge && (!bFoundFront || FVector::Dist2D(Feet, Edge) < FVector::Dist2D(Feet, Check.FrontPoint));
+	if (bEdgeFirst)
+	{
+		Check = FCinemafyTraversalCheck();
+		Check.FaceNormal = -Direction;
+		Check.TakeoffPoint = Edge;
+		Check.FrontPoint = Edge;
+		if (bFarSide)
+		{
+			Check.GapWidth = FVector::Dist2D(Edge, FarSide);
+			Check.FarPoint = FarSide;
+			Check.LandingPoint = FarSide + Direction * 60.f;
+			if (World->LineTraceSingleByChannel(Hit, Check.LandingPoint + FVector(0.f, 0.f, 100.f), Check.LandingPoint - FVector(0.f, 0.f, 200.f), ECC_Visibility, Params))
+			{
+				Check.LandingPoint = Hit.ImpactPoint;
+			}
+			Check.DropHeight = FloorZ - Check.LandingPoint.Z;
+		}
+		else
+		{
+			Check.FarPoint = Edge;
+			Check.LandingPoint = Below + Direction * 40.f;
+			Check.DropHeight = FloorZ - Below.Z;
+		}
+		JudgeGap(Check, Envelope);
+		PlanTraversalRoute(Check, Feet, Envelope);
+		return Check;
+	}
+
 	if (!bFoundFront)
 	{
 		Check.Verdict = ECinemafyTraversalVerdict::NoObstacle;
 		Check.Reason = TEXT("Nothing to climb between the last mark and this one (click on the obstacle itself)");
 		return Check;
 	}
+	Check.FaceNormal = FrontNormal;
 	Check.ApproachAngle = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(-Direction, FrontNormal), -1.f, 1.f)));
+
+	// Coming in at an angle: square up to the face first, if there's room for a run-up in front of it.
+	if (bAllowLineUp && Check.ApproachAngle > Envelope.MaxApproachAngle * 0.5f)
+	{
+		FVector LineUp = Check.FrontPoint + FrontNormal * FMath::Max(Envelope.VaultRunUp, CapsuleRadius * 3.f);
+		if (World->LineTraceSingleByChannel(Hit, FVector(LineUp.X, LineUp.Y, FloorZ + 100.f), FVector(LineUp.X, LineUp.Y, FloorZ - 150.f), ECC_Visibility, Params))
+		{
+			LineUp = Hit.ImpactPoint;
+			const FVector FaceFoot(Check.FrontPoint.X, Check.FrontPoint.Y, LineUp.Z);
+			const bool bReachable = CinemafyTraversalProbe::IsRouteClear(World, Feet, LineUp, CapsuleRadius, CapsuleHalfHeight, Params)
+				&& CinemafyTraversalProbe::IsRouteClear(World, LineUp, FaceFoot + FrontNormal * (CapsuleRadius + 10.f), CapsuleRadius, CapsuleHalfHeight, Params);
+			if (bReachable)
+			{
+				FCinemafyTraversalCheck Squared = CheckTraversalImpl(WorldContextObject, LineUp, Check.FrontPoint - FrontNormal * 60.f,
+					Envelope, CapsuleRadius, CapsuleHalfHeight, IgnoreActors, false);
+				if (Squared.Verdict != ECinemafyTraversalVerdict::NoObstacle)
+				{
+					Squared.bLinedUp = true;
+					Squared.ApproachPoint = LineUp;
+					Squared.Reason += FString::Printf(TEXT(" (squares up to it first: the approach was %.0f degrees off)"), Check.ApproachAngle);
+					return Squared;
+				}
+			}
+		}
+	}
 
 	// Its top: drop down onto it from above anything climbable.
 	const float CeilingProbe = FloorZ + FMath::Max(Envelope.MaxMantleHeight, Envelope.MaxJumpHeight) + 150.f;
@@ -1166,6 +1368,7 @@ FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObje
 		if (World->LineTraceSingleByChannel(Hit, FVector(Beyond.X, Beyond.Y, TopZ + 50.f), FVector(Beyond.X, Beyond.Y, FloorZ - 200.f), ECC_Visibility, Params))
 		{
 			Check.LandingPoint = Hit.ImpactPoint;
+			Check.DropHeight = FloorZ - Hit.ImpactPoint.Z;
 			const FVector Standing = Hit.ImpactPoint + FVector(0.f, 0.f, CapsuleHalfHeight + 3.f);
 			bLandingClear = !World->OverlapAnyTestByChannel(Standing, FQuat::Identity, ECC_Pawn,
 				FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight), Params);
@@ -1173,7 +1376,105 @@ FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObje
 	}
 
 	JudgeTraversal(Check, Envelope, bLandingClear, CapsuleRadius);
+	Check.TakeoffPoint = FVector(Check.FrontPoint.X, Check.FrontPoint.Y, FloorZ);
+	PlanTraversalRoute(Check, Feet, Envelope);
 	return Check;
+}
+
+bool UCinemafyChoreographyLibrary::IsRangedWeapon(const FString& Weapon)
+{
+	return Weapon.StartsWith(TEXT("pistol")) || Weapon == TEXT("rifle") || Weapon == TEXT("bow") || Weapon == TEXT("wand");
+}
+
+void UCinemafyChoreographyLibrary::PlanTransitions(TArray<FCinemafyChoreoBeat>& Beats, const FString& StartingWeapon, const FCinemafyTraversalEnvelope& Envelope)
+{
+	auto Hand = [](const FString& Weapon) { return Weapon == TEXT("unarmed") ? FString() : Weapon; };
+	FString InHand = Hand(StartingWeapon);
+	ECinemafyGait Gait = ECinemafyGait::Walk;
+
+	for (int32 Index = 0; Index < Beats.Num(); ++Index)
+	{
+		FCinemafyChoreoBeat& Beat = Beats[Index];
+		const FCinemafyPromptReading& Reading = Beat.Reading;
+		FCinemafyBeatTransitions Plan;
+		TArray<FString> Notes;
+		const ECinemafyGait Moving = Reading.bHasGait ? Reading.Gait : Gait;
+
+		// Weapons: an attack that needs something not in hand draws it first.
+		if (Reading.Kind == ECinemafyActionKind::Equip)
+		{
+			const bool bHolster = Reading.Keywords.ContainsByPredicate([](const FString& Word) { return Word.StartsWith(TEXT("holster")); });
+			InHand = bHolster ? FString() : (Reading.Weapon.IsEmpty() ? InHand : Hand(Reading.Weapon));
+		}
+		else if (Reading.Kind == ECinemafyActionKind::Attack)
+		{
+			FString Needed = Hand(Reading.Weapon);
+			if (Needed.IsEmpty() && Reading.bRanged && !IsRangedWeapon(InHand))
+			{
+				// "shoot" with nothing that shoots in hand: a sidearm.
+				Needed = TEXT("pistol");
+			}
+			if (!Needed.IsEmpty() && Needed != InHand && Beat.bAutoTransitions)
+			{
+				Plan.DrawWeapon = Needed;
+				Notes.Add(FString::Printf(TEXT("draws the %s first"), *Needed));
+			}
+			if (!Needed.IsEmpty())
+			{
+				InHand = Needed;
+			}
+		}
+		else if (!Reading.Weapon.IsEmpty())
+		{
+			InHand = Hand(Reading.Weapon);
+		}
+
+		// Out of a full sprint into a jump, a climb or a strike: a gather step first.
+		const FCinemafyTraversalCheck& Check = Beat.TraversalCheck;
+		const bool bJumpWord = Reading.Keywords.ContainsByPredicate([](const FString& Word) { return Word.StartsWith(TEXT("jump")); });
+		const bool bJumpLike = Reading.Kind == ECinemafyActionKind::Traverse
+			&& (bJumpWord || Check.Verdict == ECinemafyTraversalVerdict::Jump || Check.Verdict == ECinemafyTraversalVerdict::Gap
+				|| Check.Verdict == ECinemafyTraversalVerdict::Mantle);
+		const bool bMeleeCharge = Reading.Kind == ECinemafyActionKind::Attack && !Reading.bRanged && Cast<APawn>(Beat.Target.Get());
+		if (Beat.bAutoTransitions && Moving == ECinemafyGait::Sprint && (bJumpLike || bMeleeCharge))
+		{
+			Plan.bBrakeIn = true;
+			Plan.BrakeDistance = Check.Verdict == ECinemafyTraversalVerdict::Mantle ? 320.f : bMeleeCharge ? 300.f : 240.f;
+			Notes.Add(TEXT("brakes out of the sprint"));
+			Gait = ECinemafyGait::Run;
+		}
+		else
+		{
+			Gait = Moving;
+		}
+
+		// Big landings end in a roll (moving on) or a recovery (stopping).
+		if (Reading.Kind == ECinemafyActionKind::Traverse && Check.bPossible && Beat.bAutoTransitions)
+		{
+			const bool bBigDrop = Check.DropHeight > Envelope.RecoveryDropHeight;
+			const bool bLongJump = Check.Verdict == ECinemafyTraversalVerdict::Gap && Check.GapWidth > Envelope.MaxGapWidth * 0.7f;
+			if (bBigDrop || bLongJump)
+			{
+				bool bMovesOn = false;
+				for (int32 Next = Index + 1; Next < Beats.Num(); ++Next)
+				{
+					const ECinemafyActionKind NextKind = Beats[Next].Reading.Kind;
+					if (NextKind == ECinemafyActionKind::Look || NextKind == ECinemafyActionKind::Say)
+					{
+						continue;
+					}
+					bMovesOn = NextKind == ECinemafyActionKind::Move || NextKind == ECinemafyActionKind::Traverse
+						|| (NextKind == ECinemafyActionKind::Attack && !Beats[Next].Reading.bRanged);
+					break;
+				}
+				Plan.Recovery = bMovesOn ? ECinemafyRecovery::Roll : ECinemafyRecovery::Recover;
+				Notes.Add(bMovesOn ? TEXT("rolls out of the landing") : TEXT("lands hard and recovers"));
+			}
+		}
+
+		Plan.Summary = FString::Join(Notes, TEXT(", "));
+		Beat.Transitions = Plan;
+	}
 }
 
 TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TArray<FCinemafyChoreoBeat>& Beats, AActor* Performer, float TakeDuration)
