@@ -368,6 +368,10 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
 	TObjectPtr<AActor> WaitForLineFrom = nullptr;
 
+	/** How the line is said ("(coldly)", "(shouting)"): sets its feeling and intensity when the director cuts it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
+	FString LineDirection;
+
 	/** Wait for exactly this line of theirs (1 = their first line in the take); 0 = the next line they finish. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line", meta = (ClampMin = "0"))
 	int32 WaitForLineNumber = 0;

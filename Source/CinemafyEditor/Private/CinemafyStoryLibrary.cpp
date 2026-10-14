@@ -461,6 +461,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 			{
 				Added.Dialogue = FText::FromString(Beat.Line);
 				Added.DialogueAudio = Beat.LineAudio.LoadSynchronous();
+				Added.LineDirection = Beat.LineDirection;
 				Added.Listener = Target;
 			}
 			if (AActor* const* Cue = Actors.Find(Beat.WaitFor))
@@ -743,10 +744,20 @@ void UCinemafyStoryLibrary::OpenStoryBoard(UCinemafyScriptProject* Project)
 namespace CinemafyVoices
 {
 	/** Speaks Text into a .wav with the platform's voices. */
-	bool Synthesize(const FString& Text, const FString& Voice, float Rate, const FString& WavPath)
+	bool Synthesize(const FString& Text, const FString& InVoice, float Rate, float Volume, bool bWhisper, const FString& WavPath)
 	{
 		const FString TextPath = FPaths::ChangeExtension(WavPath, TEXT("txt"));
-		FFileHelper::SaveStringToFile(Text, *TextPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+		FString Voice = InVoice;
+		FString Spoken = Text;
+#if PLATFORM_MAC
+		// macOS speech takes loudness inline; a whisper uses the Whisper voice unless the cast picked one.
+		Spoken = FString::Printf(TEXT("[[volm %.2f]] %s"), FMath::Clamp(Volume, 0.1f, 1.f), *Text);
+		if (bWhisper && Voice.IsEmpty())
+		{
+			Voice = TEXT("Whisper");
+		}
+#endif
+		FFileHelper::SaveStringToFile(Spoken, *TextPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 		IFileManager::Get().Delete(*WavPath, false, true, true);
 		int32 Code = -1;
 		FString Out, Err;
@@ -758,15 +769,16 @@ namespace CinemafyVoices
 #elif PLATFORM_WINDOWS
 		const int32 SpeechRate = FMath::Clamp(FMath::RoundToInt((Rate - 1.f) * 10.f), -10, 10);
 		const FString Script = FString::Printf(
-			TEXT("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; %s$s.Rate = %d; ")
+			TEXT("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; %s$s.Rate = %d; $s.Volume = %d; ")
 			TEXT("$s.SetOutputToWaveFile('%s'); $s.Speak([IO.File]::ReadAllText('%s')); $s.Dispose()"),
 			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("try { $s.SelectVoice('%s') } catch {}; "), *Voice.Replace(TEXT("'"), TEXT("''"))),
-			SpeechRate, *WavPath.Replace(TEXT("'"), TEXT("''")), *TextPath.Replace(TEXT("'"), TEXT("''")));
+			SpeechRate, FMath::Clamp(FMath::RoundToInt(Volume * 100.f), 5, 100), *WavPath.Replace(TEXT("'"), TEXT("''")), *TextPath.Replace(TEXT("'"), TEXT("''")));
 		FPlatformProcess::ExecProcess(TEXT("powershell.exe"), *FString::Printf(TEXT("-NoProfile -NonInteractive -Command \"%s\""), *Script), &Code, &Out, &Err);
 #else
 		const int32 WordsPerMinute = FMath::RoundToInt(165.f * Rate);
-		const FString Params = FString::Printf(TEXT("%s-s %d -w \"%s\" -f \"%s\""),
-			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("-v %s "), *Voice), WordsPerMinute, *WavPath, *TextPath);
+		const FString Params = FString::Printf(TEXT("%s-s %d -a %d -w \"%s\" -f \"%s\""),
+			Voice.IsEmpty() ? (bWhisper ? TEXT("-v en+whisper ") : TEXT("")) : *FString::Printf(TEXT("-v %s "), *Voice), WordsPerMinute,
+			FMath::Clamp(FMath::RoundToInt(Volume * 100.f), 10, 200), *WavPath, *TextPath);
 		FPlatformProcess::ExecProcess(TEXT("/usr/bin/espeak-ng"), *Params, &Code, &Out, &Err);
 		if (!FPaths::FileExists(WavPath))
 		{
@@ -833,7 +845,10 @@ int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Proje
 			}
 			const FCinemafyCastMember* Member = Project->FindCastMember(Line.Speaker);
 			const FString Wav = Folder / (Line.LineId + TEXT(".wav"));
-			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), Member ? Member->ScratchRate : 1.f, Wav))
+			// Read the way the script directs it: "(whispering)" quiet and slow, "(shouting)" loud and quick.
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(Line.Direction, Line.Text);
+			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), (Member ? Member->ScratchRate : 1.f) * Delivery.Rate,
+				Delivery.Volume, Delivery.bWhisper, Wav))
 			{
 				Spoken.Add({ &Line, Wav });
 			}

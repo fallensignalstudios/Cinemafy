@@ -1,4 +1,5 @@
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafyScript.h"
 #include "CinemafySettings.h"
 #include "CinemafyModule.h"
 #include "Animation/AnimMontage.h"
@@ -1585,6 +1586,18 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 			Line.bAutoIntensity = Beat.DialogueAudio != nullptr;
 			Line.Intensity = Beat.Reading.bAfterLine ? 0.6f : 0.5f;
 			Line.Moment = bMoving ? ECinemafyMoment::WalkAndTalk : ECinemafyMoment::Dialogue;
+			// The script's parenthetical ("(coldly)") sets how it's played: the face, the body casting, the cut.
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(Beat.LineDirection, Line.Text.ToString());
+			if (Delivery.bHasEmotion)
+			{
+				Line.bSetEmotion = true;
+				Line.Emotion = Delivery.Emotion;
+			}
+			if (!Delivery.Cue.IsEmpty())
+			{
+				Line.Intensity = Delivery.Intensity;
+				Line.Note += FString::Printf(TEXT(" [%s]"), *Delivery.Cue);
+			}
 			SpeechEnd = Beat.LineStartTime + Beat.LineDuration;
 			if (Line.Listener)
 			{

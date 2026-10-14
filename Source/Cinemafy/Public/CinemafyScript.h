@@ -4,6 +4,7 @@
 #include "Engine/DataAsset.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CinemafyProduction.h"
+#include "CinemafyTypes.h"
 #include "CinemafyScript.generated.h"
 
 class ULevelSequence;
@@ -95,6 +96,39 @@ struct CINEMAFY_API FCinemafyContinuityFact
 	/** The script's words for it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Continuity")
 	FString Evidence;
+};
+
+/** How a line is delivered, read from its parenthetical ("(coldly)", "(shouting)", "(through tears)"). */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyDelivery
+{
+	GENERATED_BODY()
+
+	/** The direction names a feeling (otherwise Emotion is left to the director). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	bool bHasEmotion = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	ECinemafyEmotion Emotion = ECinemafyEmotion::Neutral;
+
+	/** 0 = barely there, 1 = all out. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	float Intensity = 0.5f;
+
+	/** Speaking pace for scratch reads (1 = normal). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	float Rate = 1.f;
+
+	/** Loudness for scratch reads (1 = normal). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	float Volume = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	bool bWhisper = false;
+
+	/** The words that set it ("coldly"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Delivery")
+	FString Cue;
 };
 
 /** A review note on a scene (from dailies or a screening). */
@@ -453,6 +487,14 @@ public:
 	/** How well a set of spoken lines matches a scene's dialogue: share of the lines found in it (0..1). */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static float ScoreLinesAgainstScene(const TArray<FString>& SpokenLines, const FCinemafyScriptScene& Scene);
+
+	/**
+	 * How a line should be delivered: its parenthetical ("(coldly)", "(shouting)", "(whispering)", "(through tears)",
+	 * "(laughing)", "(terrified)"...) gives a feeling, an intensity, and a pace and loudness for scratch reads;
+	 * a shouted line in capitals or with "!!" reads as angry and loud even without one.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FCinemafyDelivery ReadDelivery(const FString& Direction, const FString& Text);
 
 	/** Points choice and divert targets at scene ids (after a breakdown or an edit). */
 	static void ResolveStoryTargets(TArray<FCinemafyScriptAct>& Acts);

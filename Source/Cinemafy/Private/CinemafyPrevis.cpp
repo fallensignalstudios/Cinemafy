@@ -288,6 +288,7 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 				// Walk and talk: the line rides on the move it follows.
 				Previous->Line = Line.Text;
 				Previous->LineAudio = Line.Audio;
+				Previous->LineDirection = Line.Direction;
 				if (Previous->Target.IsEmpty())
 				{
 					Previous->Target = Listener;
@@ -302,6 +303,7 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 				Say.Prompt = TEXT("say");
 				Say.Line = Line.Text;
 				Say.LineAudio = Line.Audio;
+				Say.LineDirection = Line.Direction;
 				Say.Target = Listener;
 				Say.Source = Line.Text;
 				if (!LastSpeaker.IsEmpty() && LastSpeaker != Speaker)

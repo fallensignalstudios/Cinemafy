@@ -3442,6 +3442,18 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 		Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
 		Line.Text = FText::FromString(ScriptLine.Text);
 		Line.Audio = ScriptLine.Audio.LoadSynchronous();
+		// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
+		const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
+		if (Delivery.bHasEmotion)
+		{
+			Line.bSetEmotion = true;
+			Line.Emotion = Delivery.Emotion;
+		}
+		if (!Delivery.Cue.IsEmpty())
+		{
+			Line.Intensity = Delivery.Intensity;
+			Line.bAutoIntensity = false;
+		}
 		// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
 		Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
 		Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene->Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));

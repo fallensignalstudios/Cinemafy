@@ -1932,3 +1932,80 @@ bool UCinemafyScriptLibrary::FlagsHold(const TArray<FString>& Conditions, const 
 	}
 	return true;
 }
+
+FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction, const FString& Text)
+{
+	FCinemafyDelivery Delivery;
+	const FString Words = Direction.ToLower();
+
+	struct FTone
+	{
+		TArray<const TCHAR*> Cues;
+		ECinemafyEmotion Emotion;
+		bool bEmotion;
+		float Intensity;
+		float Rate;
+		float Volume;
+		bool bWhisper;
+	};
+	// The first match wins, so the more specific readings come first.
+	static const FTone Tones[] = {
+		{ { TEXT("through tears"), TEXT("crying"), TEXT("sobbing"), TEXT("tearful"), TEXT("in tears"), TEXT("choked"), TEXT("grieving"), TEXT("sadly"), TEXT("broken") },
+			ECinemafyEmotion::Sad, true, 0.7f, 0.85f, 0.7f, false },
+		{ { TEXT("whisper"), TEXT("quietly"), TEXT("softly"), TEXT("hushed"), TEXT("under his breath"), TEXT("under her breath"), TEXT("under their breath"), TEXT("murmur"), TEXT("barely audible") },
+			ECinemafyEmotion::Neutral, false, 0.25f, 0.9f, 0.35f, true },
+		{ { TEXT("shout"), TEXT("yell"), TEXT("scream"), TEXT("roar"), TEXT("furious"), TEXT("angrily"), TEXT("angry"), TEXT("enraged"), TEXT("raging"), TEXT("bellow") },
+			ECinemafyEmotion::Angry, true, 0.9f, 1.1f, 1.f, false },
+		{ { TEXT("terrified"), TEXT("scared"), TEXT("afraid"), TEXT("panic"), TEXT("frightened"), TEXT("trembling"), TEXT("fearful") },
+			ECinemafyEmotion::Fear, true, 0.8f, 1.15f, 0.85f, false },
+		{ { TEXT("shocked"), TEXT("surprised"), TEXT("stunned"), TEXT("astonished"), TEXT("disbelief") },
+			ECinemafyEmotion::Surprise, true, 0.7f, 1.f, 0.95f, false },
+		{ { TEXT("disgust"), TEXT("revolted"), TEXT("repulsed") },
+			ECinemafyEmotion::Disgust, true, 0.6f, 0.95f, 0.9f, false },
+		{ { TEXT("coldly"), TEXT("icily"), TEXT("cold"), TEXT("flatly"), TEXT("dryly"), TEXT("sarcastic"), TEXT("mocking"), TEXT("sneer"), TEXT("contempt"), TEXT("dismissive") },
+			ECinemafyEmotion::Contempt, true, 0.6f, 0.95f, 0.85f, false },
+		{ { TEXT("laugh"), TEXT("amused"), TEXT("smiling"), TEXT("grinning"), TEXT("cheerful"), TEXT("warmly"), TEXT("delighted"), TEXT("happily"), TEXT("chuckl") },
+			ECinemafyEmotion::Happy, true, 0.55f, 1.05f, 0.9f, false },
+		{ { TEXT("worried"), TEXT("nervous"), TEXT("anxious"), TEXT("hesitant"), TEXT("uncertain"), TEXT("tentative"), TEXT("uneasy") },
+			ECinemafyEmotion::Worried, true, 0.45f, 0.95f, 0.8f, false },
+		{ { TEXT("determined"), TEXT("firmly"), TEXT("firm"), TEXT("resolute"), TEXT("steely"), TEXT("commanding"), TEXT("defiant") },
+			ECinemafyEmotion::Determined, true, 0.7f, 0.95f, 1.f, false },
+	};
+	if (!Words.IsEmpty())
+	{
+		for (const FTone& Tone : Tones)
+		{
+			for (const TCHAR* Cue : Tone.Cues)
+			{
+				if (Words.Contains(Cue))
+				{
+					Delivery.bHasEmotion = Tone.bEmotion;
+					Delivery.Emotion = Tone.Emotion;
+					Delivery.Intensity = Tone.Intensity;
+					Delivery.Rate = Tone.Rate;
+					Delivery.Volume = Tone.Volume;
+					Delivery.bWhisper = Tone.bWhisper;
+					Delivery.Cue = Cue;
+					return Delivery;
+				}
+			}
+		}
+	}
+
+	// No direction: a line in capitals, or with "!!", is shouted.
+	int32 Letters = 0, Capitals = 0;
+	for (const TCHAR Char : Text)
+	{
+		Letters += FChar::IsAlpha(Char) ? 1 : 0;
+		Capitals += FChar::IsUpper(Char) ? 1 : 0;
+	}
+	if ((Letters >= 6 && Capitals >= Letters * 0.8f) || Text.Contains(TEXT("!!")))
+	{
+		Delivery.bHasEmotion = true;
+		Delivery.Emotion = ECinemafyEmotion::Angry;
+		Delivery.Intensity = 0.9f;
+		Delivery.Rate = 1.1f;
+		Delivery.Cue = TEXT("shouted");
+	}
+	return Delivery;
+}

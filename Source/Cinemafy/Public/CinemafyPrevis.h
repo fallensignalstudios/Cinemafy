@@ -33,6 +33,10 @@ struct CINEMAFY_API FCinemafyStagedBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	FString Line;
 
+	/** How it's said, as the script writes it ("(coldly)"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
+	FString LineDirection;
+
 	/** The line's audio (scratch or recorded), if the script has it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	TSoftObjectPtr<USoundBase> LineAudio;

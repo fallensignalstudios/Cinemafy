@@ -1201,4 +1201,24 @@ bool FCinemafyMoodTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyDeliveryTest, "Cinemafy.Script.ParentheticalsDriveTheDelivery", CinemafyTests::Flags)
+bool FCinemafyDeliveryTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	const FCinemafyDelivery Cold = Script::ReadDelivery(TEXT("(coldly)"), TEXT("Make me."));
+	TestTrue(TEXT("(coldly) is contempt"), Cold.bHasEmotion && Cold.Emotion == ECinemafyEmotion::Contempt);
+	const FCinemafyDelivery Shout = Script::ReadDelivery(TEXT("(shouting)"), TEXT("Get down"));
+	TestTrue(TEXT("(shouting) is angry and loud"), Shout.Emotion == ECinemafyEmotion::Angry && Shout.Intensity >= 0.85f && Shout.Volume >= 1.f);
+	const FCinemafyDelivery Whisper = Script::ReadDelivery(TEXT("(whispering)"), TEXT("They're here."));
+	TestTrue(TEXT("(whispering) is quiet and slow"), Whisper.bWhisper && Whisper.Volume < 0.5f && Whisper.Rate < 1.f);
+	TestFalse(TEXT("...and leaves the feeling to the scene"), Whisper.bHasEmotion);
+	const FCinemafyDelivery Tears = Script::ReadDelivery(TEXT("(through tears)"), TEXT("He's gone."));
+	TestEqual(TEXT("(through tears) is sad"), Tears.Emotion, ECinemafyEmotion::Sad);
+	const FCinemafyDelivery Caps = Script::ReadDelivery(FString(), TEXT("GET OFF MY BRIDGE"));
+	TestTrue(TEXT("A line in capitals is shouted"), Caps.bHasEmotion && Caps.Emotion == ECinemafyEmotion::Angry);
+	TestFalse(TEXT("A plain line has no direction"), Script::ReadDelivery(FString(), TEXT("Stand down, Admiral.")).bHasEmotion);
+	TestFalse(TEXT("V.O. isn't a feeling"), Script::ReadDelivery(TEXT("(V.O.)"), TEXT("You always did hesitate.")).bHasEmotion);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
