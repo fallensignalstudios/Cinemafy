@@ -166,7 +166,10 @@ nearest beat. Cuts that start a spoken line stay put, so dialogue stays in sync.
 live during `StartConversation` / `DirectLine` (pass the text as `Subtitle`), and Direct keys the
 director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the game. Anything else can
 call **Cinemafy Subtitle Subsystem → Show Subtitle** too, and `bSubtitlesEnabled` hooks into your
-accessibility settings.
+accessibility settings. Subtitles stay up long enough to read (about 17 characters per second, never less
+than the line), and long lines split into two-line chunks at sentence, then clause, then word breaks.
+Text is resolved in the player's language at runtime, so translations are chunked and timed on their
+own length, and CJK text automatically gets shorter chunks and a slower pace.
 
 **Importing a script and takes 📥:**
 - **Import Script From CSV:** set the director's *Script File* to a CSV with any of the columns `Speaker, Listener,

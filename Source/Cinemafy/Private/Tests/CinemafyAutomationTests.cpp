@@ -8,6 +8,7 @@
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafyFramingLibrary.h"
+#include "CinemafySubtitleSubsystem.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -338,6 +339,26 @@ bool FCinemafyLockTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Nudging a cut works"), UCinemafyDirectorLibrary::NudgeCut(Reroll, 1, 0.25f));
 	TestTrue(TEXT("...and keeps shots back to back"),
 		FMath::IsNearlyEqual(Reroll[0].StartTime + Reroll[0].Duration, Reroll[1].StartTime, 0.001f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafySubtitleTest, "Cinemafy.Subtitles.SplitsLongLinesReadably", CinemafyTests::Flags)
+bool FCinemafySubtitleTest::RunTest(const FString& Parameters)
+{
+	const FString Short = TEXT("You weren't easy to find.");
+	TestEqual(TEXT("Short lines stay whole"), UCinemafySubtitleSubsystem::SplitIntoChunks(Short, 84).Num(), 1);
+
+	const FString Long = TEXT("The fleet is scattered across three systems. If we move now, before they regroup, we might still have a chance, but only if the shields hold.");
+	const TArray<FString> Chunks = UCinemafySubtitleSubsystem::SplitIntoChunks(Long, 84);
+	TestTrue(TEXT("Long lines split"), Chunks.Num() >= 2);
+	FString Rejoined;
+	for (const FString& Chunk : Chunks)
+	{
+		TestTrue(TEXT("Every chunk fits"), Chunk.Len() <= 84);
+		Rejoined += (Rejoined.IsEmpty() ? TEXT("") : TEXT(" ")) + Chunk;
+	}
+	TestEqual(TEXT("Nothing is lost"), Rejoined, Long);
+	TestTrue(TEXT("The first split falls at the end of a sentence"), Chunks[0].EndsWith(TEXT(".")));
 	return true;
 }
 
