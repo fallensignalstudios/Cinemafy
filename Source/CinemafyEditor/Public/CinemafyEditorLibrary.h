@@ -111,6 +111,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 DirectSceneInSequencer(ACinemafySceneDirector* Director);
 
+	/**
+	 * Bakes the director's current LastPlan (as planned, or as edited in the Shot Browser) into the open
+	 * sequence, without re-planning. bAtLastSceneStart keeps the scene where it was last placed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 BakeDirectorPlan(ACinemafySceneDirector* Director, bool bAtLastSceneStart = true);
+
 	/** Removes this director's camera cuts from the open sequence (cameras are kept). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 ClearDirectedShots(ACinemafySceneDirector* Director);

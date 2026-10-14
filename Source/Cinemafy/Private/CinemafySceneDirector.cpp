@@ -111,6 +111,16 @@ TArray<FCinemafyLine> ACinemafySceneDirector::GetEffectiveLines() const
 	return Effective;
 }
 
+TArray<FCinemafyLine> ACinemafySceneDirector::GetDirectedLines() const
+{
+	return GetEffectiveLines();
+}
+
+TArray<FCinemafyPlannedShot> ACinemafySceneDirector::PlanDirectedLines(const TArray<FCinemafyLine>& InLines) const
+{
+	return UCinemafyDirectorLibrary::PlanScene(InLines, GetStyle(), Seed);
+}
+
 void ACinemafySceneDirector::LearnStyleFromSequence()
 {
 #if WITH_EDITOR
@@ -135,7 +145,8 @@ void ACinemafySceneDirector::QueueShots(const TArray<FCinemafyPlannedShot>& Shot
 
 void ACinemafySceneDirector::StartConversation()
 {
-	LastPlan = UCinemafyDirectorLibrary::PlanScene(GetEffectiveLines(), GetStyle(), Seed);
+	LastDirectedLines = GetDirectedLines();
+	LastPlan = PlanDirectedLines(LastDirectedLines);
 	if (LastPlan.Num() == 0)
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the script has no lines with speakers."));
@@ -173,9 +184,10 @@ void ACinemafySceneDirector::UpdateSequencedSubtitle()
 	}
 	ShownSubtitleIndex = SubtitleLineIndex;
 
-	if (Lines.IsValidIndex(SubtitleLineIndex))
+	const TArray<FCinemafyLine>& SubtitleLines = LastDirectedLines.Num() > 0 ? LastDirectedLines : Lines;
+	if (SubtitleLines.IsValidIndex(SubtitleLineIndex))
 	{
-		ShowLineSubtitle(Lines[SubtitleLineIndex]);
+		ShowLineSubtitle(SubtitleLines[SubtitleLineIndex]);
 	}
 	else if (UCinemafySubtitleSubsystem* Subtitles = GetWorld() ? GetWorld()->GetSubsystem<UCinemafySubtitleSubsystem>() : nullptr)
 	{
@@ -357,9 +369,9 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	if (Shot.bLineStart)
 	{
 		// Scripted conversations look the line up; dialogue-system lines carry their own.
-		if (bAutoEnd && Lines.IsValidIndex(Shot.LineIndex))
+		if (bAutoEnd && LastDirectedLines.IsValidIndex(Shot.LineIndex))
 		{
-			ShowLineSubtitle(GetEffectiveLines()[Shot.LineIndex]);
+			ShowLineSubtitle(LastDirectedLines[Shot.LineIndex]);
 		}
 		else if (!bAutoEnd)
 		{

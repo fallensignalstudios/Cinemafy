@@ -1034,10 +1034,9 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		AnalyzeDirectorAudio(Director);
 	}
 
-	const TArray<FCinemafyLine> EffectiveLines = Director->GetEffectiveLines();
-	const FCinemafyDirectorStyle DirectorStyle = Director->GetStyle();
-	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(EffectiveLines, DirectorStyle, Director->Seed);
-	if (Plan.Num() == 0)
+	const TArray<FCinemafyLine> DirectedLines = Director->GetDirectedLines();
+	const TArray<FCinemafyPlannedShot> NewPlan = Director->PlanDirectedLines(DirectedLines);
+	if (NewPlan.Num() == 0)
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
 		return 0;
@@ -1045,8 +1044,29 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 
 	const FScopedTransaction Transaction(LOCTEXT("DirectScene", "Cinemafy: Direct Scene"));
 	Director->Modify();
-	Director->LastPlan = Plan;
+	Director->LastPlan = NewPlan;
+	Director->LastDirectedLines = DirectedLines;
+	return BakeDirectorPlan(Director, false);
+}
+
+int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director, bool bAtLastSceneStart)
+{
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	if (!Director || !MovieScene || Director->LastPlan.Num() == 0)
+	{
+		return 0;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("BakeScene", "Cinemafy: Bake Directed Scene"));
+	Director->Modify();
 	MovieScene->Modify();
+
+	const TArray<FCinemafyPlannedShot>& Plan = Director->LastPlan;
+	const TArray<FCinemafyLine>& EffectiveLines = Director->LastDirectedLines;
+	const FCinemafyDirectorStyle DirectorStyle = Director->GetStyle();
+	Director->LastPlanCameras.Reset();
+	Director->LastPlanCameras.SetNum(Plan.Num());
 
 	UMovieSceneCameraCutTrack* CutTrack = GetOrAddCutTrack(MovieScene);
 	if (!CutTrack)
@@ -1073,13 +1093,14 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	}
 
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
-	const FFrameNumber SceneStart = CinemafySequencer::GetPlayheadTick(MovieScene);
+	const FFrameNumber SceneStart = bAtLastSceneStart ? FFrameNumber(Director->LastSceneStartTick) : CinemafySequencer::GetPlayheadTick(MovieScene);
 	FFrameNumber SceneEnd = SceneStart;
 	TMap<ACineCameraActor*, TArray<FCameraShotWindow>> CameraWindows;
 	Director->LastSceneStartTick = SceneStart.Value;
 
-	for (const FCinemafyPlannedShot& Shot : Plan)
+	for (int32 ShotIndex = 0; ShotIndex < Plan.Num(); ++ShotIndex)
 	{
+		const FCinemafyPlannedShot& Shot = Plan[ShotIndex];
 		const FName ShotTag(*FString::Printf(TEXT("Cinemafy.Shot.%s.%d.%s.%s.%d"), *Director->GetName(), static_cast<int32>(Shot.ShotType),
 			Shot.Subject ? *Shot.Subject->GetName() : TEXT("-"), Shot.Counterpart ? *Shot.Counterpart->GetName() : TEXT("-"), Director->bFlipSide ? 1 : 0));
 
@@ -1103,6 +1124,8 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 			Camera->Tags.Add(ShotTag);
 			ExistingCameras.Add(ShotTag, Camera);
 		}
+
+		Director->LastPlanCameras[ShotIndex] = Camera;
 
 		const FCinemafyDirectorStyle& Style = DirectorStyle;
 		if (Style.bApplyLook)

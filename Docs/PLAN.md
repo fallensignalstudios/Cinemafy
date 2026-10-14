@@ -25,7 +25,7 @@ test or revert one at a time. Status is updated as work lands.
 | # | Update | Status |
 |---|---|---|
 | 13 | **Style assets + archetype presets:** savable `CinemafyDirectorStyle` assets, plus Space Opera Classic (modeled on classic-trilogy craft), Mind-Bender Epic, Symmetry Storybook, Long-Take Tension, Snap Zoom Grindhouse and Golden Hour Lyrical | ✅ |
-| 14 | **Plan / bake split:** re-bake an edited plan without re-planning (foundation for timeline editing) | ⏳ |
+| 14 | **Plan / bake split:** re-bake an edited plan without re-planning (foundation for timeline editing) | ✅ |
 | 15 | **Transitions:** wipes (with the outgoing shot still playing), dissolves, fades through black, match cuts. Scene breaks per line | ⏳ |
 | 16 | **Hold-through and rack focus:** two-shots that hold across an exchange, with focus racking to whoever's talking | ⏳ |
 | 17 | **Walk-and-talk:** tracking-lead and follow shots on a Steadicam-style follow rig, with moving lines auto-detected | ⏳ |

@@ -96,6 +96,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", AdvancedDisplay)
 	int32 LastSceneStartTick = 0;
 
+	/** The lines exactly as last directed (audio-blended intensities, cross-cut order). Subtitles index into these. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", AdvancedDisplay)
+	TArray<FCinemafyLine> LastDirectedLines;
+
+	/** The camera used for each shot of the last plan (same order as LastPlan). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", AdvancedDisplay)
+	TArray<TObjectPtr<ACineCameraActor>> LastPlanCameras;
+
 	/** The last plan, with the director's reasoning for each shot. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan")
 	TArray<FCinemafyPlannedShot> LastPlan;
@@ -135,6 +143,13 @@ public:
 	/** The script as the director will cut it: intensities blended with what the audio says. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
 	TArray<FCinemafyLine> GetEffectiveLines() const;
+
+	/** Everything that will be cut, in order (this director's lines, interleaved with a parallel scene if cross-cutting). */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
+	TArray<FCinemafyLine> GetDirectedLines() const;
+
+	/** Plans the given lines with this director's style and seed. */
+	TArray<FCinemafyPlannedShot> PlanDirectedLines(const TArray<FCinemafyLine>& InLines) const;
 
 	/** Tag on every camera this director creates. */
 	FName GetDirectorTag() const;
