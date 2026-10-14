@@ -2,6 +2,7 @@
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
+#include "SCinemafyHub.h"
 #include "CinemafySceneDirector.h"
 #include "Misc/MessageDialog.h"
 #include "Framework/Application/SlateApplication.h"
@@ -142,6 +143,19 @@ void FCinemafyEditorModule::StartupModule()
 		.SetTooltipText(LOCTEXT("ShotBrowserTabTip", "Film strip of every camera cut in the open Level Sequence."))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyHub::TabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				[
+					SNew(SCinemafyHub)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("HubTab", "Cinemafy"))
+		.SetTooltipText(LOCTEXT("HubTabTip", "Every Cinemafy tool in one panel."))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FCinemafyEditorModule::RegisterMenus));
 }
 
@@ -152,6 +166,7 @@ void FCinemafyEditorModule::ShutdownModule()
 	if (FSlateApplication::IsInitialized())
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyShotBrowser::TabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyHub::TabName);
 	}
 	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(this);
@@ -163,6 +178,11 @@ void FCinemafyEditorModule::RegisterMenus()
 
 	UToolMenu* ToolsMenu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Tools");
 	FToolMenuSection& Section = ToolsMenu->AddSection("Cinemafy", LOCTEXT("CinemafySection", "Cinemafy"));
+
+	Section.AddMenuEntry("CinemafyHub", LOCTEXT("HubMenu", "Cinemafy Hub"),
+		LOCTEXT("HubMenuTip", "Open one panel with every Cinemafy tool."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyHub::TabName); })));
 
 	Section.AddMenuEntry("CinemafyShotBrowser", LOCTEXT("ShotBrowserMenu", "Shot Browser"),
 		LOCTEXT("ShotBrowserMenuTip", "Open a film strip of every camera cut in the open Level Sequence."),

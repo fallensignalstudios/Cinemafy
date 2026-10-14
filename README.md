@@ -19,7 +19,8 @@ living MetaHuman eyes and grading looks. It was built for *Sovereign Call*'s in-
 2. Regenerate project files and build (or just open the `.uproject` and let it compile).
 3. Enable **Cinemafy** under *Edit → Plugins* if it isn't already enabled.
 
-You'll get a **Tools → Cinemafy** menu in the level editor.
+You'll get a **Tools → Cinemafy** menu in the level editor. Its first entry, **Cinemafy Hub**, opens
+one dockable panel with every tool grouped by job: Scene, Shots, Camera, Characters, Review.
 
 ---
 
