@@ -6,6 +6,7 @@
 class ISequencer;
 class ULevelSequence;
 class UMovieScene;
+class UMovieSceneTrack;
 class AActor;
 
 /** Shared helpers for talking to the Level Sequence that's open in Sequencer. */
@@ -31,4 +32,21 @@ namespace CinemafySequencer
 
 	/** Tells Sequencer the sequence's structure changed so its UI refreshes. */
 	void NotifyChanged();
+
+	/**
+	 * Mutes (never deletes) the binding's tracks of the given class, except Keep. Used for the tracks Sequencer adds on its
+	 * own when it binds an object (a transform track, an FK Control Rig track) that would override what Cinemafy drives.
+	 * Returns how many tracks were muted.
+	 */
+	int32 MuteBindingTracks(UMovieScene* MovieScene, const FGuid& Binding, FName TrackClass, const UMovieSceneTrack* Keep = nullptr);
+
+	/** Mutes (never deletes) property tracks animating PropertyName on the binding's child bindings (its components). */
+	int32 MuteChildPropertyTracks(UMovieScene* MovieScene, const FGuid& Binding, FName PropertyName);
+
+	/**
+	 * For a camera just bound into a sequence: Sequencer auto-adds tracks keyed at its current values, which then override
+	 * what Cinemafy drives every frame. Mutes the transform track if the camera rides a follow rig, and the manual focus
+	 * distance track if Eye Focus is pulling focus. Returns how many tracks were muted.
+	 */
+	int32 LetCinemafyDriveCamera(UMovieScene* MovieScene, const FGuid& Binding, const AActor* Camera);
 }

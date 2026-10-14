@@ -50,7 +50,7 @@ struct FCinemafyPendingReaction
 	float ContactTime = 0.f;
 	TWeakObjectPtr<UAnimSequenceBase> Clip;
 	TWeakObjectPtr<UAnimMontage> AttackMontage;
-	ECinemafyReaction Reaction = ECinemafyReaction::Hit;
+	ECinemafyHitReaction Reaction = ECinemafyHitReaction::Hit;
 };
 
 /** Hooks into a performer (gait, traversal, overlay, crouch), found by reflection once per performance. */
@@ -362,7 +362,7 @@ private:
 	void ScheduleReaction(int32 BeatIndex, UAnimMontage* AttackMontage, float ContactTime, bool bFinalStrike);
 	void UpdateReactions(float DeltaSeconds);
 	/** Picks a reaction clip for a defender; OutLead = how long before contact it has to start. */
-	UAnimSequenceBase* PickReaction(ACharacter* Defender, ECinemafyReaction Reaction, float RelativeYaw, float& OutLead);
+	UAnimSequenceBase* PickReaction(ACharacter* Defender, ECinemafyHitReaction Reaction, float RelativeYaw, float& OutLead);
 	TSet<FSoftObjectPath> UsedAnimations;
 
 	UPROPERTY(Transient)

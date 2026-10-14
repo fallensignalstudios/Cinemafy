@@ -316,6 +316,15 @@ class CinemafyToolsTestCase(ToolCallTestCase):
         with self.assertToolRaisesRuntimeError():
             CinemafyTools.capture_game_view('game.png')
 
+    def test_eye_point_is_in_front_of_a_placed_mannequin(self):
+        """Without eye bones, the eye point sits in front of the head the way the mesh faces (+Y for a mesh at yaw 0)."""
+        actor = self.actors.spawn_actor_from_class(unreal.SkeletalMeshActor, _ORIGIN + unreal.Vector(0, 500, 0), unreal.Rotator(0, 0, 0))
+        actor.skeletal_mesh_component.set_skeletal_mesh_asset(unreal.load_asset(_MESH))
+        head = actor.skeletal_mesh_component.get_socket_location('head')
+        eye = unreal.CinemafyFramingLibrary.get_eye_point(actor)
+        self.assertGreater(eye.y - head.y, 5.0)
+        self.assertLess(abs(eye.x - head.x), 1.0)
+
     def test_eye_focus_distance_is_on_the_subject(self):
         """Solves Eye Focus to the subject's focal-plane distance without waiting for a tick."""
         camera = self._camera()

@@ -1202,6 +1202,7 @@ int32 UCinemafyEditLibrary::ApplyMulticamCuts(const TArray<AActor*>& Cameras, co
 			continue;
 		}
 		const FGuid Binding = CinemafySequencer::BindActor(Context.Sequence, Camera);
+		CinemafySequencer::LetCinemafyDriveCamera(Context.MovieScene, Binding, Camera);
 		if (UMovieSceneCameraCutSection* Cut = CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), Start))
 		{
 			Cut->SetRange(TRange<FFrameNumber>(Start, End));

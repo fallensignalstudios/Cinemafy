@@ -52,7 +52,7 @@ public:
 	 * a death, a block or a dodge. RelativeYaw is where the attacker is, seen from the defender (0 = in front, + = right).
 	 */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
-	static FCinemafyPromptReading MakeReactionReading(ECinemafyReaction Reaction, float RelativeYaw);
+	static FCinemafyPromptReading MakeReactionReading(ECinemafyHitReaction Reaction, float RelativeYaw);
 
 	/** "front", "back", "left" or "right" for where a blow comes from. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")

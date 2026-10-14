@@ -107,7 +107,7 @@ struct CINEMAFY_API FCinemafyPerformanceEvent
 
 /** How the target of an attack answers it. */
 UENUM(BlueprintType)
-enum class ECinemafyReaction : uint8
+enum class ECinemafyHitReaction : uint8
 {
 	/** Flinch from the hit, from the side it came from. */
 	Hit        UMETA(DisplayName = "Hit React"),
@@ -157,7 +157,7 @@ struct CINEMAFY_API FCinemafyPromptReading
 
 	/** Attacks: how the target answers the final strike (earlier strikes in a combo get hit reacts, or blocks). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
-	ECinemafyReaction Reaction = ECinemafyReaction::Hit;
+	ECinemafyHitReaction Reaction = ECinemafyHitReaction::Hit;
 
 	/** "combo" / "attack x3" -> how many animations to chain. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
@@ -207,7 +207,7 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	bool bOverrideReaction = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction", meta = (EditCondition = "bOverrideReaction"))
-	ECinemafyReaction Reaction = ECinemafyReaction::Hit;
+	ECinemafyHitReaction Reaction = ECinemafyHitReaction::Hit;
 
 	/** Use this clip for the target's reaction instead of the one the director picks. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Interaction", meta = (EditCondition = "bTargetReacts"))

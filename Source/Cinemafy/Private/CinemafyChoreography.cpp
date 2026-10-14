@@ -1469,7 +1469,8 @@ bool ACinemafyChoreography::IsTraversing() const
 
 namespace
 {
-	UAnimMontage* PlayClipOn(ACharacter* Character, UAnimSequenceBase* Clip, float BlendIn)
+	/** bHoldLastFrame: the character stays in the clip's final pose (a fall) instead of blending back to idle. */
+	UAnimMontage* PlayClipOn(ACharacter* Character, UAnimSequenceBase* Clip, float BlendIn, bool bHoldLastFrame = false)
 	{
 		USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
 		UAnimInstance* Anim = Mesh ? Mesh->GetAnimInstance() : nullptr;
@@ -1479,13 +1480,25 @@ namespace
 		}
 		if (UAnimMontage* Montage = Cast<UAnimMontage>(Clip))
 		{
+			// A montage asset is shared, so it isn't modified; UpdateReactions pauses it before it blends out.
 			return Anim->Montage_Play(Montage, 1.f) > 0.f ? Montage : nullptr;
 		}
-		return Anim->PlaySlotAnimationAsDynamicMontage(Clip, TEXT("DefaultSlot"), BlendIn, 0.25f, 1.f, 1);
+		UAnimMontage* Dynamic = Anim->PlaySlotAnimationAsDynamicMontage(Clip, TEXT("DefaultSlot"), BlendIn, bHoldLastFrame ? 0.f : 0.25f, 1.f, 1);
+		if (Dynamic && bHoldLastFrame)
+		{
+			// The engine's way to hold a montage's last frame: never auto-blend out. The playing instance copies the flag
+			// when play starts, so set it there too (this montage is ours, made just now).
+			Dynamic->bEnableAutoBlendOut = false;
+			if (FAnimMontageInstance* Instance = Anim->GetActiveInstanceForMontage(Dynamic))
+			{
+				Instance->bEnableAutoBlendOut = false;
+			}
+		}
+		return Dynamic;
 	}
 
 	/** How long before the strike lands a reaction has to start: its own hit notify, else a sensible lead for the kind. */
-	float ReactionLead(const UAnimSequenceBase* Clip, ECinemafyReaction Reaction)
+	float ReactionLead(const UAnimSequenceBase* Clip, ECinemafyHitReaction Reaction)
 	{
 		if (Clip)
 		{
@@ -1500,8 +1513,8 @@ namespace
 		}
 		switch (Reaction)
 		{
-		case ECinemafyReaction::Block: return 0.25f;  // the guard comes up before the blow
-		case ECinemafyReaction::Dodge: return 0.3f;   // and the dodge starts before it
+		case ECinemafyHitReaction::Block: return 0.25f;  // the guard comes up before the blow
+		case ECinemafyHitReaction::Dodge: return 0.3f;   // and the dodge starts before it
 		default:                       return 0.06f;  // hit, knockdown and death react on the blow
 		}
 	}
@@ -1512,7 +1525,7 @@ bool ACinemafyChoreography::IsDowned(const ACharacter* Character) const
 	return HeldPoses.ContainsByPredicate([Character](const TPair<TWeakObjectPtr<ACharacter>, TWeakObjectPtr<UAnimMontage>>& Held) { return Held.Key.Get() == Character; });
 }
 
-UAnimSequenceBase* ACinemafyChoreography::PickReaction(ACharacter* Defender, ECinemafyReaction Reaction, float RelativeYaw, float& OutLead)
+UAnimSequenceBase* ACinemafyChoreography::PickReaction(ACharacter* Defender, ECinemafyHitReaction Reaction, float RelativeYaw, float& OutLead)
 {
 	OutLead = ReactionLead(nullptr, Reaction);
 	const USkeletalMeshComponent* Mesh = Defender ? Defender->GetMesh() : nullptr;
@@ -1534,7 +1547,7 @@ UAnimSequenceBase* ACinemafyChoreography::PickReaction(ACharacter* Defender, ECi
 		Catalog = UCinemafyChoreographyLibrary::GatherCandidates(MoveLibrary, Folders, Skeleton);
 	}
 
-	for (const ECinemafyReaction Try : { Reaction, ECinemafyReaction::Hit })
+	for (const ECinemafyHitReaction Try : { Reaction, ECinemafyHitReaction::Hit })
 	{
 		const FCinemafyPromptReading Reading = UCinemafyChoreographyLibrary::MakeReactionReading(Try, RelativeYaw);
 		const TArray<int32> Picks = UCinemafyChoreographyLibrary::PickAnimations(Reading, Catalog, 1, UsedAnimations);
@@ -1547,12 +1560,12 @@ UAnimSequenceBase* ACinemafyChoreography::PickReaction(ACharacter* Defender, ECi
 				if (Try != Reaction)
 				{
 					UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography: no %s reaction for %s; using a hit react."),
-						*StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *GetNameSafe(Defender));
+						*StaticEnum<ECinemafyHitReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *GetNameSafe(Defender));
 				}
 				return Clip;
 			}
 		}
-		if (Try == ECinemafyReaction::Hit || Reaction == ECinemafyReaction::Block || Reaction == ECinemafyReaction::Dodge)
+		if (Try == ECinemafyHitReaction::Hit || Reaction == ECinemafyHitReaction::Block || Reaction == ECinemafyHitReaction::Dodge)
 		{
 			break; // a block or a dodge never quietly turns into a hit
 		}
@@ -1573,15 +1586,15 @@ void ACinemafyChoreography::ScheduleReaction(int32 BeatIndex, UAnimMontage* Atta
 		return;
 	}
 
-	ECinemafyReaction Reaction = Beat.bOverrideReaction ? Beat.Reaction : Beat.Reading.Reaction;
-	if (Reaction == ECinemafyReaction::None)
+	ECinemafyHitReaction Reaction = Beat.bOverrideReaction ? Beat.Reaction : Beat.Reading.Reaction;
+	if (Reaction == ECinemafyHitReaction::None)
 	{
 		return;
 	}
 	// Every strike before a combo's last one gets a hit react (a block stays a block all the way through).
-	if (!bFinalStrike && Reaction != ECinemafyReaction::Block)
+	if (!bFinalStrike && Reaction != ECinemafyHitReaction::Block)
 	{
-		Reaction = ECinemafyReaction::Hit;
+		Reaction = ECinemafyHitReaction::Hit;
 	}
 
 	// Where the strike comes from at contact. A defender facing roughly toward it turns to take it head-on.
@@ -1606,7 +1619,7 @@ void ACinemafyChoreography::ScheduleReaction(int32 BeatIndex, UAnimMontage* Atta
 	if (!Clip)
 	{
 		const FString Why = FString::Printf(TEXT("No %s reaction animation fits %s's skeleton; the target didn't react"),
-			*StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *GetNameSafe(Defender));
+			*StaticEnum<ECinemafyHitReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *GetNameSafe(Defender));
 		if (BeatIndex == CurrentBeat && FallbackReason.IsEmpty())
 		{
 			FallbackReason = Why;
@@ -1639,7 +1652,9 @@ void ACinemafyChoreography::UpdateReactions(float DeltaSeconds)
 		ACharacter* Character = Held.Key.Get();
 		UAnimMontage* Montage = Held.Value.Get();
 		UAnimInstance* Anim = Character && Character->GetMesh() ? Character->GetMesh()->GetAnimInstance() : nullptr;
-		if (Anim && Montage && Anim->Montage_IsPlaying(Montage) && Anim->Montage_GetPosition(Montage) >= Montage->GetPlayLength() - 0.05f)
+		// Pause before the montage's own blend-out starts (by then the fall is already easing back to idle).
+		const float HoldAt = Montage ? Montage->GetPlayLength() - FMath::Max(Montage->BlendOut.GetBlendTime(), 0.05f) : 0.f;
+		if (Anim && Montage && Montage->bEnableAutoBlendOut && Anim->Montage_IsPlaying(Montage) && Anim->Montage_GetPosition(Montage) >= HoldAt)
 		{
 			Anim->Montage_Pause(Montage);
 		}
@@ -1696,8 +1711,8 @@ void ACinemafyChoreography::UpdateReactions(float DeltaSeconds)
 			continue;
 		}
 
-		const bool bGoesDown = Pending.Reaction == ECinemafyReaction::Death || Pending.Reaction == ECinemafyReaction::Knockdown;
-		UAnimMontage* Played = PlayClipOn(Defender, Pending.Clip.Get(), Pending.Reaction == ECinemafyReaction::Block ? 0.15f : 0.06f);
+		const bool bGoesDown = Pending.Reaction == ECinemafyHitReaction::Death || Pending.Reaction == ECinemafyHitReaction::Knockdown;
+		UAnimMontage* Played = PlayClipOn(Defender, Pending.Clip.Get(), Pending.Reaction == ECinemafyHitReaction::Block ? 0.15f : 0.06f, bGoesDown);
 		if (!Played)
 		{
 			Note(FString::Printf(TEXT("%s couldn't play %s"), *GetNameSafe(Defender), *GetNameSafe(Pending.Clip.Get())));

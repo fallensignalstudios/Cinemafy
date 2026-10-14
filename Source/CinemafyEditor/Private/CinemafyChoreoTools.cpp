@@ -754,18 +754,9 @@ namespace CinemafyChoreoTake
 
 			// Binding a skeletal mesh through Sequencer auto-adds an FK Control Rig track, which overrides the
 			// recorded animation with its default pose. Mute it (never delete) so the take plays.
-			const UMovieScene* ConstMovieScene = MovieScene;
-			if (const FMovieSceneBinding* MeshBinding = ConstMovieScene->FindBinding(Binding))
+			if (CinemafySequencer::MuteBindingTracks(MovieScene, Binding, TEXT("MovieSceneControlRigParameterTrack"), Track) > 0)
 			{
-				for (UMovieSceneTrack* Other : MeshBinding->GetTracks())
-				{
-					if (Other && Other != Track && !Other->IsEvalDisabled() && Other->GetClass()->GetFName() == TEXT("MovieSceneControlRigParameterTrack"))
-					{
-						Other->Modify();
-						Other->SetEvalDisabled(true);
-						UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Take: muted a Control Rig track on %s so the recorded body animation plays (not deleted)."), *(*Mesh)->GetName());
-					}
-				}
+				UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Take: muted a Control Rig track on %s so the recorded body animation plays (not deleted)."), *(*Mesh)->GetName());
 			}
 		}
 	}

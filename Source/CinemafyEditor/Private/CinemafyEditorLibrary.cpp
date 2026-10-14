@@ -359,6 +359,7 @@ bool UCinemafyEditorLibrary::AddCameraToOpenSequence(ACineCameraActor* CameraAct
 	MovieScene->Modify();
 
 	const FGuid Binding = CinemafySequencer::BindActor(Sequence, CameraActor);
+	CinemafySequencer::LetCinemafyDriveCamera(MovieScene, Binding, CameraActor);
 
 	if (bAddCameraCut)
 	{
@@ -1475,23 +1476,8 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 
 		const FGuid Binding = CinemafySequencer::BindActor(Sequence, Camera);
 
-		// Binding an actor through Sequencer auto-adds a transform track keyed where the camera stands, which pins a
-		// follow-rig camera in place every frame. Mute it (never delete) so walk-and-talk cameras track their subject.
-		if (Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow)
-		{
-			const UMovieScene* ConstMovieScene = MovieScene;
-			if (const FMovieSceneBinding* CameraBinding = ConstMovieScene->FindBinding(Binding))
-			{
-				for (UMovieSceneTrack* Track : CameraBinding->GetTracks())
-				{
-					if (Track && !Track->IsEvalDisabled() && Track->GetClass()->GetFName() == TEXT("MovieScene3DTransformTrack"))
-					{
-						Track->Modify();
-						Track->SetEvalDisabled(true);
-					}
-				}
-			}
-		}
+		// Don't let the tracks Sequencer just added pin walk-and-talk cameras in place or freeze Eye Focus.
+		CinemafySequencer::LetCinemafyDriveCamera(MovieScene, Binding, Camera);
 
 		const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
 		const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime + Shot.Duration);

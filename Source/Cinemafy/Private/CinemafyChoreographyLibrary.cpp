@@ -306,29 +306,29 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 		if (IsOneOf(Word, { TEXT("kill"), TEXT("finish"), TEXT("slay"), TEXT("execute"), TEXT("finisher") }))
 		{
 			bAttack = true;
-			Reading.Reaction = ECinemafyReaction::Death;
+			Reading.Reaction = ECinemafyHitReaction::Death;
 			continue;
 		}
 		if (IsOneOf(Word, { TEXT("knock"), TEXT("knockdown"), TEXT("launch"), TEXT("floor"), TEXT("flatten"), TEXT("sweep") }))
 		{
 			bAttack = true;
-			Reading.Reaction = ECinemafyReaction::Knockdown;
+			Reading.Reaction = ECinemafyHitReaction::Knockdown;
 			continue;
 		}
 		if (IsOneOf(Word, { TEXT("blocked"), TEXT("parried"), TEXT("deflected"), TEXT("guarded") }))
 		{
-			Reading.Reaction = ECinemafyReaction::Block;
+			Reading.Reaction = ECinemafyHitReaction::Block;
 			continue;
 		}
 		if (IsOneOf(Word, { TEXT("dodged"), TEXT("evaded"), TEXT("missed"), TEXT("whiffed"), TEXT("sidestepped") }))
 		{
-			Reading.Reaction = ECinemafyReaction::Dodge;
+			Reading.Reaction = ECinemafyHitReaction::Dodge;
 			continue;
 		}
 		if (IsOneOf(Word, { TEXT("feint"), TEXT("fake") }))
 		{
 			bAttack = true;
-			Reading.Reaction = ECinemafyReaction::None;
+			Reading.Reaction = ECinemafyHitReaction::None;
 			continue;
 		}
 
@@ -410,14 +410,14 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	}
 
 	// Decide the action. Attacks and traversal win over gait words ("sprint vault", "charge attack").
-	if (bAttack || (Reading.Reaction != ECinemafyReaction::Hit && Others.Num() == 0 && !bTraverse))
+	if (bAttack || (Reading.Reaction != ECinemafyHitReaction::Hit && Others.Num() == 0 && !bTraverse))
 	{
 		// "blocked" / "dodged" alone still means an attack (that the target answers).
 		Reading.Kind = ECinemafyActionKind::Attack;
 		Reading.Repeat = FMath::Clamp(Number > 0 ? Number : 1, 1, 6);
-		if (Reading.Reaction == ECinemafyReaction::Hit && Others.Contains(TEXT("heavy")))
+		if (Reading.Reaction == ECinemafyHitReaction::Hit && Others.Contains(TEXT("heavy")))
 		{
-			Reading.Reaction = ECinemafyReaction::Knockdown;
+			Reading.Reaction = ECinemafyHitReaction::Knockdown;
 		}
 	}
 	else if (bTraverse)
@@ -518,9 +518,9 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	{
 		Summary += FString::Printf(TEXT(" x%d"), Reading.Repeat);
 	}
-	if (Reading.Kind == ECinemafyActionKind::Attack && Reading.Reaction != ECinemafyReaction::Hit)
+	if (Reading.Kind == ECinemafyActionKind::Attack && Reading.Reaction != ECinemafyHitReaction::Hit)
 	{
-		Summary += FString::Printf(TEXT(" -> target %s"), *StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reading.Reaction)).ToString());
+		Summary += FString::Printf(TEXT(" -> target %s"), *StaticEnum<ECinemafyHitReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reading.Reaction)).ToString());
 	}
 	if (Reading.Seconds > 0.f)
 	{
@@ -861,22 +861,22 @@ FString UCinemafyChoreographyLibrary::ReactionDirection(float RelativeYaw)
 	return Yaw > 0.f ? TEXT("right") : TEXT("left");
 }
 
-FCinemafyPromptReading UCinemafyChoreographyLibrary::MakeReactionReading(ECinemafyReaction Reaction, float RelativeYaw)
+FCinemafyPromptReading UCinemafyChoreographyLibrary::MakeReactionReading(ECinemafyHitReaction Reaction, float RelativeYaw)
 {
 	FCinemafyPromptReading Reading;
 	Reading.Kind = ECinemafyActionKind::Perform;
 	switch (Reaction)
 	{
-	case ECinemafyReaction::Knockdown:
+	case ECinemafyHitReaction::Knockdown:
 		Reading.Keywords.Add(TEXT("knockdown|knock|knocked|fall|falldown|down|launch|launched"));
 		break;
-	case ECinemafyReaction::Death:
+	case ECinemafyHitReaction::Death:
 		Reading.Keywords.Add(Concept(TEXT("die")));
 		break;
-	case ECinemafyReaction::Block:
+	case ECinemafyHitReaction::Block:
 		Reading.Keywords.Add(Concept(TEXT("block")));
 		break;
-	case ECinemafyReaction::Dodge:
+	case ECinemafyHitReaction::Dodge:
 		Reading.Keywords.Add(Concept(TEXT("dodge")));
 		break;
 	default:
@@ -889,12 +889,12 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::MakeReactionReading(ECinema
 	static const TMap<FString, FString> Sides = {
 		{ TEXT("front"), TEXT("front|forward|fwd") }, { TEXT("back"), TEXT("back|backward|behind|bwd|rear") },
 		{ TEXT("left"), TEXT("left|lft") }, { TEXT("right"), TEXT("right|rgt") } };
-	if (Reaction != ECinemafyReaction::Block)
+	if (Reaction != ECinemafyHitReaction::Block)
 	{
 		Reading.Keywords.Add(Sides.FindRef(Side));
 	}
 	Reading.Summary = FString::Printf(TEXT("%s from the %s"),
-		*StaticEnum<ECinemafyReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *Side);
+		*StaticEnum<ECinemafyHitReaction>()->GetDisplayNameTextByValue(static_cast<int64>(Reaction)).ToString(), *Side);
 	return Reading;
 }
 

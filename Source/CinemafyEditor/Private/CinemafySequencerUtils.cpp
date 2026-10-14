@@ -1,10 +1,14 @@
 #include "CinemafySequencerUtils.h"
+#include "CinemafyFocusComponent.h"
+#include "CinemafyFollowComponent.h"
+#include "Tracks/MovieScenePropertyTrack.h"
 #include "Editor.h"
 #include "ILevelSequenceEditorToolkit.h"
 #include "ISequencer.h"
 #include "LevelSequence.h"
 #include "LevelSequenceEditorBlueprintLibrary.h"
 #include "MovieScene.h"
+#include "MovieSceneTrack.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 namespace CinemafySequencer
@@ -77,5 +81,76 @@ namespace CinemafySequencer
 	void NotifyChanged()
 	{
 		ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	}
+
+	int32 MuteBindingTracks(UMovieScene* MovieScene, const FGuid& Binding, FName TrackClass, const UMovieSceneTrack* Keep)
+	{
+		const UMovieScene* ConstMovieScene = MovieScene;
+		const FMovieSceneBinding* Found = ConstMovieScene ? ConstMovieScene->FindBinding(Binding) : nullptr;
+		if (!Found)
+		{
+			return 0;
+		}
+		int32 Muted = 0;
+		for (UMovieSceneTrack* Track : Found->GetTracks())
+		{
+			if (Track && Track != Keep && !Track->IsEvalDisabled() && Track->GetClass()->GetFName() == TrackClass)
+			{
+				Track->Modify();
+				Track->SetEvalDisabled(true);
+				++Muted;
+			}
+		}
+		return Muted;
+	}
+
+	int32 MuteChildPropertyTracks(UMovieScene* MovieScene, const FGuid& Binding, FName PropertyName)
+	{
+		if (!MovieScene)
+		{
+			return 0;
+		}
+		int32 Muted = 0;
+		const UMovieScene* ConstMovieScene = MovieScene;
+		for (int32 Index = 0; Index < MovieScene->GetPossessableCount(); ++Index)
+		{
+			const FMovieScenePossessable& Child = MovieScene->GetPossessable(Index);
+			const FMovieSceneBinding* ChildBinding = Child.GetParent() == Binding ? ConstMovieScene->FindBinding(Child.GetGuid()) : nullptr;
+			if (!ChildBinding)
+			{
+				continue;
+			}
+			for (UMovieSceneTrack* Track : ChildBinding->GetTracks())
+			{
+				const UMovieScenePropertyTrack* PropertyTrack = Cast<UMovieScenePropertyTrack>(Track);
+				if (PropertyTrack && !Track->IsEvalDisabled() && PropertyTrack->GetPropertyName() == PropertyName)
+				{
+					Track->Modify();
+					Track->SetEvalDisabled(true);
+					++Muted;
+				}
+			}
+		}
+		return Muted;
+	}
+
+	int32 LetCinemafyDriveCamera(UMovieScene* MovieScene, const FGuid& Binding, const AActor* Camera)
+	{
+		if (!Camera)
+		{
+			return 0;
+		}
+		int32 Muted = 0;
+		const UCinemafyFollowComponent* Follow = Camera->FindComponentByClass<UCinemafyFollowComponent>();
+		if (Follow && Follow->Target)
+		{
+			Muted += MuteBindingTracks(MovieScene, Binding, TEXT("MovieScene3DTransformTrack"));
+		}
+		const UCinemafyFocusComponent* Focus = Camera->FindComponentByClass<UCinemafyFocusComponent>();
+		if (Focus && Focus->FocusTarget)
+		{
+			Muted += MuteChildPropertyTracks(MovieScene, Binding, TEXT("ManualFocusDistance"));
+		}
+		return Muted;
 	}
 }

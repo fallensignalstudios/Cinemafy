@@ -98,12 +98,15 @@ FVector UCinemafyFramingLibrary::GetEyePoint(const AActor* Actor)
 		}
 	}
 
-	// The head bone sits at the base of the skull, so nudge up and forward to roughly eye level.
+	// The head bone sits at the base of the skull, so nudge up and forward to roughly eye level. "Forward" is the way the
+	// mesh faces: skeletal meshes are authored facing +Y, which is the component's right vector. (A Character rotates its
+	// mesh so that matches the actor's forward; a placed Skeletal Mesh Actor doesn't, so the actor's forward points out
+	// the side of the head and focus landed behind the face.)
 	for (const USkeletalMeshComponent* Mesh : Meshes)
 	{
 		if (Mesh->GetBoneIndex(Cinemafy::HeadBone) != INDEX_NONE)
 		{
-			return Mesh->GetSocketLocation(Cinemafy::HeadBone) + FVector::UpVector * 9.f + Actor->GetActorForwardVector() * 8.f;
+			return Mesh->GetSocketLocation(Cinemafy::HeadBone) + FVector::UpVector * 9.f + Mesh->GetRightVector() * 8.f;
 		}
 	}
 
