@@ -63,6 +63,63 @@ Directors made from the script set each line's emotion and intensity from it. Th
 casting and the cut. Scratch voices use the pace, volume and whisper. A line with no parenthetical that is
 written in capitals, or has `!!`, is shouted. `(V.O.)` and `(O.S.)` are left alone.
 
+## Camera directions
+
+Write the camera the way screenplays do and the director follows it. A direction can sit on its own line in
+capitals, or open an action paragraph ("CLOSE ON KADE'S HAND. It trembles."). It applies to the next line spoken:
+
+| On the page | On screen |
+| --- | --- |
+| `CLOSE ON THANE`, `TIGHT ON`, `CU -` | a close-up on Thane (a reaction shot if Thane is listening) |
+| `EXTREME CLOSE-UP - THANE'S EYES`, `ECU` | an extreme close-up |
+| `MEDIUM CLOSE`, `MCU`, `ANGLE ON` | a medium close-up |
+| `MEDIUM SHOT`, `MS -` | a medium shot |
+| `WIDE`, `WIDE SHOT`, `ESTABLISHING`, `LONG SHOT` | a wide two-shot (a group shot with three or more) |
+| `TWO SHOT` | a medium two-shot |
+| `OVER KADE'S SHOULDER`, `OTS`, `REVERSE ANGLE` | over Kade's shoulder, onto whoever she faces |
+| `LOW ANGLE ON THANE` | a low hero angle |
+| `KADE'S POV`, `POV - KADE` | through Kade's eyes, at whoever else is in the exchange |
+| `INSERT - THE DATAPAD` | tight on the prop labelled datapad (or a character's hand: `INSERT - KADE'S HAND`) |
+| `TRACKING WITH`, `FOLLOWING` | walk-and-talk coverage |
+| `SLOW PUSH IN ON KADE`, `DOLLY IN` | a push in over the shot |
+| `PULL BACK TO REVEAL THE FLEET` | a wide that pulls out |
+| `CRANE UP`, `CRANE DOWN`, `ARC AROUND`, `CRASH ZOOM`, `TRUCK LEFT` | that move |
+| `HANDHELD`, `STEADICAM`, `LOCKED OFF` | the operator's feel, from this line on |
+| `BACK TO SCENE` | the director's choice again |
+
+Moves and framings combine: `PUSH IN TO A CLOSE ON THANE`. The subject is matched to the scene's characters
+(the last word of a name is enough), then to a prop by its label.
+
+Transitions set how the **next** scene comes in: `SMASH CUT TO:` is a hard cut even in a style that dissolves,
+and `MATCH CUT TO:` keeps the framing across the break. `DISSOLVE TO:`, `FADE OUT.` / `FADE TO BLACK.`,
+`FADE TO WHITE`, `WIPE TO:` and `WHIP PAN TO:` are also read. A plain `CUT TO:` leaves it to the style.
+
+Directors made from the script carry the directions on their lines (*Force Shot*, *Shot On*, *Force Move*,
+*Force Feel*, *Shot Call*). When a revised script refreshes a director, these fields are rewritten from the
+page. Your other tweaks on unchanged lines stay.
+
+## Set dressing
+
+Cinemafy reads the action for what the art department has to provide. The **Dressing** list on each set (in
+Cast & Sets) and the `Props_and_Dressing` paperwork hold:
+
+- **Set pieces** where something happens: "vaults a **cargo crate**", "picks up a saber from the **weapons
+  rack**", "looks at the empty **command chair**"
+- **Hand props**, with who handles them: "picks up a **saber**", "draws her **pistol**", "grabs the **DATAPAD**"
+  (capitalized props count)
+- **Wardrobe**, with who wears it: "wears his **dress uniform**"
+
+Walls, floors, bodies ("pressed to her side"), people and the location itself are left out.
+
+**Dress the Set** (a card's **...** menu, pre-flight, or `dress_set`) places every set piece the level doesn't
+have yet:
+
+- in front of the mark with its name, or in a row across the set
+- as the **Mesh** you set on its Dressing entry, or a placeholder block sized like the real thing (a console is
+  waist-high, a rack is tall, a lift is a platform)
+
+Pieces are labelled `Set_<name>` so Previs finds them.
+
 ## Revisions
 
 Re-import a revised script (the asset's **Import** button, or `reimport_script_project`) and Cinemafy compares

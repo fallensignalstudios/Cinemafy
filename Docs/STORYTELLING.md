@@ -37,8 +37,8 @@ Every scene appears as a card, grouped by act and chapter.
   moving the scene earlier or later.
 - **Badges:** Out of date (the pages changed since it was staged), rewritten or new in this revision, lines
   to re-record, open notes and continuity warnings.
-- **Toolbar:** Import, Cast & Sets, Scratch Voices, Update Changed, Map Scenes, Cut Together, Dailies, Final
-  Render, Pre-flight, Paperwork, Checklist.
+- **Toolbar:** Import, Cast & Sets, Scratch Voices, Lip-Sync, Update Changed, Map Scenes, Cut Together, Dailies,
+  Final Render, Pre-flight, Paperwork, Checklist.
 
 ## 3. Cast & Sets
 
@@ -65,6 +65,10 @@ them the way the script talks: "console", "lift", "window". **Start** marks are 
 begin. The tutorial's **Build the sample set** lays out a floor, a crate and marks for the sample, and casts
 a template character (GASP or Third Person) if your project has one.
 
+**Dressing:** each set also lists the set pieces, hand props and wardrobe its scenes mention. **Dress the Set**
+(a card's **...** menu) blocks out the missing set pieces: real meshes where you've assigned them, placeholder
+blocks of the right size where you haven't. See [SCRIPTS](SCRIPTS.md#set-dressing).
+
 ## 4. Scratch voices
 
 **Scratch Voices** reads lines aloud with the computer's voices, so timing, pacing and lip motion work
@@ -82,8 +86,18 @@ attached to the script lines and to the directors that speak them.
 **Talking faces:** when a director lays a line's audio into a sequence, it also keys the speaker's
 **Cinemafy Face** `Talk` / `Talk Narrow` from the audio's loudness and hiss. The face node adds jaw and lip
 motion on top of whatever the face is doing. Lower **Talk Strength** for characters that already have
-captured lip-sync. This is a stand-in, not MetaHuman Animator quality: swap in a captured performance for
-hero shots.
+captured lip-sync. This is a stand-in. For real lip-sync, use **Lip-Sync** below.
+
+**Lip-Sync (MetaHuman):** **Lip-Sync** (toolbar, a card's **...** menu, or `generate_lip_sync`) solves a real
+face performance for every voiced line with MetaHuman's audio-driven animation:
+
+- It needs the MetaHuman plugin and the Python Editor Script Plugin.
+- It runs one line at a time in the background, with progress in the Output Log.
+- Each speaker needs a MetaHuman face in the level, or a **Face Mesh** on their cast entry.
+- Each face is stored on its line, and **Direct** lays it on the face instead of the Talk curves.
+- A new recording makes the face stale until it's solved again.
+- If a face doesn't move when directed, check that its Animation Blueprint has a `DefaultSlot` for
+  Sequencer to play through.
 
 **Real voice-over:** name the files by **line id** (the paperwork's voice-over scripts list them) or
 `<scene>_<line>` (`2_1_3_04`). Then **Assign Recorded Voices** swaps them in. Re-Direct a scene and the cut
@@ -103,6 +117,8 @@ re-times to the real performances.
 | Lines with no voice | Scratch voices |
 | The scene is set in another level | Open that level |
 | The script changed since it was staged | Update Changed |
+| The script mentions set pieces the level doesn't have | Dress the set |
+| Voiced lines could have real lip-sync (MetaHuman installed) | Lip-sync |
 
 It also lists what Previs won't stage (sentences it doesn't understand), continuity warnings and open notes.
 **Fix All** runs every fix except opening another level. Go ahead with blockers left, and Previs does what it
@@ -154,6 +170,10 @@ in play. In edited sequences they hold their loops, because takes don't record e
 **Mood:** **Set the mood** applies the director style, music and ambience for the scene's time of day and
 feeling. **Light the set** also turns the level's sun and sky to the time of day.
 
+**Camera from the page:** camera directions in the script (`CLOSE ON THANE`, `KADE'S POV`, `INSERT - THE
+DATAPAD`, `SLOW PUSH IN`, `HANDHELD`) become the director's shots on the next line, and `SMASH CUT` / `DISSOLVE`
+set how the next scene comes in. See [SCRIPTS](SCRIPTS.md#camera-directions).
+
 **Performance from the page:** parentheticals set each line's emotion and intensity, so `(furious)` plays
 furious in the face, the body and the cut, and `(whispering)` whispers in the scratch voice. See
 [SCRIPTS](SCRIPTS.md#parentheticals).
@@ -189,6 +209,7 @@ furious in the face, the body and the cut, and `(whispering)` whispers in the sc
   - a localization String Table CSV keyed by line id
   - shot lists
   - an HTML storyboard with a frame from each shot's camera
+  - props, set dressing and wardrobe, by set (Markdown + CSV)
 - **Checklist:** progress, carry-ins, warnings and notes, per act, chapter and scene.
 
 ## 8. Games: the Story Player

@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.15.0: "Off the page"
+- **Camera language from the page:**
+  - Screenplay camera directions now drive the director. They can sit on their own line, or open an action
+    paragraph ("CLOSE ON KADE'S HAND. It trembles."). It reads:
+    - framings: CLOSE ON, EXTREME CLOSE-UP, WIDE, TWO SHOT, OVER KADE'S SHOULDER, LOW ANGLE, ANGLE ON
+    - POV and INSERT shots
+    - moves: SLOW PUSH IN, PULL BACK TO REVEAL, CRANE UP, ARC AROUND, CRASH ZOOM
+    - the camera's feel: HANDHELD, LOCKED OFF
+    - BACK TO SCENE, which hands the camera back to the director
+  - Each direction applies to the next line spoken. The director plays that framing on that subject, with
+    that move, and never folds it into a held two-shot.
+  - New **POV** and **Insert** shot types: through a character's eyes, and tight on a prop or a hand.
+  - Transitions set how the next scene comes in: SMASH CUT (a hard cut whatever the style), MATCH CUT,
+    DISSOLVE, FADE, WIPE and WHIP PAN.
+  - Final Draft "Shot" paragraphs are read too.
+- **Set dressing from the script:**
+  - The action tells the art department what it needs:
+    - set pieces where things happen ("vaults a cargo crate", "from the weapons rack")
+    - hand props ("picks up a saber", "grabs the DATAPAD")
+    - wardrobe ("wears his dress uniform")
+  - Cast & Sets keeps a **Dressing** list per set, where art assigns real meshes.
+  - **Dress the Set** places every missing set piece, labelled so Previs finds it:
+    - in front of its mark, or in a row across the set
+    - as the assigned mesh, or a placeholder block of a believable size
+  - Previs walks up to a prop's near edge instead of into it.
+  - Pre-flight offers **Dress the set**, the paperwork adds `Props_and_Dressing.md/.csv`, and there is a
+    `dress_set` MCP tool.
+- **Real lip-sync:**
+  - **Lip-Sync** solves a face performance for each voiced line with MetaHuman's audio-driven animation. It
+    runs in the background, one line at a time.
+  - Each face is stored on its line with the audio it was made from: it follows the line across re-imports,
+    goes stale with a new recording, and replaces the Talk curves when the scene is directed again.
+  - It needs the MetaHuman plugin and the Python Editor Script Plugin. Without them, faces keep the Talk
+    curves.
+  - MCP tools: `generate_lip_sync` and `lip_sync_status`.
+- New tests:
+  - `Cinemafy.Script.CameraLanguageFromThePage`
+  - set dressing checks in the golden sample test
+  - lip-sync staleness checks in the revision test
+
 ## 0.14.0: "Rewrites and delivery"
 - **Parentheticals drive the performance:** `(furious)`, `(whispering)`, `(through tears)`, `(coldly)` and friends set
   each line's emotion and intensity. That in turn drives the face, the body casting and the cut, and the
