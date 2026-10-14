@@ -868,7 +868,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
-    def add_extras(direction: str, location: unreal.Vector, extra_classes: list, count: int = 4, radius: float = 1200.0) -> unreal.CinemafyExtras:
+    def add_extras(direction: str, location: unreal.Vector, extra_classes: list[unreal.Class], count: int = 4, radius: float = 1200.0) -> unreal.CinemafyExtras:
         """Puts directable background characters on set: "crew works at consoles" (at Cinemafy Marks named console),
         "marines patrol", "two officers talk", "crowd mills about". Loops come from the animation library; patrols and
         wanderers walk on the navmesh in play.

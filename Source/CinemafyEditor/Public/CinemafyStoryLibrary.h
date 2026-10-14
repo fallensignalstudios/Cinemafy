@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CinemafyScript.h"
+#include "CinemafyTypes.h"
 #include "CinemafyStoryLibrary.generated.h"
 
 class ACinemafyMark;

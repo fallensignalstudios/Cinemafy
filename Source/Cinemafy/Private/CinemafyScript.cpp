@@ -1653,10 +1653,10 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 			}
 			UsedIds.Add(Id);
 			Line.LineId = Id;
-			if (const TPair<TSoftObjectPtr<USoundBase>, bool>* Kept = LineAudio.Find(Id))
+			if (const TPair<TSoftObjectPtr<USoundBase>, bool>* KeptAudio = LineAudio.Find(Id))
 			{
-				Line.Audio = Kept->Key;
-				Line.bScratchAudio = Kept->Value;
+				Line.Audio = KeptAudio->Key;
+				Line.bScratchAudio = KeptAudio->Value;
 			}
 		}
 	}

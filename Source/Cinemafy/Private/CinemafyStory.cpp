@@ -144,7 +144,7 @@ void UCinemafyStorySubsystem::BindPlayer(ULevelSequencePlayer* Player, const FCi
 	}
 	// The sequence was shot with a stand-in labelled like the cast entry: the player's own pawn takes its place.
 	const FString Label = Hero->ActorLabel.IsEmpty() ? Hero->ScriptName : Hero->ActorLabel;
-	const UMovieScene* MovieScene = Sequence->GetMovieScene();
+	UMovieScene* MovieScene = Sequence->GetMovieScene();
 	for (int32 Index = 0; Index < MovieScene->GetPossessableCount(); ++Index)
 	{
 		const FMovieScenePossessable& Possessable = MovieScene->GetPossessable(Index);

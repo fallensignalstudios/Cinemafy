@@ -361,7 +361,7 @@ void UCinemafyTutorialLibrary::ScheduleAutoShow()
 	}
 	else
 	{
-		FCoreDelegates::OnPostEngineInit.AddLambda(Arm);
+		FCoreDelegates::GetOnPostEngineInit().AddLambda(Arm);
 	}
 }
 
