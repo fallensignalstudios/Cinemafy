@@ -1,0 +1,1 @@
+"""Cinemafy MCP toolset."""
