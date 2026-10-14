@@ -63,6 +63,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
 	bool bPlaceDialogueAudio = true;
 
+	/** Show each line's Text as a subtitle (live, and in sequences the director has cut). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Subtitles")
+	bool bShowSubtitles = true;
+
+	/** Which line's subtitle is showing (-1 = none). Keyed by Direct so sequences show subtitles too. */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Director|Subtitles", AdvancedDisplay)
+	int32 SubtitleLineIndex = -1;
+
 	/** Which side of the line of action every camera lives on. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
 	bool bFlipSide = false;
@@ -128,8 +136,8 @@ public:
 	void StartConversation();
 
 	/** Direct one line as it plays (for dialogue systems). Starts a conversation if none is running. */
-	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
-	void DirectLine(AActor* Speaker, AActor* Listener, float Duration = 3.f, float Intensity = 0.5f);
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director", meta = (AdvancedDisplay = "Subtitle"))
+	void DirectLine(AActor* Speaker, AActor* Listener, float Duration = 3.f, float Intensity = 0.5f, const FText& Subtitle = FText::GetEmpty());
 
 	/** Blend back to the player's camera. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
@@ -145,6 +153,11 @@ private:
 	void CutTo(const FCinemafyPlannedShot& Shot);
 	ACineCameraActor* GetLiveCamera(const FCinemafyPlannedShot& Shot);
 
+	void ShowLineSubtitle(const FCinemafyLine& Line);
+	void UpdateSequencedSubtitle();
+
+	int32 ShownSubtitleIndex = -1;
+	FCinemafyLine CurrentLiveLine;
 	bool bLive = false;
 	bool bAutoEnd = false;
 	bool bFirstCut = true;

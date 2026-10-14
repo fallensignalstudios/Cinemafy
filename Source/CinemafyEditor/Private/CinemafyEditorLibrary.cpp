@@ -8,6 +8,9 @@
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Tracks/MovieSceneIntegerTrack.h"
+#include "Sections/MovieSceneIntegerSection.h"
+#include "Channels/MovieSceneIntegerChannel.h"
 #include "Engine/SkeletalMesh.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
@@ -32,6 +35,9 @@
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Tracks/MovieSceneIntegerTrack.h"
+#include "Sections/MovieSceneIntegerSection.h"
+#include "Channels/MovieSceneIntegerChannel.h"
 #include "Engine/SkeletalMesh.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
@@ -964,6 +970,35 @@ namespace
 		}
 	}
 
+	/** Keys the director's SubtitleLineIndex: each line's index while it's spoken, -1 in between. */
+	void BakeSubtitles(ULevelSequence* Sequence, UMovieScene* MovieScene, ACinemafySceneDirector* Director, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart)
+	{
+		if (!Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return !Line.Text.IsEmpty(); }))
+		{
+			return;
+		}
+
+		const FGuid Binding = CinemafySequencer::BindActor(Sequence, Director);
+		UMovieSceneIntegerTrack* Track = ReplacePropertyTrack<UMovieSceneIntegerTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(ACinemafySceneDirector, SubtitleLineIndex));
+		UMovieSceneIntegerSection* Section = AddInfiniteSection<UMovieSceneIntegerSection>(Track);
+		FMovieSceneIntegerChannel* Channel = Section ? Section->GetChannelProxy().GetChannel<FMovieSceneIntegerChannel>(0) : nullptr;
+		if (!Channel)
+		{
+			return;
+		}
+
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		float Time = 0.f;
+		Channel->GetData().AddKey(SceneStart - 1, -1);
+		for (int32 Index = 0; Index < Lines.Num(); ++Index)
+		{
+			const FCinemafyLine& Line = Lines[Index];
+			Channel->GetData().AddKey(SceneStart + TickResolution.AsFrameNumber(Time), Line.Text.IsEmpty() ? -1 : Index);
+			Channel->GetData().AddKey(SceneStart + TickResolution.AsFrameNumber(Time + Line.Duration), -1);
+			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+		}
+	}
+
 	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
 	{
 		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
@@ -1089,6 +1124,10 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	if (Director->bPlacePerformances)
 	{
 		PlacePerformances(Sequence, MovieScene, EffectiveLines, SceneStart);
+	}
+	if (Director->bShowSubtitles)
+	{
+		BakeSubtitles(Sequence, MovieScene, Director, EffectiveLines, SceneStart);
 	}
 
 	// Make sure the whole scene fits in the playback range.

@@ -599,6 +599,14 @@ struct FCinemafyLine
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
 	TObjectPtr<USoundBase> Audio = nullptr;
 
+	/** What's said, for subtitles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (MultiLine = true))
+	FText Text;
+
+	/** Name shown in subtitles. Empty = the speaker actor's name. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	FText SpeakerName;
+
 	/** The speaker's body performance for this line (any clip on the body skeleton). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Performance")
 	TObjectPtr<UAnimSequenceBase> BodyAnimation = nullptr;
@@ -698,6 +706,10 @@ struct FCinemafyPlannedShot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	int32 LineIndex = 0;
+
+	/** First shot of its line (where the line, its subtitle and its emotion start). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool bLineStart = false;
 
 	/** Why the director chose it, in plain words. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

@@ -117,6 +117,12 @@ Each clip goes on whichever mesh matches its skeleton (body or face), on a *Cine
 track that re-takes replace without touching your other animation tracks. Script in, full scene out:
 cameras, audio and performance.
 
+**Subtitles 💬:** fill in each line's **Text** (and optionally a **Speaker Name**). Subtitles show
+live during `StartConversation` / `DirectLine` (pass the text as `Subtitle`), and Direct keys the
+director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the game. Anything else can
+call **Cinemafy Subtitle Subsystem → Show Subtitle** too, and `bSubtitlesEnabled` hooks into your
+accessibility settings.
+
 **Learn a style from your own edit 🧠:** cut a scene by hand (or open one you love), select the
 director and click **Learn Style From Sequence**. It plays through every cut and classifies each shot
 from what the camera actually sees: frame size at the subject, two characters in frame, a foreground

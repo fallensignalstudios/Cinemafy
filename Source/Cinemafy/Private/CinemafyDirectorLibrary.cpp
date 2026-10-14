@@ -294,6 +294,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		Shot.StartTime = Time;
 		Shot.Duration = Length;
 		Shot.LineIndex = LineIndex;
+		Shot.bLineStart = Segment == 0;
 		Shot.Subject = Line.Speaker;
 		Shot.Counterpart = Line.Listener;
 

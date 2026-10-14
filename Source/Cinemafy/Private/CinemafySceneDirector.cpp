@@ -8,6 +8,7 @@
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyListenerComponent.h"
 #include "CinemafyModule.h"
+#include "CinemafySubtitleSubsystem.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Engine/World.h"
@@ -138,7 +139,39 @@ void ACinemafySceneDirector::StartConversation()
 	SetActorTickEnabled(true);
 }
 
-void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float Duration, float Intensity)
+void ACinemafySceneDirector::ShowLineSubtitle(const FCinemafyLine& Line)
+{
+	UCinemafySubtitleSubsystem* Subtitles = GetWorld() ? GetWorld()->GetSubsystem<UCinemafySubtitleSubsystem>() : nullptr;
+	if (!Subtitles || !bShowSubtitles)
+	{
+		return;
+	}
+
+	const FText Speaker = !Line.SpeakerName.IsEmpty() ? Line.SpeakerName
+		: (Line.Speaker ? FText::FromString(Line.Speaker->GetActorNameOrLabel()) : FText::GetEmpty());
+	Subtitles->ShowSubtitle(Speaker, Line.Text, Line.Duration);
+}
+
+void ACinemafySceneDirector::UpdateSequencedSubtitle()
+{
+	// A sequence the director cut keys SubtitleLineIndex; follow it.
+	if (SubtitleLineIndex == ShownSubtitleIndex || bLive)
+	{
+		return;
+	}
+	ShownSubtitleIndex = SubtitleLineIndex;
+
+	if (Lines.IsValidIndex(SubtitleLineIndex))
+	{
+		ShowLineSubtitle(Lines[SubtitleLineIndex]);
+	}
+	else if (UCinemafySubtitleSubsystem* Subtitles = GetWorld() ? GetWorld()->GetSubsystem<UCinemafySubtitleSubsystem>() : nullptr)
+	{
+		Subtitles->ClearSubtitle();
+	}
+}
+
+void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float Duration, float Intensity, const FText& Subtitle)
 {
 	if (!Speaker)
 	{
@@ -164,6 +197,8 @@ void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float
 	Line.Duration = Duration;
 	Line.PauseAfter = 0.f;
 	Line.Intensity = Intensity;
+	Line.Text = Subtitle;
+	CurrentLiveLine = Line;
 
 	const TArray<FCinemafyPlannedShot> Shots = UCinemafyDirectorLibrary::PlanLine(
 		Line, LiveLineIndex++, GetStyle(), LiveRandom, bHasLastLiveShot ? &LastLiveShot : nullptr, bFirstCut, 0.f);
@@ -180,6 +215,10 @@ void ACinemafySceneDirector::EndConversation()
 
 	bLive = false;
 	LiveQueue.Reset();
+	if (UCinemafySubtitleSubsystem* Subtitles = GetWorld() ? GetWorld()->GetSubsystem<UCinemafySubtitleSubsystem>() : nullptr)
+	{
+		Subtitles->ClearSubtitle();
+	}
 	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
 	{
 		PC->SetViewTargetWithBlend(PC->GetPawn(), BlendOutTime, VTBlend_Cubic);
@@ -189,6 +228,11 @@ void ACinemafySceneDirector::EndConversation()
 void ACinemafySceneDirector::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	if (GetWorld() && GetWorld()->IsGameWorld())
+	{
+		UpdateSequencedSubtitle();
+	}
 
 	if (!bLive)
 	{
@@ -280,6 +324,19 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 		if (UCinemafyFaceComponent* Face = Shot.Subject->FindComponentByClass<UCinemafyFaceComponent>())
 		{
 			Face->SetEmotion(Shot.Emotion, 0.6f);
+		}
+	}
+
+	if (Shot.bLineStart)
+	{
+		// Scripted conversations look the line up; dialogue-system lines carry their own.
+		if (bAutoEnd && Lines.IsValidIndex(Shot.LineIndex))
+		{
+			ShowLineSubtitle(GetEffectiveLines()[Shot.LineIndex]);
+		}
+		else if (!bAutoEnd)
+		{
+			ShowLineSubtitle(CurrentLiveLine);
 		}
 	}
 
