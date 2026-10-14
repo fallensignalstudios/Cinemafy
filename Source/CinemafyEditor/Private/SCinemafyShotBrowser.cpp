@@ -1,4 +1,9 @@
 #include "SCinemafyShotBrowser.h"
+#include "CinemafyDirectorLibrary.h"
+#include "CinemafyEditorLibrary.h"
+#include "CinemafySceneDirector.h"
+#include "EngineUtils.h"
+#include "Selection.h"
 #include "CinemafySequencerUtils.h"
 #include "CineCameraComponent.h"
 #include "Camera/CameraComponent.h"
@@ -91,6 +96,74 @@ void SCinemafyShotBrowser::Construct(const FArguments& InArgs)
 				SNew(STextBlock)
 				.Text(this, &SCinemafyShotBrowser::GetSummaryText)
 				.ColorAndOpacity(FSlateColor(DimTextColor))
+			]
+			// Director controls.
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(12.f, 0.f, 6.f, 0.f)
+			[
+				SNew(STextBlock)
+				.Text(this, &SCinemafyShotBrowser::GetDirectorText)
+				.ColorAndOpacity(FSlateColor(DimTextColor))
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.f, 0.f, 4.f, 0.f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Direct", "Direct"))
+				.ToolTipText(LOCTEXT("DirectTip", "Cut the director's scene into this sequence at the playhead."))
+				.IsEnabled_Lambda([this]() { return GetActiveDirector() != nullptr; })
+				.OnClicked_Lambda([this]()
+				{
+					UCinemafyEditorLibrary::DirectSceneInSequencer(GetActiveDirector());
+					return FReply::Handled();
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.f, 0.f, 4.f, 0.f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Reroll", "Re-roll"))
+				.ToolTipText(LOCTEXT("RerollTip", "Same scene, another take."))
+				.IsEnabled_Lambda([this]() { return GetActiveDirector() != nullptr; })
+				.OnClicked_Lambda([this]()
+				{
+					if (ACinemafySceneDirector* Director = GetActiveDirector())
+					{
+						Director->Modify();
+						Director->Seed = FMath::Rand();
+						UCinemafyEditorLibrary::DirectSceneInSequencer(Director);
+					}
+					return FReply::Handled();
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Learn", "Learn Style"))
+				.ToolTipText(LOCTEXT("LearnTip", "Study this sequence's edit and make it the director's Custom style."))
+				.IsEnabled_Lambda([this]() { return GetActiveDirector() != nullptr; })
+				.OnClicked_Lambda([this]()
+				{
+					UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(GetActiveDirector());
+					return FReply::Handled();
+				})
+			]
+		]
+
+		// Pacing: every shot as a bar, width = duration, color = wide (cool) to tight (warm).
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(6.f, 0.f, 6.f, 6.f)
+		[
+			SNew(SBox)
+			.HeightOverride(12.f)
+			[
+				SAssignNew(PacingStrip, SHorizontalBox)
 			]
 		]
 
@@ -190,6 +263,7 @@ void SCinemafyShotBrowser::Refresh()
 		Shots[Index]->Number = Index + 1;
 	}
 
+	AttachDirectorNotes();
 	RebuildStrip();
 }
 
@@ -396,13 +470,137 @@ TSharedRef<SWidget> SCinemafyShotBrowser::MakeShotCard(const TSharedRef<FCinemaf
 						.Text(PacingNote)
 						.ColorAndOpacity(FSlateColor(WarningColor))
 					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(4.f, 0.f, 4.f, 4.f)
+					[
+						SNew(STextBlock)
+						.Visibility(Shot->Reason.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
+						.Text(FText::FromString(Shot->Reason))
+						.AutoWrapText(true)
+						.Font(FCoreStyle::GetDefaultFontStyle("Italic", 8))
+						.ColorAndOpacity(FSlateColor(DimTextColor))
+					]
 				]
 			]
 		];
 }
 
+ACinemafySceneDirector* SCinemafyShotBrowser::GetActiveDirector() const
+{
+	if (!GEditor)
+	{
+		return nullptr;
+	}
+
+	// The selected director wins; otherwise the first one in the level.
+	if (USelection* Selection = GEditor->GetSelectedActors())
+	{
+		for (FSelectionIterator It(*Selection); It; ++It)
+		{
+			if (ACinemafySceneDirector* Director = Cast<ACinemafySceneDirector>(*It))
+			{
+				return Director;
+			}
+		}
+	}
+
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	if (World)
+	{
+		for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+		{
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+FText SCinemafyShotBrowser::GetDirectorText() const
+{
+	const ACinemafySceneDirector* Director = GetActiveDirector();
+	return Director
+		? FText::Format(LOCTEXT("DirectorLabel", "Director: {0}"), FText::FromString(Director->GetActorLabel()))
+		: LOCTEXT("NoDirector", "No Scene Director in the level");
+}
+
+void SCinemafyShotBrowser::AttachDirectorNotes()
+{
+	const ACinemafySceneDirector* Director = GetActiveDirector();
+	ULevelSequence* OpenSequence = Sequence.Get();
+	if (!Director || !OpenSequence || Director->LastPlan.Num() == 0)
+	{
+		return;
+	}
+
+	const FFrameRate TickResolution = OpenSequence->GetMovieScene()->GetTickResolution();
+	const FFrameNumber SceneStart(Director->LastSceneStartTick);
+	const int32 Tolerance = FMath::Max(1, TickResolution.AsFrameNumber(0.05).Value);
+	const FName Tag = Director->GetDirectorTag();
+
+	for (const TSharedRef<FCinemafyShot>& Shot : Shots)
+	{
+		const AActor* Camera = Shot->Camera.Get();
+		if (!Camera || !Camera->Tags.Contains(Tag))
+		{
+			continue;
+		}
+		for (const FCinemafyPlannedShot& Planned : Director->LastPlan)
+		{
+			const FFrameNumber PlannedStart = SceneStart + TickResolution.AsFrameNumber(Planned.StartTime);
+			if (FMath::Abs((PlannedStart - Shot->StartTick).Value) <= Tolerance)
+			{
+				Shot->Reason = Planned.Reason;
+				Shot->bHasShotType = true;
+				Shot->ShotType = static_cast<uint8>(Planned.ShotType);
+				break;
+			}
+		}
+	}
+}
+
+void SCinemafyShotBrowser::RebuildPacingStrip()
+{
+	if (!PacingStrip.IsValid())
+	{
+		return;
+	}
+	PacingStrip->ClearChildren();
+
+	const TWeakPtr<SCinemafyShotBrowser> WeakThis = StaticCastSharedRef<SCinemafyShotBrowser>(AsShared());
+	for (const TSharedRef<FCinemafyShot>& Shot : Shots)
+	{
+		// Wide = cool blue, tight = warm orange; unknown framing = neutral.
+		FLinearColor Color(0.35f, 0.35f, 0.35f);
+		if (Shot->bHasShotType)
+		{
+			const float Size = UCinemafyDirectorLibrary::GetShotSize(static_cast<ECinemafyShotType>(Shot->ShotType));
+			Color = FMath::Lerp(FLinearColor(0.2f, 0.45f, 0.85f), FLinearColor(1.f, 0.5f, 0.15f), FMath::Clamp(Size / 5.f, 0.f, 1.f));
+		}
+
+		const TWeakPtr<FCinemafyShot> WeakShot = Shot;
+		PacingStrip->AddSlot()
+		.FillWidth(FMath::Max(Shot->DurationSeconds, 0.05f))
+		.Padding(1.f, 0.f)
+		[
+			SNew(SBorder)
+			.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
+			.ToolTipText(FText::Format(LOCTEXT("PacingTip", "{0}  {1}  ({2})"), FText::AsNumber(Shot->Number), Shot->CameraName, FormatDuration(Shot->DurationSeconds)))
+			.BorderBackgroundColor_Lambda([WeakThis, WeakShot, Color]()
+			{
+				const TSharedPtr<SCinemafyShotBrowser> Browser = WeakThis.Pin();
+				const TSharedPtr<FCinemafyShot> PinnedShot = WeakShot.Pin();
+				const bool bActive = Browser && PinnedShot && Browser->IsShotUnderPlayhead(*PinnedShot);
+				return FSlateColor(bActive ? FLinearColor::White : Color);
+			})
+		];
+	}
+}
+
 void SCinemafyShotBrowser::RebuildStrip()
 {
+	RebuildPacingStrip();
+
 	if (!Strip.IsValid())
 	{
 		return;

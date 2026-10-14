@@ -86,6 +86,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Live")
 	bool bUpdateListeners = true;
 
+	/** Where (in the sequence's tick resolution) the last Direct started the scene. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", AdvancedDisplay)
+	int32 LastSceneStartTick = 0;
+
 	/** The last plan, with the director's reasoning for each shot. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan")
 	TArray<FCinemafyPlannedShot> LastPlan;

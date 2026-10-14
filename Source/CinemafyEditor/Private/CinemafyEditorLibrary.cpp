@@ -1073,6 +1073,7 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	const FFrameNumber SceneStart = CinemafySequencer::GetPlayheadTick(MovieScene);
 	FFrameNumber SceneEnd = SceneStart;
 	TMap<ACineCameraActor*, TArray<FCameraShotWindow>> CameraWindows;
+	Director->LastSceneStartTick = SceneStart.Value;
 
 	for (const FCinemafyPlannedShot& Shot : Plan)
 	{

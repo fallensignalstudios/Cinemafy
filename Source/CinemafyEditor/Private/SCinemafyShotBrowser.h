@@ -10,6 +10,7 @@ class ULevelSequence;
 class UTextureRenderTarget2D;
 class SHorizontalBox;
 class STextBlock;
+class ACinemafySceneDirector;
 struct FSlateBrush;
 
 /** One camera cut in the open sequence. */
@@ -23,6 +24,11 @@ struct FCinemafyShot
 	TWeakObjectPtr<AActor> Camera;
 	float FocalLength = 0.f;
 	float Aperture = 0.f;
+
+	/** Filled in when a Scene Director cut this shot. */
+	FString Reason;
+	bool bHasShotType = false;
+	uint8 ShotType = 0;
 
 	TStrongObjectPtr<UTextureRenderTarget2D> Thumbnail;
 	TSharedPtr<FSlateBrush> ThumbnailBrush;
@@ -53,6 +59,10 @@ public:
 
 private:
 	void RebuildStrip();
+	void RebuildPacingStrip();
+	void AttachDirectorNotes();
+	ACinemafySceneDirector* GetActiveDirector() const;
+	FText GetDirectorText() const;
 	TSharedRef<SWidget> MakeShotCard(const TSharedRef<FCinemafyShot>& Shot);
 	FReply OnShotClicked(TSharedRef<FCinemafyShot> Shot);
 	bool IsShotUnderPlayhead(const FCinemafyShot& Shot) const;
@@ -61,6 +71,7 @@ private:
 	TArray<TSharedRef<FCinemafyShot>> Shots;
 	TWeakObjectPtr<ULevelSequence> Sequence;
 	TSharedPtr<SHorizontalBox> Strip;
+	TSharedPtr<SHorizontalBox> PacingStrip;
 
 	static TWeakPtr<SCinemafyShotBrowser> ActiveInstance;
 };
