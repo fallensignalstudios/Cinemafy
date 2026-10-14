@@ -7,6 +7,7 @@
 class UCinemafyMoveLibrary;
 class UCinemafyPerformerProfile;
 class ACharacter;
+class USoundBase;
 
 /** Project-wide Cinemafy settings (Project Settings > Plugins > Cinemafy). */
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Cinemafy"))
@@ -36,6 +37,20 @@ public:
 	 */
 	UPROPERTY(config, EditAnywhere, Category = "Performers")
 	TMap<TSoftClassPtr<ACharacter>, TSoftObjectPtr<UCinemafyPerformerProfile>> PerformerProfiles;
+
+	/**
+	 * Temp score by mood (calm, tense, action, sad, warm, romantic, triumphant, eerie, alarm). Scenes staged from the
+	 * script get the music for their mood when their director has none.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Story")
+	TMap<FString, TSoftObjectPtr<USoundBase>> MoodMusic;
+
+	/**
+	 * Foley laid under recorded takes, by event: impact (a strike lands), takeoff, land, draw, holster, roll,
+	 * body_fall (a death), footstep. Sounds you leave out are skipped.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Story")
+	TMap<FString, TSoftObjectPtr<USoundBase>> FoleySounds;
 
 	/** The FolderBias for a package path ("/Game/Pack/Anim"): 0 when no folder matches. */
 	static float GetFolderBias(const FString& PackagePath);

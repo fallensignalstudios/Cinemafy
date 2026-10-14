@@ -102,6 +102,19 @@ public:
 	/** Keys Cinemafy Face's Talk / Talk Narrow on each speaker from their lines' audio, where the director laid it. */
 	static void BakeTalkCurves(ULevelSequence* Sequence, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart);
 
+	// --- Mood and sound -------------------------------------------------------------------------------------------
+
+	/**
+	 * Sets a scene up for its mood (read from the heading and words): its Scene Director's style (camera, cut,
+	 * grade, lighting), temp music for the mood (Project Settings > Cinemafy > Mood Music), and the set's ambience
+	 * under the scene. bLightTheLevel also turns the sun and sky to the time of day. Returns what it read and did.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString ApplySceneMood(UCinemafyScriptProject* Project, const FString& SceneId, bool bLightTheLevel = false);
+
+	/** Lays foley (Project Settings > Cinemafy > Foley Sounds) under a recorded take at its impacts, landings, draws and falls. */
+	static int32 BakeFoley(ULevelSequence* Sequence, const TArray<ACinemafyChoreography*>& Ensemble, float TakeStartSeconds);
+
 	/** The actor playing a script character in a world: the cast entry's label, else a matching character label. */
 	static AActor* FindCastActor(const UCinemafyScriptProject* Project, const FString& ScriptName, UWorld* World);
 };

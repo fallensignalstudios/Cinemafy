@@ -822,6 +822,49 @@ class CinemafyTools(unreal.ToolsetDefinition):
         count = unreal.CinemafyStoryLibrary.assign_recorded_voices(project, content_folder)
         return '{} line(s) matched.'.format(count)
 
+    @toolset_registry.tool_call
+    @staticmethod
+    def apply_scene_mood(project: unreal.CinemafyScriptProject, scene_id: str, light_the_level: bool = False) -> str:
+        """Reads a scene's mood from its heading and words (time of day, action / tense / sad / warm..., weather) and
+        sets its Scene Director's style, temp music (Project Settings > Cinemafy > Mood Music) and the set's ambience.
+        light_the_level also turns the level's sun and sky to the time of day.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("1.1.1") or running number.
+            light_the_level: Move the sun / sky light for the time of day.
+
+        Returns:
+            What it read and what it changed.
+        """
+        return unreal.CinemafyStoryLibrary.apply_scene_mood(project, scene_id, light_the_level)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def add_extras(direction: str, location: unreal.Vector, extra_classes: list, count: int = 4, radius: float = 1200.0) -> unreal.CinemafyExtras:
+        """Puts directable background characters on set: "crew works at consoles" (at Cinemafy Marks named console),
+        "marines patrol", "two officers talk", "crowd mills about". Loops come from the animation library; patrols and
+        wanderers walk on the navmesh in play.
+
+        Args:
+            direction: What they're doing, in plain words.
+            location: Center of their area.
+            extra_classes: Character Blueprint classes to use (cycled).
+            count: How many.
+            radius: Area radius in cm.
+
+        Returns:
+            The Cinemafy Extras actor.
+        """
+        world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+        extras = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.CinemafyExtras, location)
+        extras.set_editor_property('direction', direction)
+        extras.set_editor_property('extra_classes', extra_classes)
+        extras.set_editor_property('count', count)
+        extras.set_editor_property('radius', radius)
+        extras.populate()
+        return extras
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
     @toolset_registry.tool_call

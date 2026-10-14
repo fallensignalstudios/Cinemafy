@@ -2,6 +2,7 @@
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyStoryLibrary.h"
 #include "CinemafyModule.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafySequencerUtils.h"
@@ -1160,6 +1161,8 @@ namespace CinemafyChoreoTake
 
 		const UMovieScene* MovieScene = Open->GetMovieScene();
 		Sequencer->SetLocalTimeDirectly(FFrameTime(MovieScene->GetTickResolution().AsFrameNumber(Choreo->TakeStartSeconds)));
+		// Foley under the take (impacts, landings, draws, falls), if the project has foley sounds set up.
+		UCinemafyStoryLibrary::BakeFoley(Open, Ensemble, Choreo->TakeStartSeconds);
 		return UCinemafyEditorLibrary::DirectSceneInSequencer(Director);
 	}
 }

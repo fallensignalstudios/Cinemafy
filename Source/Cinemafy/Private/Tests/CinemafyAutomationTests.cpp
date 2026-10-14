@@ -9,6 +9,8 @@
 #include "CinemafyScript.h"
 #include "CinemafyPrevis.h"
 #include "CinemafyStory.h"
+#include "CinemafyMood.h"
+#include "CinemafyExtras.h"
 #include "GameFramework/Pawn.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
@@ -1158,6 +1160,44 @@ bool FCinemafyStoryFlowTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("The hangar leads on past the med bay when Thane wasn't spared"), UCinemafyStorySubsystem::NextSceneAfter(Project, Scenes[2]->Id, NoFlags, Offered), FString(TEXT("END")));
 	TSet<FName> Spared = { FName(TEXT("spared_thane")) };
 	TestEqual(TEXT("...and into it when he was"), UCinemafyStorySubsystem::NextSceneAfter(Project, Scenes[2]->Id, Spared, Offered), Scenes[3]->Id);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyMoodTest, "Cinemafy.Story.ReadsMoodAndExtras", CinemafyTests::Flags)
+bool FCinemafyMoodTest::RunTest(const FString& Parameters)
+{
+	FCinemafyScriptScene Fight;
+	Fight.Heading = TEXT("EXT. HANGAR DECK - NIGHT");
+	Fight.Setting = TEXT("EXT");
+	Fight.TimeOfDay = TEXT("NIGHT");
+	Fight.bHasAction = true;
+	FCinemafyScriptLine Action;
+	Action.Text = TEXT("They fight in the rain. Kade slashes, Thane attacks.");
+	Fight.Lines.Add(Action);
+	const FCinemafySceneMood FightMood = UCinemafyMoodLibrary::ReadSceneMood(Fight, ECinemafyTimeOfDay::Unknown);
+	TestEqual(TEXT("A night fight is night"), FightMood.TimeOfDay, ECinemafyTimeOfDay::Night);
+	TestEqual(TEXT("...and action"), FightMood.Mood, FString(TEXT("action")));
+	TestEqual(TEXT("...cut kinetic"), FightMood.DirectorStyle, ECinemafyDirectorPreset::KineticAction);
+	TestTrue(TEXT("...in the rain"), FightMood.Weather.Contains(TEXT("rain")));
+	TestTrue(TEXT("...exterior"), FightMood.bExterior);
+
+	FCinemafyScriptScene Grief;
+	Grief.Heading = TEXT("INT. MED BAY - CONTINUOUS");
+	Grief.TimeOfDay = TEXT("CONTINUOUS");
+	FCinemafyScriptLine Tears;
+	Tears.Text = TEXT("Kade sits by the bed. Tears. She mourns him.");
+	Grief.Lines.Add(Tears);
+	const FCinemafySceneMood GriefMood = UCinemafyMoodLibrary::ReadSceneMood(Grief, ECinemafyTimeOfDay::Dusk);
+	TestEqual(TEXT("CONTINUOUS keeps the time of day"), GriefMood.TimeOfDay, ECinemafyTimeOfDay::Dusk);
+	TestEqual(TEXT("Grief reads sad"), GriefMood.Mood, FString(TEXT("sad")));
+	TestEqual(TEXT("...a sad dusk is lyrical"), GriefMood.DirectorStyle, ECinemafyDirectorPreset::GoldenHourLyrical);
+
+	FString Place;
+	TestEqual(TEXT("Crew works at consoles"), ACinemafyExtras::ReadDirection(TEXT("crew works at consoles"), Place), ECinemafyExtrasBehavior::Work);
+	TestEqual(TEXT("...at the console marks"), Place, FString(TEXT("console")));
+	TestEqual(TEXT("Marines patrol"), ACinemafyExtras::ReadDirection(TEXT("marines patrol the corridor"), Place), ECinemafyExtrasBehavior::Patrol);
+	TestEqual(TEXT("Two officers talk"), ACinemafyExtras::ReadDirection(TEXT("two officers talk"), Place), ECinemafyExtrasBehavior::Talk);
+	TestEqual(TEXT("A crowd mills about"), ACinemafyExtras::ReadDirection(TEXT("crowd mills about"), Place), ECinemafyExtrasBehavior::Wander);
 	return true;
 }
 

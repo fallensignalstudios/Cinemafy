@@ -12,6 +12,13 @@
 #include "Tracks/MovieSceneCinematicShotTrack.h"
 #include "Framework/Docking/TabManager.h"
 #include "Misc/PackageName.h"
+#include "CinemafyMood.h"
+#include "CinemafySettings.h"
+#include "Components/LightComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Tracks/MovieSceneAudioTrack.h"
 #include "AutomatedAssetImportData.h"
 #include "CinemafyFaceComponent.h"
 #include "CinemafySequencerUtils.h"
@@ -504,6 +511,12 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		Primary->SceneDirector = Director;
 		Primary->bDirectAfterBake = true;
 	}
+	// The scene's mood picks the director's style, temp music and ambience (the level's lighting is left alone).
+	const FString MoodReport = ApplySceneMood(Project, SceneId, false);
+	if (!MoodReport.IsEmpty())
+	{
+		Report.Add(MoodReport);
+	}
 	Project->Modify();
 	if (Scene->Status == ECinemafySceneStatus::NotStarted)
 	{
@@ -986,6 +999,223 @@ void UCinemafyStoryLibrary::BakeTalkCurves(ULevelSequence* Sequence, const TArra
 		}
 		Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 	}
+}
+
+namespace CinemafyMoodApply
+{
+	/** A light's intensity as it was before Cinemafy touched it (remembered in a tag), so moods don't compound. */
+	float BaseIntensity(AActor* Light, float Current)
+	{
+		const FString Prefix = TEXT("Cinemafy.BaseIntensity:");
+		for (const FName& Tag : Light->Tags)
+		{
+			const FString Text = Tag.ToString();
+			if (Text.StartsWith(Prefix))
+			{
+				return FCString::Atof(*Text.Mid(Prefix.Len()));
+			}
+		}
+		Light->Tags.Add(FName(*FString::Printf(TEXT("%s%f"), *Prefix, Current)));
+		return Current;
+	}
+
+	UMovieSceneAudioTrack* FreshAudioTrack(UMovieScene* MovieScene, const FText& Name)
+	{
+		TArray<UMovieSceneTrack*> Old;
+		for (UMovieSceneTrack* Track : MovieScene->GetTracks())
+		{
+			if (Track && Track->IsA<UMovieSceneAudioTrack>() && Track->GetDisplayName().EqualTo(Name))
+			{
+				Old.Add(Track);
+			}
+		}
+		for (UMovieSceneTrack* Track : Old)
+		{
+			MovieScene->RemoveTrack(*Track);
+		}
+		UMovieSceneAudioTrack* Track = MovieScene->AddTrack<UMovieSceneAudioTrack>();
+		Track->SetDisplayName(Name);
+		return Track;
+	}
+}
+
+FString UCinemafyStoryLibrary::ApplySceneMood(UCinemafyScriptProject* Project, const FString& SceneId, bool bLightTheLevel)
+{
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
+	UWorld* World = CinemafyStory::EditorWorld();
+	if (!Scene || !World)
+	{
+		return FString();
+	}
+	// CONTINUOUS / LATER carry the time of day of the scene before.
+	ECinemafyTimeOfDay Previous = ECinemafyTimeOfDay::Unknown;
+	for (const FCinemafyScriptScene* Earlier : Project->GetAllScenes())
+	{
+		if (Earlier == Scene)
+		{
+			break;
+		}
+		Previous = UCinemafyMoodLibrary::ReadSceneMood(*Earlier, Previous).TimeOfDay;
+	}
+	const FCinemafySceneMood Mood = UCinemafyMoodLibrary::ReadSceneMood(*Scene, Previous);
+	TArray<FString> Report;
+	Report.Add(FString::Printf(TEXT("%s reads as %s."), *Scene->Id, *Mood.Why));
+
+	const FScopedTransaction Transaction(LOCTEXT("SceneMood", "Cinemafy: Scene Mood"));
+	const UCinemafySettings* Settings = GetDefault<UCinemafySettings>();
+	for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+	{
+		if (It->ScriptProject != Project || It->ScriptSceneId != Scene->Id)
+		{
+			continue;
+		}
+		It->Modify();
+		It->Style = Mood.DirectorStyle;
+		Report.Add(FString::Printf(TEXT("Director style: %s."), *StaticEnum<ECinemafyDirectorPreset>()->GetDisplayNameTextByValue(static_cast<int64>(Mood.DirectorStyle)).ToString()));
+		if (!It->Music)
+		{
+			if (const TSoftObjectPtr<USoundBase>* Music = Settings->MoodMusic.Find(Mood.Mood))
+			{
+				It->Music = Music->LoadSynchronous();
+				Report.Add(FString::Printf(TEXT("Temp music: %s."), *Music->GetAssetName()));
+			}
+		}
+	}
+	for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
+	{
+		if (It->GetActorLabel().StartsWith(FString::Printf(TEXT("Previs_%s_"), *Scene->Id.Replace(TEXT("."), TEXT("_")))))
+		{
+			It->Modify();
+			It->DirectorStyle = Mood.DirectorStyle;
+		}
+	}
+
+	// The set's room tone under the whole scene.
+	const FCinemafySet* Set = Project->FindSet(Scene->Location);
+	ULevelSequence* Sequence = Scene->Sequence.LoadSynchronous();
+	if (Set && Sequence && !Set->Ambience.IsNull())
+	{
+		if (USoundBase* Ambience = Set->Ambience.LoadSynchronous())
+		{
+			UMovieScene* MovieScene = Sequence->GetMovieScene();
+			UMovieSceneAudioTrack* Track = CinemafyMoodApply::FreshAudioTrack(MovieScene, LOCTEXT("AmbienceTrack", "Cinemafy Ambience"));
+			if (UMovieSceneSection* Section = Track->AddNewSoundOnRow(Ambience, UE::MovieScene::DiscreteInclusiveLower(MovieScene->GetPlaybackRange()), 0))
+			{
+				Section->SetRange(MovieScene->GetPlaybackRange());
+			}
+			Report.Add(FString::Printf(TEXT("Ambience: %s."), *Ambience->GetName()));
+		}
+	}
+
+	if (bLightTheLevel)
+	{
+		for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+		{
+			ULightComponent* Light = It->GetLightComponent();
+			if (!Light)
+			{
+				continue;
+			}
+			It->Modify();
+			Light->Modify();
+			const float Base = CinemafyMoodApply::BaseIntensity(*It, Light->Intensity);
+			FRotator Rotation = It->GetActorRotation();
+			Rotation.Pitch = Mood.SunPitch;
+			It->SetActorRotation(Rotation);
+			Light->SetIntensity(Base * Mood.SunScale);
+			Light->SetLightColor(Mood.SunColor);
+			Report.Add(FString::Printf(TEXT("Sun: %.0f degrees, %.0f%% bright."), -Mood.SunPitch, Mood.SunScale * 100.f));
+			break;
+		}
+		for (TActorIterator<ASkyLight> It(World); It; ++It)
+		{
+			USkyLightComponent* Sky = It->GetLightComponent();
+			if (!Sky)
+			{
+				continue;
+			}
+			It->Modify();
+			Sky->Modify();
+			const float Base = CinemafyMoodApply::BaseIntensity(*It, Sky->Intensity);
+			const float Scale = Mood.TimeOfDay == ECinemafyTimeOfDay::Night ? 0.2f : (Mood.TimeOfDay == ECinemafyTimeOfDay::Dawn || Mood.TimeOfDay == ECinemafyTimeOfDay::Dusk ? 0.6f : 1.f);
+			Sky->SetIntensity(Base * Scale);
+			Sky->RecaptureSky();
+			break;
+		}
+	}
+	return FString::Join(Report, TEXT("\n"));
+}
+
+int32 UCinemafyStoryLibrary::BakeFoley(ULevelSequence* Sequence, const TArray<ACinemafyChoreography*>& Ensemble, float TakeStartSeconds)
+{
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	const UCinemafySettings* Settings = GetDefault<UCinemafySettings>();
+	if (!MovieScene || Settings->FoleySounds.Num() == 0)
+	{
+		return 0;
+	}
+	struct FCue { float Time; FString Kind; };
+	TArray<FCue> Cues;
+	for (const ACinemafyChoreography* Choreo : Ensemble)
+	{
+		if (!Choreo)
+		{
+			continue;
+		}
+		for (const FCinemafyChoreoBeat& Beat : Choreo->Beats)
+		{
+			const ECinemafyHitReaction Answer = Beat.bOverrideReaction ? Beat.Reaction : Beat.Reading.Reaction;
+			for (const FCinemafyPerformanceEvent& Event : Beat.Events)
+			{
+				const FString Note = Event.Note.ToLower();
+				switch (Event.Kind)
+				{
+				case ECinemafyPerformanceEventKind::Contact:  Cues.Add(FCue{ Event.Time, TEXT("impact") }); break;
+				case ECinemafyPerformanceEventKind::Takeoff:  Cues.Add(FCue{ Event.Time, TEXT("takeoff") }); break;
+				case ECinemafyPerformanceEventKind::Landing:  Cues.Add(FCue{ Event.Time, TEXT("land") }); break;
+				case ECinemafyPerformanceEventKind::Reaction:
+					if (Answer == ECinemafyHitReaction::Death)
+					{
+						Cues.Add(FCue{ Event.Time + 0.9f, TEXT("body_fall") });
+					}
+					break;
+				case ECinemafyPerformanceEventKind::Transition:
+					if (Note.Contains(TEXT("draw")))
+					{
+						Cues.Add(FCue{ Event.Time, TEXT("draw") });
+					}
+					else if (Note.Contains(TEXT("roll")) || Note.Contains(TEXT("recover")))
+					{
+						Cues.Add(FCue{ Event.Time, TEXT("roll") });
+					}
+					break;
+				case ECinemafyPerformanceEventKind::ActionStart:
+					if (Beat.Reading.Kind == ECinemafyActionKind::Equip)
+					{
+						Cues.Add(FCue{ Event.Time, Beat.Reading.Keywords.ContainsByPredicate([](const FString& W) { return W.StartsWith(TEXT("holster")); }) ? TEXT("holster") : TEXT("draw") });
+					}
+					break;
+				default:
+					break;
+				}
+			}
+		}
+	}
+
+	UMovieSceneAudioTrack* Track = CinemafyMoodApply::FreshAudioTrack(MovieScene, LOCTEXT("FoleyTrack", "Cinemafy Foley"));
+	const FFrameRate Resolution = MovieScene->GetTickResolution();
+	int32 Placed = 0;
+	for (const FCue& Cue : Cues)
+	{
+		const TSoftObjectPtr<USoundBase>* Sound = Settings->FoleySounds.Find(Cue.Kind);
+		USoundBase* Loaded = Sound ? Sound->LoadSynchronous() : nullptr;
+		if (Loaded)
+		{
+			Track->AddNewSoundOnRow(Loaded, Resolution.AsFrameNumber(TakeStartSeconds + Cue.Time), Placed % 4);
+			++Placed;
+		}
+	}
+	return Placed;
 }
 
 #undef LOCTEXT_NAMESPACE
