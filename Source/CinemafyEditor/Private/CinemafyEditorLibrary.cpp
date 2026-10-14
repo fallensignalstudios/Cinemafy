@@ -33,9 +33,9 @@
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
 #include "Sections/MovieSceneCameraCutSection.h"
-#include "Sections/MovieSceneEnumSection.h"
+#include "Sections/MovieSceneByteSection.h"
 #include "Sections/MovieSceneFloatSection.h"
-#include "Tracks/MovieSceneEnumTrack.h"
+#include "Tracks/MovieSceneByteTrack.h"
 #include "Tracks/MovieSceneFloatTrack.h"
 #include "Channels/MovieSceneByteChannel.h"
 #include "Channels/MovieSceneFloatChannel.h"
@@ -899,9 +899,9 @@ namespace
 				continue;
 			}
 
-			UMovieSceneEnumTrack* Track = ReplacePropertyTrack<UMovieSceneEnumTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(UCinemafyFaceComponent, Emotion));
+			UMovieSceneByteTrack* Track = ReplacePropertyTrack<UMovieSceneByteTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(UCinemafyFaceComponent, Emotion));
 			Track->SetEnum(StaticEnum<ECinemafyEmotion>());
-			UMovieSceneEnumSection* Section = AddInfiniteSection<UMovieSceneEnumSection>(Track);
+			UMovieSceneByteSection* Section = AddInfiniteSection<UMovieSceneByteSection>(Track);
 			FMovieSceneByteChannel* Channel = Section ? Section->GetChannelProxy().GetChannel<FMovieSceneByteChannel>(0) : nullptr;
 			if (!Channel)
 			{

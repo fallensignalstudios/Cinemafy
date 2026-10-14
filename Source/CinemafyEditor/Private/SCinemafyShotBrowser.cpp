@@ -560,7 +560,7 @@ ACinemafySceneDirector* SCinemafyShotBrowser::GetActiveDirector() const
 	UWorld* World = GEditor->GetEditorWorldContext().World();
 	if (World)
 	{
-		for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+		if (TActorIterator<ACinemafySceneDirector> It(World); It)
 		{
 			return *It;
 		}

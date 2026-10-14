@@ -378,11 +378,11 @@ void ACinemafySceneDirector::EndConversation()
 	}
 
 	// Closing transition out of the last shot, straight into gameplay.
-	const FCinemafyDirectorStyle Style = GetStyle();
-	const bool bClosingTransition = Style.ClosingTransition != ECinemafyTransition::Cut && Style.ClosingTransition != ECinemafyTransition::MatchCut;
+	const FCinemafyDirectorStyle DirectorStyle = GetStyle();
+	const bool bClosingTransition = DirectorStyle.ClosingTransition != ECinemafyTransition::Cut && DirectorStyle.ClosingTransition != ECinemafyTransition::MatchCut;
 	if (bClosingTransition)
 	{
-		PlayLiveTransition(Style.ClosingTransition, Style.TransitionDuration, ECinemafyWipeDirection::LeftToRight, LastLiveCamera.Get(), false);
+		PlayLiveTransition(DirectorStyle.ClosingTransition, DirectorStyle.TransitionDuration, ECinemafyWipeDirection::LeftToRight, LastLiveCamera.Get(), false);
 	}
 	if (UCinemafySubtitleSubsystem* Subtitles = GetWorld() ? GetWorld()->GetSubsystem<UCinemafySubtitleSubsystem>() : nullptr)
 	{
@@ -511,11 +511,11 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	UCinemafyCameraLibrary::ApplySensor(Cine, Request.Sensor);
 	UCinemafyCameraLibrary::ApplyPrime(Cine, Solution.Lens, 2.8f);
 
-	const FCinemafyDirectorStyle Style = GetStyle();
-	if (Style.bApplyLook)
+	const FCinemafyDirectorStyle DirectorStyle = GetStyle();
+	if (DirectorStyle.bApplyLook)
 	{
-		UCinemafyCameraLibrary::ApplyLook(Cine, Style.Look, Style.LookStrength);
-		UCinemafyCameraLibrary::SetLetterbox(Cine, Style.LetterboxAspect);
+		UCinemafyCameraLibrary::ApplyLook(Cine, DirectorStyle.Look, DirectorStyle.LookStrength);
+		UCinemafyCameraLibrary::SetLetterbox(Cine, DirectorStyle.LetterboxAspect);
 	}
 
 	FindOrAddRuntimeComponent<UCinemafyCameraFeelComponent>(Camera)->Feel = Shot.Feel;
@@ -577,12 +577,12 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	ECinemafyTransition Transition = Shot.TransitionIn;
 	if (bFirstCut && Transition == ECinemafyTransition::Cut)
 	{
-		Transition = Style.OpeningTransition;
+		Transition = DirectorStyle.OpeningTransition;
 	}
 	const bool bTransition = Transition != ECinemafyTransition::Cut && Transition != ECinemafyTransition::MatchCut;
 	if (bTransition)
 	{
-		PlayLiveTransition(Transition, Style.TransitionDuration, Shot.WipeDirection, LastLiveCamera.Get(), bFirstCut);
+		PlayLiveTransition(Transition, DirectorStyle.TransitionDuration, Shot.WipeDirection, LastLiveCamera.Get(), bFirstCut);
 	}
 
 	// Blend in from gameplay on the first shot (unless a transition does the job); hard cuts after that.
