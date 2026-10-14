@@ -1,6 +1,7 @@
 #include "CinemafyChoreography.h"
 #include "CinemafyModule.h"
 #include "CinemafyPerformerProfile.h"
+#include "CinemafyProduction.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
@@ -960,6 +961,11 @@ void ACinemafyChoreography::ApplyGait(ECinemafyGait Gait)
 	if (!Performer)
 	{
 		return;
+	}
+	// Continuity: a limping or exhausted character (a "walk only" look) doesn't run.
+	if ((Gait == ECinemafyGait::Run || Gait == ECinemafyGait::Sprint) && Performer->Tags.Contains(UCinemafyProductionLibrary::WalkOnlyTag))
+	{
+		Gait = ECinemafyGait::Walk;
 	}
 
 	const bool bWantCrouch = Gait == ECinemafyGait::Crouch;

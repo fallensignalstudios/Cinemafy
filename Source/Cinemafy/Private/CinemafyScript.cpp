@@ -1712,3 +1712,13 @@ FString UCinemafyScriptProject::BuildChecklist() const
 	}
 	return FString::Join(Out, TEXT("\n"));
 }
+
+const FCinemafyCastMember* UCinemafyScriptProject::FindCastMember(const FString& ScriptName) const
+{
+	return CastMembers.FindByPredicate([&ScriptName](const FCinemafyCastMember& Member) { return Member.ScriptName.Equals(ScriptName, ESearchCase::IgnoreCase); });
+}
+
+const FCinemafySet* UCinemafyScriptProject::FindSet(const FString& ScriptLocation) const
+{
+	return Sets.FindByPredicate([&ScriptLocation](const FCinemafySet& Set) { return Set.ScriptLocation.Equals(ScriptLocation, ESearchCase::IgnoreCase); });
+}

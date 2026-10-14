@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
+#include "CinemafyProduction.h"
 #include "CinemafyScript.generated.h"
 
 class ULevelSequence;
@@ -223,7 +224,9 @@ enum class ECinemafyScriptRequest : uint8
 {
 	Import,
 	MapScenes,
-	ExportChecklist
+	ExportChecklist,
+	BuildCastAndSets,
+	OpenStoryBoard
 };
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FCinemafyScriptEditorRequest, class UCinemafyScriptProject*, ECinemafyScriptRequest);
@@ -260,6 +263,25 @@ public:
 	/** Everyone with a line, most lines first. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Script")
 	TArray<FString> CastList;
+
+	/** Who plays whom: script names to characters, with voices and continuity looks. Build Cast & Sets fills it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast & Sets", meta = (TitleProperty = "{ScriptName} -> {ActorLabel}"))
+	TArray<FCinemafyCastMember> CastMembers;
+
+	/** Where scenes are shot: script locations to levels, with ambience and marks. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast & Sets", meta = (TitleProperty = "{ScriptLocation}"))
+	TArray<FCinemafySet> Sets;
+
+	/** Adds a cast entry for every speaking character and a set for every location (keeps what's filled in). */
+	UFUNCTION(CallInEditor, Category = "Cast & Sets")
+	void BuildCastAndSets() { OnEditorRequest.Broadcast(this, ECinemafyScriptRequest::BuildCastAndSets); }
+
+	/** Opens the Story Board: every scene as a card, by act and chapter. */
+	UFUNCTION(CallInEditor, Category = "Script")
+	void OpenStoryBoard() { OnEditorRequest.Broadcast(this, ECinemafyScriptRequest::OpenStoryBoard); }
+
+	const FCinemafyCastMember* FindCastMember(const FString& ScriptName) const;
+	const FCinemafySet* FindSet(const FString& ScriptLocation) const;
 
 	/** What the breakdown found and decided. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Script", meta = (MultiLine = true))

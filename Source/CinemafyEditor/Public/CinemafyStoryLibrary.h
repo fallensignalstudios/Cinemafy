@@ -1,0 +1,42 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
+#include "CinemafyScript.h"
+#include "CinemafyStoryLibrary.generated.h"
+
+class ACinemafyMark;
+class ACinemafySceneDirector;
+class ACinemafyChoreography;
+
+/**
+ * The storyteller's tools: casting and sets, staging a scene straight from the script, the story board,
+ * scratch voices, mood, dailies and paperwork. Everything works from a Script Project.
+ */
+UCLASS()
+class CINEMAFYEDITOR_API UCinemafyStoryLibrary : public UBlueprintFunctionLibrary
+{
+	GENERATED_BODY()
+
+public:
+	// --- Cast & Sets -----------------------------------------------------------------------------------------------
+
+	/**
+	 * Adds a cast entry for every speaking character and a set for every location (existing entries are kept).
+	 * Characters are matched to actors in the open level by label, sets to the open level when its marks name
+	 * them. Returns how many entries were added.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static int32 BuildCastAndSets(UCinemafyScriptProject* Project);
+
+	/** Drops a named mark where the viewport is looking (on the floor). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static ACinemafyMark* PlaceMark(const FString& MarkName, const FString& SetName);
+
+	/** Puts each cast member in the scene in the state the script says they arrive in (props, injuries, costume). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static int32 ApplySceneContinuity(UCinemafyScriptProject* Project, const FString& SceneId);
+
+	/** The actor playing a script character in a world: the cast entry's label, else a matching character label. */
+	static AActor* FindCastActor(const UCinemafyScriptProject* Project, const FString& ScriptName, UWorld* World);
+};

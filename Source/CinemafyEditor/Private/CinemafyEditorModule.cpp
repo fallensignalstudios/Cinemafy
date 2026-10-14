@@ -7,6 +7,7 @@
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreoTools.h"
 #include "CinemafyScript.h"
+#include "CinemafyStoryLibrary.h"
 #include "HAL/PlatformProcess.h"
 #include "CinemafyEditCommands.h"
 #include "CinemafyEditLibrary.h"
@@ -202,6 +203,16 @@ void FCinemafyEditorModule::StartupModule()
 				"Mapped {0} Scene Director(s) in this level to scenes. {1}% of the script is directed."), Mapped, FMath::RoundToInt(Project->GetProgress() * 100.f)));
 			break;
 		}
+		case ECinemafyScriptRequest::BuildCastAndSets:
+		{
+			const int32 Added = UCinemafyStoryLibrary::BuildCastAndSets(Project);
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CastBuilt",
+				"Added {0} cast / set entr(ies). Fill in characters, voices and looks under Cast & Sets; place Cinemafy Marks named the way the script talks (\"console\", \"lift\")."), Added));
+			break;
+		}
+		case ECinemafyScriptRequest::OpenStoryBoard:
+			FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("CinemafyStoryBoard")));
+			break;
 		case ECinemafyScriptRequest::ExportChecklist:
 		{
 			const FString Path = UCinemafyEditorLibrary::ExportScriptChecklist(Project);
