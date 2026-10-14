@@ -16,6 +16,8 @@ class SCinemafyChoices;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCinemafyStorySceneEvent, const FString&, SceneId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCinemafyStoryChoicesEvent, const FString&, SceneId, const TArray<FCinemafyScriptChoice>&, Choices);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCinemafyStoryFinishedEvent);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCinemafyStoryControlEvent, const FString&, SceneId, int32, NextInsert, const FString&, Protagonist);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FCinemafyStoryHandoffEvent, const FString&, SceneId, const FString&, ControlBefore, const FString&, ControlAfter);
 
 /**
  * Plays a Script Project as a story in the game: each scene's sequence (with the gameplay handoff of
@@ -28,9 +30,24 @@ class CINEMAFY_API UCinemafyStorySubsystem : public UGameInstanceSubsystem, publ
 	GENERATED_BODY()
 
 public:
-	/** Starts (or jumps) the story at a scene. bFollowStory = carry on through choices and diverts afterwards. */
+	/**
+	 * Starts (or jumps) the story at a scene. bFollowStory = carry on through choices and diverts afterwards.
+	 * A gameplay bridge plays its first insert, then hands control back (OnControlReturned) until ContinueScene;
+	 * "<scene>#<n>" starts at (or, mid-bridge, continues with) insert n.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	bool PlayScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bFollowStory = true);
+
+	/** A gameplay bridge is waiting on play (its insert ended, control is the player's): play its next insert. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	void ContinueScene();
+
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
+	bool IsAwaitingGameplay() const { return bAwaitingGameplay; }
+
+	/** The insert playing (1-based), or 0 for a whole scene. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
+	int32 GetCurrentInsert() const { return CurrentInsert; }
 
 	/** Picks one of the offered choices (index into the choices broadcast by OnChoices). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
@@ -45,7 +62,7 @@ public:
 	void StopStory();
 
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
-	bool IsPlaying() const { return bPlaying || bAwaitingChoice; }
+	bool IsPlaying() const { return bPlaying || bAwaitingChoice || bAwaitingGameplay; }
 
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
 	FString GetCurrentSceneId() const { return CurrentSceneId; }
@@ -98,6 +115,25 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Cinemafy|Story")
 	FCinemafyStoryFinishedEvent OnStoryFinished;
 
+	/** A gameplay bridge's insert ended: the player has control (as Protagonist) until ContinueScene, or a Scene Trigger for "<scene>#<NextInsert>". */
+	UPROPERTY(BlueprintAssignable, Category = "Cinemafy|Story")
+	FCinemafyStoryControlEvent OnControlReturned;
+
+	/** A scene committed (played or skipped): who the player controlled going in and controls coming out (switch pawns here). */
+	UPROPERTY(BlueprintAssignable, Category = "Cinemafy|Story")
+	FCinemafyStoryHandoffEvent OnControlHandoff;
+
+	/**
+	 * When a scene says who the player controls going in (its game contract's Control Before), the player's own pawn
+	 * plays that character in its sequence; otherwise the cast member marked Is Player.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cinemafy|Story")
+	bool bBindControlledCharacter = true;
+
+	/** A finished scene with a script-bible id sets a flag of that id ("SCOR-01-CS03"), played or skipped. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cinemafy|Story")
+	bool bCommitSceneFlags = true;
+
 	/** Where the story goes after a scene with these flags (pure: the choices on offer, else the divert or the next scene). */
 	static FString NextSceneAfter(const UCinemafyScriptProject* Project, const FString& SceneId, const TSet<FName>& Flags, TArray<FCinemafyScriptChoice>& OutChoices);
 
@@ -115,6 +151,9 @@ private:
 	void HandleCutsceneFinished(ULevelSequence* Sequence);
 
 	void Advance();
+	bool StartPresentation(const FCinemafyScriptScene& Scene, int32 Insert);
+	void PresentationDone();
+	void CommitScene();
 	void ShowChoices();
 	void HideChoices();
 	void BindPlayer(class ULevelSequencePlayer* Player, const FCinemafyScriptScene& Scene);
@@ -130,6 +169,8 @@ private:
 	bool bPlaying = false;
 	bool bAwaitingChoice = false;
 	bool bFollowStory = true;
+	bool bAwaitingGameplay = false;
+	int32 CurrentInsert = 0;
 	TWeakObjectPtr<ULevelSequence> PlayingSequence;
 	TSharedPtr<SCinemafyChoices> ChoiceWidget;
 	TWeakObjectPtr<UWorld> ChoiceWorld;
@@ -147,7 +188,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TObjectPtr<UCinemafyScriptProject> Project;
 
-	/** The scene to play ("2.1.3"). */
+	/** The scene to play ("2.1.3", "SCOR-01-CS03"), or an insert of a gameplay bridge ("SCOR-01-CS01#2": continues it when it's waiting on play). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	FString SceneId;
 

@@ -949,6 +949,45 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def scene_contract(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
+        """A game scene's contract from its script bible: presentation, trigger, entry state, who has control before
+        and after, what it commits, the handoff, camera notes, and its gameplay-bridge inserts (address one as
+        "<scene>#<n>" with previs_scene, open_scene_sequence or create_director_for_scene).
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("SCOR-01-CS03").
+
+        Returns:
+            The contract and inserts, as text.
+        """
+        for act in project.get_editor_property('acts'):
+            for chapter in act.get_editor_property('chapters'):
+                for scene in chapter.get_editor_property('scenes'):
+                    if scene.get_editor_property('id') != scene_id:
+                        continue
+                    game = scene.get_editor_property('game')
+                    lines = scene.get_editor_property('lines')
+                    out = [f"{scene_id} {scene.get_editor_property('heading')} ({act.get_editor_property('title')} / {chapter.get_editor_property('title')})",
+                           f"Presentation: {game.get_editor_property('presentation')}, ~{int(game.get_editor_property('target_seconds'))} s,"
+                           f" skippable: {game.get_editor_property('skippable')}",
+                           f"Control: {game.get_editor_property('control_before')} -> {game.get_editor_property('control_after')}",
+                           f"Trigger: {game.get_editor_property('trigger')}",
+                           f"Entry: {game.get_editor_property('entry_state')}"]
+                    out += [f"Commits: {state}" for state in game.get_editor_property('exit_state')]
+                    out.append(f"Then: {game.get_editor_property('handoff')}")
+                    out.append(f"Camera: {game.get_editor_property('camera_notes')}")
+                    for index, insert in enumerate(scene.get_editor_property('inserts'), 1):
+                        first, last = insert.get_editor_property('first_line'), insert.get_editor_property('last_line')
+                        seq = insert.get_editor_property('sequence')
+                        out.append(f"Insert {scene_id}#{index}: lines {first}-{last}"
+                                   f"{' (sequence ready)' if seq else ''}; control after: {insert.get_editor_property('hands_control')[:90]}")
+                    out.append(f"{len(lines)} script line(s).")
+                    return '\n'.join(out)
+        return f'No scene {scene_id}.'
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

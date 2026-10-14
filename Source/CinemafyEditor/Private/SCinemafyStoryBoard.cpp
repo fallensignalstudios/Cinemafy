@@ -437,6 +437,43 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 	{
 		Meta += TEXT(" | action");
 	}
+	// A game's scene: how it's presented, who has control either side, its inserts; the contract in the tooltip.
+	const FCinemafyGameContract& Game = Scene.Game;
+	if (Game.Presentation != ECinemafyPresentation::Screenplay)
+	{
+		Meta += FString::Printf(TEXT("\n%s | %s -> %s"), *StaticEnum<ECinemafyPresentation>()->GetDisplayNameTextByValue(static_cast<int64>(Game.Presentation)).ToString(),
+			Game.ControlBefore.IsEmpty() ? TEXT("?") : *Game.ControlBefore, Game.ControlAfter.IsEmpty() ? TEXT("?") : *Game.ControlAfter);
+		if (Scene.Inserts.Num() > 0)
+		{
+			int32 Shot = 0;
+			for (const FCinemafySceneInsert& Insert : Scene.Inserts)
+			{
+				Shot += Insert.Sequence.IsNull() ? 0 : 1;
+			}
+			Meta += FString::Printf(TEXT(" | %d inserts (%d shot)"), Scene.Inserts.Num(), Shot);
+		}
+		if (!Game.bSkippable)
+		{
+			Meta += TEXT(" | unskippable");
+		}
+		Tip += TEXT("\n\nTrigger: ") + Game.Trigger;
+		if (!Game.EntryState.IsEmpty())
+		{
+			Tip += TEXT("\nEntry: ") + Game.EntryState;
+		}
+		for (const FString& State : Game.ExitState)
+		{
+			Tip += TEXT("\nCommits: ") + State;
+		}
+		if (!Game.Handoff.IsEmpty())
+		{
+			Tip += TEXT("\nThen: ") + Game.Handoff;
+		}
+		if (!Game.CameraNotes.IsEmpty())
+		{
+			Tip += TEXT("\nCamera: ") + Game.CameraNotes;
+		}
+	}
 
 	Card->AddSlot().AutoHeight().Padding(4.f, 4.f, 4.f, 0.f)
 	[
@@ -513,6 +550,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 	}
 
 	TArray<TSoftObjectPtr<ULevelSequence>> Takes = Scene.Takes;
+	const int32 InsertCount = Scene.Inserts.Num();
 	Card->AddSlot().AutoHeight().Padding(2.f, 4.f)
 	[
 		SNew(SHorizontalBox)
@@ -550,7 +588,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 		[
 			SNew(SComboButton)
 			.ButtonContent()[ SNew(STextBlock).Text(LOCTEXT("More", "...")) ]
-			.OnGetMenuContent_Lambda([this, WeakProject, SceneId, Takes]()
+			.OnGetMenuContent_Lambda([this, WeakProject, SceneId, Takes, InsertCount]()
 			{
 				FMenuBuilder Menu(true, nullptr);
 				Menu.BeginSection("Status", LOCTEXT("StatusSection", "Status"));
@@ -578,6 +616,14 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 					})));
 				};
 				Entry(LOCTEXT("StageOnly", "Stage without recording"), [SceneId](UCinemafyScriptProject* P) { UCinemafyPreflightLibrary::PrevisWithPreflight(P, SceneId, false); });
+				// A gameplay bridge's inserts, each its own sequence.
+				for (int32 Insert = 1; Insert <= InsertCount; ++Insert)
+				{
+					const FString InsertId = FString::Printf(TEXT("%s#%d"), *SceneId, Insert);
+					Entry(FText::Format(LOCTEXT("PrevisInsert", "Insert {0}: Previs"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyPreflightLibrary::PrevisWithPreflight(P, InsertId, true); });
+					Entry(FText::Format(LOCTEXT("OpenInsert", "Insert {0}: Open its sequence"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::OpenSceneSequence(P, InsertId); });
+					Entry(FText::Format(LOCTEXT("DirectInsert", "Insert {0}: New Scene Director"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, InsertId); });
+				}
 				Entry(LOCTEXT("Continuity", "Dress the cast for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneContinuity(P, SceneId); });
 				Entry(LOCTEXT("NewDirector", "New Scene Director from the script"), [SceneId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, SceneId); });
 				Entry(LOCTEXT("ScratchScene", "Scratch voices for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::GenerateScratchVoices(P, SceneId, true); });

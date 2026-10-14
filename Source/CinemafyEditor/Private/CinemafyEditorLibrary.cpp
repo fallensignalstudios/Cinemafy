@@ -1552,7 +1552,15 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 			if (FCinemafyScriptScene* Scene = Director->ScriptProject->FindScene(Director->ScriptSceneId))
 			{
 				Director->ScriptProject->Modify();
-				Scene->Sequence = Sequence;
+				// An insert of a gameplay bridge keeps its own sequence; the scene counts as directed once any of it is.
+				if (FCinemafySceneInsert* Insert = Director->ScriptProject->FindInsert(Director->ScriptSceneId))
+				{
+					Insert->Sequence = Sequence;
+				}
+				else
+				{
+					Scene->Sequence = Sequence;
+				}
 				Scene->Level = Director->GetWorld();
 				Scene->DirectorLabel = Director->GetActorLabel();
 				if (Scene->Status < ECinemafySceneStatus::Directed)
@@ -3613,7 +3621,12 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 	const FScopedTransaction Transaction(LOCTEXT("DirectorForScene", "Cinemafy: Director for Scene"));
 	TArray<AActor*> Performers;
 	int32 Unmatched = 0;
-	const TArray<FCinemafyLine> Lines = CinemafyScriptEditor::BuildDirectorLines(World, *Scene, Performers, Unmatched);
+	// "<scene>#<n>": a director for one insert of a gameplay bridge (its lines only).
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
+	const bool bInsert = Project->FindInsert(SceneId) != nullptr;
+	const FString TargetId = bInsert ? FString::Printf(TEXT("%s#%d"), *Scene->Id, InsertIndex) : Scene->Id;
+	const TArray<FCinemafyLine> Lines = CinemafyScriptEditor::BuildDirectorLines(World, UCinemafyScriptLibrary::SceneForInsert(*Scene, bInsert ? InsertIndex : 0), Performers, Unmatched);
 
 	FVector Location = FVector::ZeroVector;
 	for (AActor* Member : Performers)
@@ -3626,13 +3639,16 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 	{
 		return nullptr;
 	}
-	Director->SetActorLabel(FString::Printf(TEXT("Director_%s"), *Scene->Id.Replace(TEXT("."), TEXT("_"))));
+	Director->SetActorLabel(FString::Printf(TEXT("Director_%s"), *TargetId.Replace(TEXT("."), TEXT("_")).Replace(TEXT("#"), TEXT("_I"))));
 	Director->Lines = Lines;
 	Director->ScriptProject = Project;
-	Director->ScriptSceneId = Scene->Id;
+	Director->ScriptSceneId = TargetId;
 
 	Project->Modify();
-	Scene->DirectorLabel = Director->GetActorLabel();
+	if (!bInsert)
+	{
+		Scene->DirectorLabel = Director->GetActorLabel();
+	}
 	Scene->Level = World;
 	Scene->MatchScore = 1.f;
 	Scene->StagedHash = Scene->ContentHash;
@@ -3659,7 +3675,9 @@ int32 UCinemafyEditorLibrary::RefreshDirectorFromScript(ACinemafySceneDirector* 
 	}
 	TArray<AActor*> Performers;
 	int32 Unmatched = 0;
-	TArray<FCinemafyLine> Fresh = CinemafyScriptEditor::BuildDirectorLines(Director->GetWorld(), *Scene, Performers, Unmatched);
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(Director->ScriptSceneId, InsertIndex);
+	TArray<FCinemafyLine> Fresh = CinemafyScriptEditor::BuildDirectorLines(Director->GetWorld(), UCinemafyScriptLibrary::SceneForInsert(*Scene, InsertIndex), Performers, Unmatched);
 
 	// Unchanged words keep the line as it was tuned (first unused match, so repeated lines pair up in order).
 	TArray<bool> Used;

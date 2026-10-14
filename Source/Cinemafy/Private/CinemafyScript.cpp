@@ -3314,3 +3314,22 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScriptBible(const FS
 	OutReport = FString::Join(Report, TEXT("\n"));
 	return Acts;
 }
+
+FCinemafyScriptScene UCinemafyScriptLibrary::SceneForInsert(const FCinemafyScriptScene& Scene, int32 Insert)
+{
+	if (!Scene.Inserts.IsValidIndex(Insert - 1))
+	{
+		return Scene;
+	}
+	const FCinemafySceneInsert& Range = Scene.Inserts[Insert - 1];
+	FCinemafyScriptScene Slice = Scene;
+	Slice.Id = FString::Printf(TEXT("%s#%d"), *Scene.Id, Insert);
+	Slice.Lines.Reset();
+	for (int32 Index = FMath::Max(Range.FirstLine, 0); Index <= Range.LastLine && Index < Scene.Lines.Num(); ++Index)
+	{
+		Slice.Lines.Add(Scene.Lines[Index]);
+	}
+	Slice.Inserts.Reset();
+	Slice.bTransitionIn = Insert == 1 && Scene.bTransitionIn;
+	return Slice;
+}

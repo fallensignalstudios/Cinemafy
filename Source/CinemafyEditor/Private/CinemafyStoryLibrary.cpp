@@ -273,13 +273,19 @@ ULevelSequence* UCinemafyStoryLibrary::OpenSceneSequence(UCinemafyScriptProject*
 	{
 		return nullptr;
 	}
-	ULevelSequence* Sequence = Scene->Sequence.LoadSynchronous();
+	// "<scene>#<n>": one insert of a gameplay bridge, with a sequence of its own.
+	FCinemafySceneInsert* Insert = Project->FindInsert(SceneId);
+	TSoftObjectPtr<ULevelSequence>& Slot = Insert ? Insert->Sequence : Scene->Sequence;
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
+	ULevelSequence* Sequence = Slot.LoadSynchronous();
 	if (!Sequence)
 	{
 		const FString Place = FPaths::MakeValidFileName(Scene->Location.IsEmpty() ? FString(TEXT("Scene")) : Scene->Location).Replace(TEXT(" "), TEXT("_"));
+		const FString Id = Scene->Id.Replace(TEXT("."), TEXT("_")) + (Insert ? FString::Printf(TEXT("_I%d"), InsertIndex) : FString());
 		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
 		FString PackageName, AssetName;
-		AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("/Game/Cinemafy/Scenes/SC_%s_%s"), *Scene->Id.Replace(TEXT("."), TEXT("_")), *Place), TEXT(""), PackageName, AssetName);
+		AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("/Game/Cinemafy/Scenes/SC_%s_%s"), *Id, *Place.Left(40)), TEXT(""), PackageName, AssetName);
 		UPackage* Package = CreatePackage(*PackageName);
 		Sequence = NewObject<ULevelSequence>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
 		Sequence->Initialize();
@@ -289,7 +295,7 @@ ULevelSequence* UCinemafyStoryLibrary::OpenSceneSequence(UCinemafyScriptProject*
 		FAssetRegistryModule::AssetCreated(Sequence);
 		Package->MarkPackageDirty();
 		Project->Modify();
-		Scene->Sequence = Sequence;
+		Slot = Sequence;
 	}
 	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Sequence);
 	return Sequence;
@@ -337,9 +343,13 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		Report.Add(FString::Printf(TEXT("Note: %s is set in %s, but %s is open. Staging here anyway."), *Scene->Location, *Set->Level.GetAssetName(), *World->GetMapName()));
 	}
 
-	// The staging, from the script.
+	// The staging, from the script (one insert of a gameplay bridge: just its lines).
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
+	const bool bInsert = Project->FindInsert(SceneId) != nullptr;
+	const FString TargetId = bInsert ? FString::Printf(TEXT("%s#%d"), *Scene->Id, InsertIndex) : Scene->Id;
 	TArray<FString> NotStaged;
-	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(*Scene, NotStaged);
+	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(UCinemafyScriptLibrary::SceneForInsert(*Scene, bInsert ? InsertIndex : 0), NotStaged);
 
 	// The cast on set: who's here, who has to be brought in.
 	TArray<FString> Characters;
@@ -396,7 +406,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 
 	// Last pass's previs for this scene goes; the new one is built fresh. Choreographies changed by hand since
 	// they were generated are kept (renamed Edited_..., sitting out takes) so no work is lost.
-	const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *Scene->Id.Replace(TEXT("."), TEXT("_")));
+	const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *TargetId.Replace(TEXT("."), TEXT("_")).Replace(TEXT("#"), TEXT("_I")));
 	TArray<ACinemafyChoreography*> Old;
 	for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
 	{
@@ -558,7 +568,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	ACinemafySceneDirector* Director = nullptr;
 	for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
 	{
-		if (It->ScriptProject == Project && It->ScriptSceneId == Scene->Id)
+		if (It->ScriptProject == Project && It->ScriptSceneId == TargetId)
 		{
 			Director = *It;
 			break;
@@ -566,7 +576,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	}
 	if (!Director)
 	{
-		Director = UCinemafyEditorLibrary::CreateDirectorForScene(Project, Scene->Id);
+		Director = UCinemafyEditorLibrary::CreateDirectorForScene(Project, TargetId);
 	}
 	else if (Scene->IsOutOfDate())
 	{

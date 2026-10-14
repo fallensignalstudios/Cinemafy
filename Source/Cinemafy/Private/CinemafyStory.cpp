@@ -81,18 +81,27 @@ FString UCinemafyStorySubsystem::NextSceneAfter(const UCinemafyScriptProject* In
 
 bool UCinemafyStorySubsystem::PlayScene(UCinemafyScriptProject* InProject, const FString& SceneId, bool bInFollowStory)
 {
-	const FCinemafyScriptScene* Scene = CinemafyStoryFlow::Find(InProject, SceneId);
+	int32 Insert = 0;
+	const FString BaseId = UCinemafyScriptLibrary::SplitInsertId(SceneId, Insert);
+	const FCinemafyScriptScene* Scene = CinemafyStoryFlow::Find(InProject, BaseId);
 	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
 	if (!Scene || !World)
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Story: no scene %s to play."), *SceneId);
 		return false;
 	}
+	// Mid-bridge, "<scene>#<n>" (a Scene Trigger at the next stretch of play) continues it.
+	if (bAwaitingGameplay && Scene->Id == CurrentSceneId && Insert > CurrentInsert)
+	{
+		bAwaitingGameplay = false;
+		return StartPresentation(*Scene, Insert);
+	}
 	HideChoices();
 	Project = InProject;
 	bFollowStory = bInFollowStory;
 	CurrentSceneId = Scene->Id;
 	bAwaitingChoice = false;
+	bAwaitingGameplay = false;
 
 	// A scene whose conditions don't hold is passed over.
 	if (!UCinemafyScriptLibrary::FlagsHold(Scene->RequireFlags, Flags))
@@ -103,18 +112,29 @@ bool UCinemafyStorySubsystem::PlayScene(UCinemafyScriptProject* InProject, const
 
 	ApplyFlags(Scene->SetFlags);
 	ScenesSeen.AddUnique(Scene->Id);
+	OnSceneStarted.Broadcast(Scene->Id);
+	return StartPresentation(*Scene, Scene->Inserts.Num() > 0 ? FMath::Clamp(Insert, 1, Scene->Inserts.Num()) : 0);
+}
 
-	ULevelSequence* Sequence = Scene->Sequence.LoadSynchronous();
-	UCinemafyCutsceneSubsystem* Cutscenes = World->GetSubsystem<UCinemafyCutsceneSubsystem>();
+bool UCinemafyStorySubsystem::StartPresentation(const FCinemafyScriptScene& Scene, int32 Insert)
+{
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	CurrentInsert = Insert;
+	ULevelSequence* Sequence = Scene.Inserts.IsValidIndex(Insert - 1) ? Scene.Inserts[Insert - 1].Sequence.LoadSynchronous() : Scene.Sequence.LoadSynchronous();
+	UCinemafyCutsceneSubsystem* Cutscenes = World ? World->GetSubsystem<UCinemafyCutsceneSubsystem>() : nullptr;
 	if (!Sequence || !Cutscenes)
 	{
-		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Story: scene %s has no sequence yet; passing over it."), *Scene->Id);
-		OnSceneUnavailable.Broadcast(Scene->Id);
-		bPlaying = false;
-		if (bFollowStory)
+		if (Insert > 0)
 		{
-			Advance();
+			// An insert with no sequence yet plays as nothing: the bridge carries on to its next stretch of play.
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Story: %s insert %d has no sequence yet."), *Scene.Id, Insert);
+			PresentationDone();
+			return false;
 		}
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Story: scene %s has no sequence yet; passing over it."), *Scene.Id);
+		OnSceneUnavailable.Broadcast(Scene.Id);
+		bPlaying = false;
+		CommitScene();
 		return false;
 	}
 
@@ -124,16 +144,74 @@ bool UCinemafyStorySubsystem::PlayScene(UCinemafyScriptProject* InProject, const
 	ULevelSequencePlayer* Player = Cutscenes->PlayCutscene(Sequence, CutsceneSettings);
 	if (Player)
 	{
-		BindPlayer(Player, *Scene);
+		BindPlayer(Player, Scene);
 	}
-	OnSceneStarted.Broadcast(Scene->Id);
 	return Player != nullptr;
+}
+
+void UCinemafyStorySubsystem::ContinueScene()
+{
+	const FCinemafyScriptScene* Scene = CinemafyStoryFlow::Find(Project, CurrentSceneId);
+	if (!bAwaitingGameplay || !Scene)
+	{
+		return;
+	}
+	bAwaitingGameplay = false;
+	StartPresentation(*Scene, CurrentInsert + 1);
+}
+
+void UCinemafyStorySubsystem::PresentationDone()
+{
+	const FCinemafyScriptScene* Scene = CinemafyStoryFlow::Find(Project, CurrentSceneId);
+	if (Scene && CurrentInsert > 0 && CurrentInsert < Scene->Inserts.Num())
+	{
+		// Back to play until the next insert.
+		bAwaitingGameplay = true;
+		const FString Who = !Scene->Game.ControlBefore.IsEmpty() && !Scene->Game.ControlBefore.Equals(TEXT("None"), ESearchCase::IgnoreCase)
+			? Scene->Game.ControlBefore : Scene->Game.ControlAfter;
+		OnControlReturned.Broadcast(Scene->Id, CurrentInsert + 1, Who);
+		return;
+	}
+	CommitScene();
+}
+
+void UCinemafyStorySubsystem::CommitScene()
+{
+	const FCinemafyScriptScene* Scene = CinemafyStoryFlow::Find(Project, CurrentSceneId);
+	CurrentInsert = 0;
+	bAwaitingGameplay = false;
+	if (Scene && Scene->bFixedId && bCommitSceneFlags)
+	{
+		SetFlag(FName(*Scene->Id), true);
+	}
+	OnSceneFinished.Broadcast(CurrentSceneId);
+	if (Scene && (!Scene->Game.ControlBefore.IsEmpty() || !Scene->Game.ControlAfter.IsEmpty()))
+	{
+		OnControlHandoff.Broadcast(Scene->Id, Scene->Game.ControlBefore, Scene->Game.ControlAfter);
+	}
+	if (bFollowStory)
+	{
+		Advance();
+	}
 }
 
 void UCinemafyStorySubsystem::BindPlayer(ULevelSequencePlayer* Player, const FCinemafyScriptScene& Scene)
 {
 	const UCinemafyScriptProject* P = Project;
-	const FCinemafyCastMember* Hero = P ? P->CastMembers.FindByPredicate([](const FCinemafyCastMember& M) { return M.bIsPlayer; }) : nullptr;
+	// Who the player is controlling going in plays in the scene; else the cast member marked Is Player.
+	const FString Controlled = Scene.Game.ControlBefore;
+	const FCinemafyCastMember* Hero = nullptr;
+	if (P && bBindControlledCharacter && !Controlled.IsEmpty() && !Controlled.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+	{
+		Hero = P->CastMembers.FindByPredicate([&Controlled](const FCinemafyCastMember& M)
+		{
+			return M.ScriptName.Contains(Controlled, ESearchCase::IgnoreCase) || Controlled.Contains(M.ScriptName, ESearchCase::IgnoreCase);
+		});
+	}
+	if (!Hero && P)
+	{
+		Hero = P->CastMembers.FindByPredicate([](const FCinemafyCastMember& M) { return M.bIsPlayer; });
+	}
 	APlayerController* Controller = GetGameInstance() ? GetGameInstance()->GetFirstLocalPlayerController() : nullptr;
 	APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
 	ALevelSequenceActor* SequenceActor = Player ? Cast<ALevelSequenceActor>(Player->GetOuter()) : nullptr;
@@ -164,11 +242,7 @@ void UCinemafyStorySubsystem::HandleCutsceneFinished(ULevelSequence* Sequence)
 		return;
 	}
 	bPlaying = false;
-	OnSceneFinished.Broadcast(CurrentSceneId);
-	if (bFollowStory)
-	{
-		Advance();
-	}
+	PresentationDone();
 }
 
 void UCinemafyStorySubsystem::Advance()
@@ -213,6 +287,12 @@ void UCinemafyStorySubsystem::Choose(int32 ChoiceIndex)
 
 void UCinemafyStorySubsystem::SkipScene()
 {
+	// Some presentations can't be skipped (the bible says so); their state commits as they play.
+	const FCinemafyScriptScene* Scene = CinemafyStoryFlow::Find(Project, CurrentSceneId);
+	if (Scene && !Scene->Game.bSkippable)
+	{
+		return;
+	}
 	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
 	if (UCinemafyCutsceneSubsystem* Cutscenes = World ? World->GetSubsystem<UCinemafyCutsceneSubsystem>() : nullptr)
 	{
@@ -224,6 +304,8 @@ void UCinemafyStorySubsystem::StopStory()
 {
 	bFollowStory = false;
 	bAwaitingChoice = false;
+	bAwaitingGameplay = false;
+	CurrentInsert = 0;
 	HideChoices();
 	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
 	if (UCinemafyCutsceneSubsystem* Cutscenes = World ? World->GetSubsystem<UCinemafyCutsceneSubsystem>() : nullptr)
@@ -359,7 +441,15 @@ void ACinemafySceneTrigger::Fire()
 {
 	UGameInstance* GameInstance = GetGameInstance();
 	UCinemafyStorySubsystem* Story = GameInstance ? GameInstance->GetSubsystem<UCinemafyStorySubsystem>() : nullptr;
-	if (!Story || !Project || (bOnlyOnce && bFired) || Story->IsPlaying())
+	if (!Story || !Project || (bOnlyOnce && bFired))
+	{
+		return;
+	}
+	// The next stretch of a gameplay bridge reached: continue it. Anything else waits for the story to be free.
+	int32 Insert = 0;
+	const FString BaseId = UCinemafyScriptLibrary::SplitInsertId(SceneId, Insert);
+	const bool bContinues = Insert > 0 && Story->IsAwaitingGameplay() && Story->GetCurrentSceneId() == BaseId;
+	if (Story->IsPlaying() && !bContinues)
 	{
 		return;
 	}

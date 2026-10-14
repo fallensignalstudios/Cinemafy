@@ -782,6 +782,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static FString SplitInsertId(const FString& SceneId, int32& OutInsert);
 
+	/** One insert of a gameplay bridge as a scene of its own (its lines only, id "<scene>#<n>"); 0 or a bad index = the whole scene. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FCinemafyScriptScene SceneForInsert(const FCinemafyScriptScene& Scene, int32 Insert);
+
 	/** A fingerprint of a scene's words (what Revision and Out of Date compare). */
 	static FString ComputeContentHash(const FCinemafyScriptScene& Scene);
 
