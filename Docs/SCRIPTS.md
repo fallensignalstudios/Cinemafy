@@ -23,6 +23,47 @@ Try it with [samples/TheBridge.fountain](samples/TheBridge.fountain).
 | Game scripts | `KADE: line` dialogue, `[Scene: Hangar]` / `SCENE 12: Hangar` markers, and `MISSION 3: Blackout`, `CHAPTER 2`, `LEVEL`, `QUEST` or `EPISODE` markers, even with no blank lines. |
 | Act markers | `ACT ONE`, `ACT 2`, `PART III`, `PROLOGUE`, `EPILOGUE`, `COLD OPEN`, or `#` sections. |
 
+## Game script bibles
+
+A game's cutscene bible imports as it is, no screenplay needed. Two formats are read:
+
+- **The JSON companion:** `{ "title", "scenes": [ { "scene_id", "mission_id", "title", "mode", "trigger",
+  "entry_state", "location", "cast", "control_before", "control_after", "camera_staging", "required_beats",
+  "exit_state", "handoff", "continuity_notes", "planning_seconds", "skip_policy", "script": [ { "type":
+  "dialogue" | "action" | "display", "speaker", "origin", "source_chapter", "text" } ] } ] }`
+- **The Markdown bible:**
+  - a scene map: `## 2. ... scene map`, with `### Act 1: Title` over tables of `[SCOR-01-CS01 · Title](...)`
+  - then each scene: `#### SCOR-01-CS01`, a bold title, `**Key:** value` lines, `**Performance script**`,
+    italic action, dialogue as `**TARRIK [M · Chapter 1]:** line`, and `- ` bullets for the completion state
+
+See `Docs/samples/ScriptBible_Sample.md` / `.json` for a small example of each.
+
+What happens on import:
+
+- **Ids are permanent.** Scenes keep the bible's ids (`SCOR-01-CS03`). Moving a scene never renumbers it, and a
+  re-import matches scenes by id, so their production work stays.
+- **Structure:** missions are chapters. Acts and mission titles come from the scene map. JSON has no acts, so a
+  JSON bible borrows them from a Markdown bible in the same folder, or the project's **Act Map File**. Without
+  one, it gets Prologue / Campaign / Epilogue.
+- **The game contract** on each scene (Game, on the scene):
+  - presentation: locked cinematic, staged dialogue, gameplay bridge, record / Witness, montage, radio / holo
+  - trigger, entry state, and who the player controls before and after
+  - exit state, required beats, handoff, camera and continuity notes, planned length, skippable
+- **Lines:**
+  - Each line keeps its origin (`M` manuscript, `A` adapted) and source chapter. The voice-over CSVs show it.
+  - `ON-SCREEN DISPLAY` lines are on-screen text, with `OSD_` ids in the localization table.
+  - `(RECORD)` after a name is a direction (a recording), not a different character.
+- **Camera:** the camera notes and the italic staging are read for camera intent ("Warm cramped two-shot",
+  "Tarrik's point of view sinks into mud", "Slow push in on the seal", "handheld"). The reader is conservative:
+  ordinary prose ("Following his gaze", "teeth close on a breastplate") is left alone.
+- **Gameplay bridges** split into inserts wherever the staging gives the player control ("rises into player
+  control", "Playable walking continues", "Gameplay resumes", "Restore Selene's camera and interaction control").
+  Address one as `SCOR-01-CS01#2` anywhere a scene id goes: Previs, Open, Scene Directors, MCP. Each insert gets
+  its own `SC_<scene>_I<n>` sequence.
+
+`Scene_Contracts.csv` in the paperwork lists every scene's contract and production status. `scene_contract`
+(MCP) reads one.
+
 ## Branching (games)
 
 Choices, diverts and flags go right in the script:

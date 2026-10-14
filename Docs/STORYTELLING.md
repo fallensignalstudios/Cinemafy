@@ -18,6 +18,8 @@ Script ─► Story Board ─► Cast & Sets ─► Scratch voices ─► Pre-fl
 - Final Draft (`.fdx`)
 - plain screenplay text
 - game scripts (`KADE: line`, `[Scene: Hangar]`, `MISSION 3: Blackout`)
+- game **script bibles**, the JSON or Markdown kind with scene ids, triggers and control handoffs (see
+  [SCRIPTS](SCRIPTS.md#game-script-bibles))
 
 Cinemafy breaks the script into acts, chapters and scenes, inferring any the script doesn't mark. It then
 tracks continuity across scenes: injuries, props in hand, costumes and deaths. See [SCRIPTS](SCRIPTS.md).
@@ -234,7 +236,17 @@ Targets can be a scene id, a running number (`#4`), a heading or place, or `END`
 - skippable with Escape or the gamepad's Special Right button
 - flags you can save and restore
 
-The cast member marked **Is Player** is played by the player's own pawn, gear and all.
+The cast member marked **Is Player** is played by the player's own pawn, gear and all. A scene from a script
+bible says who the player controls going in (`Selene`, `Tarrik`); that character is the one the pawn plays.
+
+**Script bible scenes in play:**
+
+- **Gameplay bridges** play insert by insert. After each one, **OnControlReturned** fires (with the next insert
+  and who the player controls) and play carries on. Call **ContinueScene** when the next stretch is reached, or
+  place a **Cinemafy Scene Trigger** set to `SCOR-01-CS01#2` there.
+- **Unskippable** scenes ignore skip.
+- **Committing:** when a scene commits, played or skipped, it sets a flag named after its id (`SCOR-01-CS03`),
+  and **OnControlHandoff** fires with who had control before and after, so the game can switch protagonists.
 
 **Cinemafy Scene Trigger** starts a scene when the player walks in: once, optionally gated on flags, and
 optionally following the story from there.

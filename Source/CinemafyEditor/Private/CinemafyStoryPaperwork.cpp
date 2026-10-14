@@ -353,13 +353,14 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 				Script.Add(FString::Printf(TEXT("# %s: voice-over script for %s\n"), *Title, *Line.Speaker));
 				Script.Add(TEXT("| File | Scene | Cue (what it answers) | Direction | Line |"));
 				Script.Add(TEXT("| --- | --- | --- | --- | --- |"));
-				BoothCsv.FindOrAdd(Line.Speaker).Add(TEXT("File,Scene,LineNumber,Cue,Direction,Line,Status"));
+				BoothCsv.FindOrAdd(Line.Speaker).Add(TEXT("File,Scene,LineNumber,Cue,Direction,Line,Status,Origin"));
 			}
 			const FString File = Line.LineId + TEXT(".wav");
 			Script.Add(FString::Printf(TEXT("| %s | %s %s | %s | %s | %s |"), *File, *Scene->Id, *Scene->Heading.Replace(TEXT("|"), TEXT("/")),
 				*Cue.Replace(TEXT("|"), TEXT("/")), *Line.Direction, *(Line.bNeedsRerecord ? TEXT("**RE-RECORD** ") + Line.Text.Replace(TEXT("|"), TEXT("/")) + TEXT(" (was: ") + Line.PreviousText.Replace(TEXT("|"), TEXT("/")) + TEXT(")") : Line.Text.Replace(TEXT("|"), TEXT("/")))));
-			BoothCsv.FindOrAdd(Line.Speaker).Add(FString::Printf(TEXT("%s,%s,%d,%s,%s,%s,%s"), *Csv(File), *Csv(Scene->Id), Number, *Csv(Cue), *Csv(Line.Direction), *Csv(Line.Text),
-				*Csv(Line.bNeedsRerecord ? TEXT("re-record (rewritten)") : Line.Audio.IsNull() ? TEXT("to record") : (Line.bScratchAudio ? TEXT("scratch only") : TEXT("recorded")))));
+			BoothCsv.FindOrAdd(Line.Speaker).Add(FString::Printf(TEXT("%s,%s,%d,%s,%s,%s,%s,%s"), *Csv(File), *Csv(Scene->Id), Number, *Csv(Cue), *Csv(Line.Direction), *Csv(Line.Text),
+				*Csv(Line.bNeedsRerecord ? TEXT("re-record (rewritten)") : Line.Audio.IsNull() ? TEXT("to record") : (Line.bScratchAudio ? TEXT("scratch only") : TEXT("recorded"))),
+				*Csv(Line.Origin.IsEmpty() ? FString() : Line.Origin + (Line.SourceRef.IsEmpty() ? FString() : TEXT(" ") + Line.SourceRef))));
 			Cue = FString::Printf(TEXT("%s: %s"), *Line.Speaker, *Line.Text.Left(60));
 		}
 	}
@@ -368,6 +369,43 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 		const FString Name = FPaths::MakeValidFileName(Pair.Key).Replace(TEXT(" "), TEXT("_"));
 		FFileHelper::SaveStringToFile(FString::Join(Pair.Value, TEXT("\n")), *(Folder / FString::Printf(TEXT("VO_%s.md"), *Name)), FFileHelper::EEncodingOptions::ForceUTF8);
 		FFileHelper::SaveStringToFile(FString::Join(BoothCsv[Pair.Key], TEXT("\n")), *(Folder / FString::Printf(TEXT("VO_%s.csv"), *Name)), FFileHelper::EEncodingOptions::ForceUTF8);
+	}
+
+	// The implementation sheet (script bibles): every scene's game contract and where its production stands.
+	{
+		TArray<FString> Rows = { TEXT("Scene,Act,Mission,Title,Presentation,TargetSeconds,Trigger,EntryState,ControlBefore,ControlAfter,Skippable,Inserts,InsertSequences,Status,Sequence,Commits,Handoff") };
+		const UEnum* Presentations = StaticEnum<ECinemafyPresentation>();
+		const UEnum* Statuses = StaticEnum<ECinemafySceneStatus>();
+		int32 GameScenes = 0;
+		for (const FCinemafyScriptAct& Act : Project->Acts)
+		{
+			for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+			{
+				for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+				{
+					const FCinemafyGameContract& Game = Scene.Game;
+					if (Game.Presentation == ECinemafyPresentation::Screenplay)
+					{
+						continue;
+					}
+					++GameScenes;
+					int32 Ready = 0;
+					for (const FCinemafySceneInsert& Insert : Scene.Inserts)
+					{
+						Ready += Insert.Sequence.IsNull() ? 0 : 1;
+					}
+					Rows.Add(FString::Printf(TEXT("%s,%s,%s,%s,%s,%d,%s,%s,%s,%s,%s,%d,%d,%s,%s,%s,%s"), *Csv(Scene.Id), *Csv(Act.Title), *Csv(Chapter.Title), *Csv(Scene.Heading),
+						*Csv(Presentations->GetDisplayNameTextByValue(static_cast<int64>(Game.Presentation)).ToString()), FMath::RoundToInt(Game.TargetSeconds),
+						*Csv(Game.Trigger), *Csv(Game.EntryState), *Csv(Game.ControlBefore), *Csv(Game.ControlAfter), Game.bSkippable ? TEXT("yes") : TEXT("no"),
+						Scene.Inserts.Num(), Ready, *Csv(Statuses->GetDisplayNameTextByValue(static_cast<int64>(Scene.Status)).ToString()),
+						*Csv(Scene.Sequence.IsNull() ? FString() : Scene.Sequence.GetAssetName()), *Csv(FString::Join(Game.ExitState, TEXT(" | "))), *Csv(Game.Handoff)));
+				}
+			}
+		}
+		if (GameScenes > 0)
+		{
+			FFileHelper::SaveStringToFile(FString::Join(Rows, TEXT("\n")), *(Folder / TEXT("Scene_Contracts.csv")), FFileHelper::EEncodingOptions::ForceUTF8);
+		}
 	}
 
 	// Props, set dressing and wardrobe, set by set: what the art department builds, sources and fits.
@@ -481,6 +519,11 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 				{
 					Rows.Add(FString::Printf(TEXT("%s,%s,%s"), *Csv(Line.LineId), *Csv(Line.Text),
 						*Csv(FString::Printf(TEXT("%s | %s | %s %s"), *Line.Speaker, *Scene->Id, *Scene->Heading, *Line.Direction))));
+				}
+				else if (Line.Kind == ECinemafyScriptLineKind::Display && !Line.LineId.IsEmpty())
+				{
+					// On-screen text is localized too.
+					Rows.Add(FString::Printf(TEXT("%s,%s,%s"), *Csv(Line.LineId), *Csv(Line.Text), *Csv(FString::Printf(TEXT("On-screen display | %s | %s"), *Scene->Id, *Scene->Heading))));
 				}
 			}
 			for (const FCinemafyScriptChoice& Choice : Scene->Choices)

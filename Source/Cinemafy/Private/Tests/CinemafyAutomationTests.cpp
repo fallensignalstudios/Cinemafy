@@ -16,6 +16,8 @@
 #include "GameFramework/Pawn.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformMisc.h"
 #include "Misc/Paths.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
@@ -1481,6 +1483,201 @@ bool FCinemafyCameraLanguageTest::RunTest(const FString& Parameters)
 		const FCinemafyPlannedShot* Pov = FirstOf(3);
 		TestTrue(TEXT("POV: through the listener's eyes, at the speaker"), Pov && Pov->ShotType == ECinemafyShotType::POV && Pov->Counterpart == Lines[3].Listener && Pov->Subject == Lines[3].Speaker);
 		TestTrue(TEXT("HANDHELD: the operator's feel"), Pov && Pov->Feel == ECinemafyCameraFeel::Handheld);
+	}
+	return true;
+}
+
+namespace CinemafyTests
+{
+	FString LoadSample(const TCHAR* Name)
+	{
+		const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("Cinemafy"));
+		FString Text;
+		if (Plugin.IsValid())
+		{
+			FFileHelper::LoadFileToString(Text, *(Plugin->GetBaseDir() / TEXT("Docs/samples") / Name));
+		}
+		return Text;
+	}
+
+	const FCinemafyScriptScene* FindIn(const TArray<FCinemafyScriptAct>& Acts, const FString& Id)
+	{
+		for (const FCinemafyScriptAct& Act : Acts)
+		{
+			for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+			{
+				for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+				{
+					if (Scene.Id == Id)
+					{
+						return &Scene;
+					}
+				}
+			}
+		}
+		return nullptr;
+	}
+
+	int32 CountKind(const TArray<FCinemafyScriptAct>& Acts, ECinemafyScriptLineKind Kind, int32& OutScenes)
+	{
+		int32 Count = 0;
+		OutScenes = 0;
+		for (const FCinemafyScriptAct& Act : Acts)
+		{
+			for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+			{
+				for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+				{
+					++OutScenes;
+					Count += Scene.Lines.FilterByPredicate([Kind](const FCinemafyScriptLine& L) { return L.Kind == Kind; }).Num();
+				}
+			}
+		}
+		return Count;
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyScriptBibleTest, "Cinemafy.Script.ReadsScriptBibles", CinemafyTests::Flags)
+bool FCinemafyScriptBibleTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	const FString Markdown = CinemafyTests::LoadSample(TEXT("ScriptBible_Sample.md"));
+	const FString Json = CinemafyTests::LoadSample(TEXT("ScriptBible_Sample.json"));
+	if (Markdown.IsEmpty() || Json.IsEmpty())
+	{
+		AddWarning(TEXT("Docs/samples/ScriptBible_Sample.md/.json aren't next to the plugin: test skipped."));
+		return true;
+	}
+	TestTrue(TEXT("The Markdown is a bible"), Script::IsScriptBible(Markdown));
+	TestTrue(TEXT("So is the JSON"), Script::IsScriptBible(Json));
+	TestFalse(TEXT("A screenplay isn't"), Script::IsScriptBible(CinemafyTests::LoadSample(TEXT("TheBridge.fountain"))));
+
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScriptBible(Markdown, FString(), Title, Report);
+	TestEqual(TEXT("Its title"), Title, FString(TEXT("The Hollow Crown")));
+	if (!TestEqual(TEXT("Prologue and Act 1, from the scene map"), Acts.Num(), 2))
+	{
+		return true;
+	}
+	TestTrue(TEXT("The prologue is act P"), Acts[0].Id == TEXT("P") && Acts[0].Title == TEXT("Prologue"));
+	TestTrue(TEXT("Act 1 keeps its title"), Acts[1].Id == TEXT("1") && Acts[1].Title == TEXT("The Gate"));
+	TestTrue(TEXT("Missions are chapters, titled"), Acts[1].Chapters.Num() == 1 && Acts[1].Chapters[0].Id == TEXT("HC-01") && Acts[1].Chapters[0].Title == TEXT("The Gate"));
+
+	const FCinemafyScriptScene* Stair = CinemafyTests::FindIn(Acts, TEXT("HC-01-CS01"));
+	if (TestNotNull(TEXT("Scenes keep the bible's ids"), Stair))
+	{
+		TestTrue(TEXT("...for good"), Stair->bFixedId);
+		TestEqual(TEXT("Its title is the heading"), Stair->Heading, FString(TEXT("Up the Stair")));
+		TestEqual(TEXT("A gameplay bridge"), static_cast<int32>(Stair->Game.Presentation), static_cast<int32>(ECinemafyPresentation::GameplayBridge));
+		TestTrue(TEXT("Control: None -> Arin"), Stair->Game.ControlBefore == TEXT("None") && Stair->Game.ControlAfter == TEXT("Arin"));
+		TestEqual(TEXT("Its trigger"), Stair->Game.Trigger, FString(TEXT("Arin reaches the gate stair")));
+		TestEqual(TEXT("What it commits"), Stair->Game.ExitState.Num(), 2);
+		TestEqual(TEXT("The set is the first part of the location"), Stair->Location, FString(TEXT("GATE STAIR")));
+		TestTrue(TEXT("The cast as listed"), Stair->Game.CastNotes.Contains(TEXT("Arin Tal")));
+		TestEqual(TEXT("Five lines spoken"), Stair->DialogueLines, 5);
+		TestEqual(TEXT("Its planned length"), Stair->EstimatedSeconds, 90.f);
+		TestEqual(TEXT("Three inserts: control goes to the player twice"), Stair->Inserts.Num(), 3);
+		const FCinemafyScriptLine* Opening = Stair->Lines.Num() > 0 ? &Stair->Lines[0] : nullptr;
+		TestTrue(TEXT("The camera notes open on a two-shot"), Opening && Opening->Kind == ECinemafyScriptLineKind::Shot && Opening->Shot.ShotType == ECinemafyShotType::MediumTwoShot);
+		TestTrue(TEXT("\"Arin's point of view\" is a POV"), Stair->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L)
+		{
+			return L.Kind == ECinemafyScriptLineKind::Shot && L.Shot.ShotType == ECinemafyShotType::POV && L.Shot.Subject == TEXT("ARIN");
+		}));
+		const FCinemafyScriptLine* Adapted = Stair->Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("Then climb faster."); });
+		TestTrue(TEXT("An adapted line says so"), Adapted && Adapted->Origin == TEXT("A"));
+		const FCinemafyScriptLine* Quoted = Stair->Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("I trust the warden."); });
+		TestTrue(TEXT("A manuscript line has its chapter"), Quoted && Quoted->Origin == TEXT("M") && Quoted->SourceRef == TEXT("Chapter 1") && Quoted->Speaker == TEXT("ARIN"));
+
+		const FCinemafyScriptScene Second = Script::SceneForInsert(*Stair, 2);
+		TestEqual(TEXT("An insert is its own scene"), Second.Id, FString(TEXT("HC-01-CS01#2")));
+		TestTrue(TEXT("...with only its lines"), Second.Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("Then climb faster."); })
+			&& !Second.Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("Still warm."); }));
+	}
+	const FCinemafyScriptScene* Prologue = CinemafyTests::FindIn(Acts, TEXT("HC-PRO-CS01"));
+	if (TestNotNull(TEXT("The prologue scene"), Prologue))
+	{
+		TestTrue(TEXT("On-screen text is a display line"), Prologue->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Display && L.Text == TEXT("LONG AGO"); }));
+		TestEqual(TEXT("...not a character"), Prologue->Characters.Num(), 1);
+		TestTrue(TEXT("The notes' extreme close opens it"), Prologue->Lines.Num() > 0 && Prologue->Lines[0].Shot.ShotType == ECinemafyShotType::ExtremeCloseUp);
+	}
+	const FCinemafyScriptScene* Record = CinemafyTests::FindIn(Acts, TEXT("HC-01-CS02"));
+	if (TestNotNull(TEXT("The record scene"), Record))
+	{
+		const FCinemafyScriptLine* Warden = Record->Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Dialogue && L.Speaker == TEXT("WARDEN"); });
+		TestTrue(TEXT("(RECORD) is how it's heard, not who"), Warden && Warden->Direction == TEXT("(RECORD)"));
+		TestEqual(TEXT("A record"), static_cast<int32>(Record->Game.Presentation), static_cast<int32>(ECinemafyPresentation::Record));
+		TestTrue(TEXT("The slow push in"), Record->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Shot && L.Shot.bMove && L.Shot.Move == ECinemafyCameraMove::PushIn; }));
+	}
+
+	// The JSON companion: the same scenes, its skip policy, and acts borrowed from the Markdown.
+	const TArray<FCinemafyScriptAct> FromJson = Script::BreakDownScriptBible(Json, Markdown, Title, Report);
+	TestEqual(TEXT("JSON + scene map: the same acts"), FromJson.Num(), 2);
+	const FCinemafyScriptScene* JsonRecord = CinemafyTests::FindIn(FromJson, TEXT("HC-01-CS02"));
+	TestTrue(TEXT("JSON knows the record can't be skipped"), JsonRecord && !JsonRecord->Game.bSkippable);
+	const FCinemafyScriptScene* JsonStair = CinemafyTests::FindIn(FromJson, TEXT("HC-01-CS01"));
+	TestTrue(TEXT("...and splits the bridge the same way"), JsonStair && JsonStair->Inserts.Num() == 3 && JsonStair->DialogueLines == 5);
+	const TArray<FCinemafyScriptAct> Alone = Script::BreakDownScriptBible(Json, FString(), Title, Report);
+	TestTrue(TEXT("JSON alone: Prologue and Campaign"), Alone.Num() == 2 && Alone[1].Title == TEXT("Campaign") && Alone[1].bInferred);
+
+	// In a project: "<scene>#<n>" finds its scene and insert; re-imports match by id.
+	UCinemafyScriptProject* Project = NewObject<UCinemafyScriptProject>(GetTransientPackage());
+	Project->BreakDown(Markdown);
+	TestNotNull(TEXT("An insert id finds its scene"), Project->FindScene(TEXT("HC-01-CS01#2")));
+	TestNotNull(TEXT("...and its insert"), Project->FindInsert(TEXT("HC-01-CS01#2")));
+	TestNull(TEXT("A plain id is no insert"), Project->FindInsert(TEXT("HC-01-CS01")));
+	if (FCinemafyScriptScene* Seal = Project->FindScene(TEXT("HC-01-CS02")))
+	{
+		Seal->Status = ECinemafySceneStatus::Recorded;
+		const FCinemafyScriptLine* Display = Project->FindScene(TEXT("HC-PRO-CS01"))->Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Display; });
+		TestTrue(TEXT("On-screen text gets a line id (for localization)"), Display && Display->LineId.StartsWith(TEXT("OSD_")));
+		Project->BreakDown(Json);
+		const FCinemafyScriptScene* Again = Project->FindScene(TEXT("HC-01-CS02"));
+		TestTrue(TEXT("Re-imported from the JSON, the scene keeps its work by id"), Again && Again->Status == ECinemafySceneStatus::Recorded);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGameBibleTest, "Cinemafy.Golden.ReadsTheGameBible", CinemafyTests::Flags)
+bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
+{
+	// Your own bible, from a folder outside the plugin: CINEMAFY_BIBLE_DIR (with the JSON and the Markdown in it).
+	const FString Folder = FPlatformMisc::GetEnvironmentVariable(TEXT("CINEMAFY_BIBLE_DIR"));
+	TArray<FString> JsonFiles, MarkdownFiles;
+	if (!Folder.IsEmpty())
+	{
+		IFileManager::Get().FindFiles(JsonFiles, *(Folder / TEXT("*.json")), true, false);
+		IFileManager::Get().FindFiles(MarkdownFiles, *(Folder / TEXT("*.md")), true, false);
+	}
+	if (JsonFiles.Num() == 0 || MarkdownFiles.Num() == 0)
+	{
+		AddWarning(TEXT("Set CINEMAFY_BIBLE_DIR to a folder holding the game's bible (.json and .md) to run this test."));
+		return true;
+	}
+	FString Json, Markdown, Title, Report;
+	FFileHelper::LoadFileToString(Json, *(Folder / JsonFiles[0]));
+	FFileHelper::LoadFileToString(Markdown, *(Folder / MarkdownFiles[0]));
+	const TArray<FCinemafyScriptAct> FromJson = UCinemafyScriptLibrary::BreakDownScriptBible(Json, Markdown, Title, Report);
+	const TArray<FCinemafyScriptAct> FromMarkdown = UCinemafyScriptLibrary::BreakDownScriptBible(Markdown, FString(), Title, Report);
+	AddInfo(Report);
+	int32 JsonScenes = 0, MarkdownScenes = 0, Ignored = 0;
+	const int32 JsonDialogue = CinemafyTests::CountKind(FromJson, ECinemafyScriptLineKind::Dialogue, JsonScenes);
+	const int32 MarkdownDialogue = CinemafyTests::CountKind(FromMarkdown, ECinemafyScriptLineKind::Dialogue, MarkdownScenes);
+	TestTrue(TEXT("Every scene comes in"), JsonScenes > 0 && JsonScenes == MarkdownScenes);
+	TestEqual(TEXT("The JSON and the Markdown agree on every spoken line"), JsonDialogue, MarkdownDialogue);
+	TestEqual(TEXT("...and every on-screen line"), CinemafyTests::CountKind(FromJson, ECinemafyScriptLineKind::Display, Ignored),
+		CinemafyTests::CountKind(FromMarkdown, ECinemafyScriptLineKind::Display, Ignored));
+	TestEqual(TEXT("...and the acts"), FromJson.Num(), FromMarkdown.Num());
+	TestFalse(TEXT("Every scene is in the scene map"), FromJson.ContainsByPredicate([](const FCinemafyScriptAct& Act) { return Act.Title == TEXT("Not in the scene map"); }));
+	for (const FCinemafyScriptAct& Act : FromJson)
+	{
+		for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			TestFalse(FString::Printf(TEXT("Mission %s has its title"), *Chapter.Id), Chapter.Title == Chapter.Id && Chapter.Id.StartsWith(TEXT("SCOR")));
+			for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+			{
+				TestTrue(FString::Printf(TEXT("%s has its contract"), *Scene.Id), Scene.bFixedId && Scene.Game.Presentation != ECinemafyPresentation::Screenplay && !Scene.Game.Trigger.IsEmpty());
+			}
+		}
 	}
 	return true;
 }

@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.16.0: "The bible"
+- **Game script bibles:**
+  - A game's cutscene bible imports directly: the JSON companion, or the Markdown it's written in.
+  - Scenes keep the bible's ids (`SCOR-01-CS03`), which are never renumbered and are matched on re-import.
+  - Missions become chapters. Acts and mission titles come from the bible's scene map; a JSON bible finds
+    the Markdown beside it (or set **Act Map File**).
+  - Lines keep their origin (`M` manuscript / `A` adapted) and source chapter, and the voice-over CSVs gain an
+    Origin column.
+  - `ON-SCREEN DISPLAY` lines are on-screen text, not a character: they get `OSD_` line ids and go into the
+    localization table.
+  - `(RECORD)` cues are a direction on the speaker.
+  - Camera intent is read from the camera notes and the staging prose: two-shots, extreme close, someone's
+    point of view, push in, handheld.
+- **The game contract on every scene:**
+  - what it carries: presentation (locked, staged dialogue, gameplay bridge, record, montage, radio/holo),
+    trigger, entry state, control before and after, exit state, beats, handoff, camera and continuity notes,
+    planned length, skippable
+  - the Story Board shows it on each card and in its tooltip
+  - `Scene_Contracts.csv` in the paperwork, and the `scene_contract` MCP tool
+- **Gameplay-bridge inserts:**
+  - Bridges split where the script hands control to the player. Any scene id can name an insert as
+    `<scene>#<n>`.
+  - Previs, Open and a Scene Director all work on one insert, with its own `SC_<scene>_I<n>` sequence.
+- **Story Player for games:**
+  - plays a bridge insert by insert, returning control between them (`OnControlReturned`) until
+    `ContinueScene` or a Scene Trigger set to `<scene>#<n>`
+  - binds the player's pawn to the character they control going in
+  - respects unskippable scenes
+  - sets a flag of the scene's id when it commits, played or skipped
+  - tells the game who has control afterwards (`OnControlHandoff`)
+- New samples: `Docs/samples/ScriptBible_Sample.md` / `.json`.
+- New tests:
+  - `Cinemafy.Script.ReadsScriptBibles`
+  - `Cinemafy.Golden.ReadsTheGameBible`: point `CINEMAFY_BIBLE_DIR` at your own bible
+
 ## 0.15.0: "Off the page"
 - **Camera language from the page:**
   - Screenplay camera directions now drive the director. They can sit on their own line, or open an action
