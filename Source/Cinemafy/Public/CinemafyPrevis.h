@@ -5,6 +5,8 @@
 #include "CinemafyScript.h"
 #include "CinemafyPrevis.generated.h"
 
+class USoundBase;
+
 /** One beat staged from the script: who does what, where, to whom, and what they wait for. */
 USTRUCT(BlueprintType)
 struct CINEMAFY_API FCinemafyStagedBeat
@@ -30,6 +32,10 @@ struct CINEMAFY_API FCinemafyStagedBeat
 	/** Words said during the beat. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	FString Line;
+
+	/** The line's audio (scratch or recorded), if the script has it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
+	TSoftObjectPtr<USoundBase> LineAudio;
 
 	/** Hold the beat until this character has finished their Nth line (WaitForLineNumber). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")

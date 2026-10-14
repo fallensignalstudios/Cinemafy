@@ -1,6 +1,8 @@
 #include "CinemafyScript.h"
 #include "CinemafyModule.h"
 #include "LevelSequence.h"
+#include "Sound/SoundBase.h"
+#include "Misc/Crc.h"
 #include "Engine/World.h"
 
 FCinemafyScriptEditorRequest UCinemafyScriptProject::OnEditorRequest;
@@ -1536,8 +1538,54 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		}
 	}
 
+	// Voice-over follows its line (by id), so a re-import keeps recorded and scratch audio.
+	TMap<FString, TPair<TSoftObjectPtr<USoundBase>, bool>> LineAudio;
+	for (const FCinemafyScriptScene* Scene : GetAllScenes())
+	{
+		for (const FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (!Line.LineId.IsEmpty() && !Line.Audio.IsNull())
+			{
+				LineAudio.Add(Line.LineId, TPair<TSoftObjectPtr<USoundBase>, bool>(Line.Audio, Line.bScratchAudio));
+			}
+		}
+	}
+
 	FString FoundTitle;
 	Acts = UCinemafyScriptLibrary::BreakDownScript(ScriptText, bInferActs, ScenesPerChapter, FoundTitle, BreakdownReport);
+
+	// Line ids: speaker initials + a hash of who says what; repeats get a suffix.
+	TSet<FString> UsedIds;
+	for (FCinemafyScriptScene* Scene : GetAllScenes())
+	{
+		for (FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (Line.Kind != ECinemafyScriptLineKind::Dialogue)
+			{
+				continue;
+			}
+			FString Initials;
+			TArray<FString> Words;
+			Line.Speaker.ParseIntoArrayWS(Words);
+			for (const FString& Word : Words)
+			{
+				Initials.AppendChar(FChar::ToUpper(Word[0]));
+			}
+			const uint32 Hash = FCrc::StrCrc32(*(CinemafyScriptText::Normalize(Line.Speaker) + TEXT("|") + CinemafyScriptText::Normalize(Line.Text)));
+			FString Id = FString::Printf(TEXT("%s_%08X"), *Initials, Hash);
+			for (int32 Repeat = 2; UsedIds.Contains(Id); ++Repeat)
+			{
+				Id = FString::Printf(TEXT("%s_%08X_%d"), *Initials, Hash, Repeat);
+			}
+			UsedIds.Add(Id);
+			Line.LineId = Id;
+			if (const TPair<TSoftObjectPtr<USoundBase>, bool>* Kept = LineAudio.Find(Id))
+			{
+				Line.Audio = Kept->Key;
+				Line.bScratchAudio = Kept->Value;
+			}
+		}
+	}
 	if (Title.IsEmpty())
 	{
 		Title = FoundTitle.IsEmpty() ? GetName() : FoundTitle;

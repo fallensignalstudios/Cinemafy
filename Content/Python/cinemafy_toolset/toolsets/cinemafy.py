@@ -789,6 +789,39 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         return unreal.CinemafyStoryLibrary.previs_scene(project, scene_id, record)
 
+    @toolset_registry.tool_call
+    @staticmethod
+    def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
+        """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
+        and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: One scene ("1.1.1"), or empty for the whole script.
+            replace_existing_scratch: Re-read lines that already have scratch audio.
+
+        Returns:
+            How many lines were voiced.
+        """
+        count = unreal.CinemafyStoryLibrary.generate_scratch_voices(project, scene_id, replace_existing_scratch)
+        return '{} line(s) voiced.'.format(count)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def assign_recorded_voices(project: unreal.CinemafyScriptProject, content_folder: str) -> str:
+        """Swaps scratch reads for recorded voice-over: sounds in the folder named by line id or <scene>_<line>
+        ("2_1_3_04"). Re-direct scenes afterwards to re-time the cut to the real performances.
+
+        Args:
+            project: The Script Project asset.
+            content_folder: e.g. /Game/Audio/VO.
+
+        Returns:
+            How many lines got recorded audio.
+        """
+        count = unreal.CinemafyStoryLibrary.assign_recorded_voices(project, content_folder)
+        return '{} line(s) matched.'.format(count)
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
     @toolset_registry.tool_call

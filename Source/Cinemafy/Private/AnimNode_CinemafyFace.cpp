@@ -85,6 +85,8 @@ void FAnimNode_CinemafyFace::PreUpdate(const UAnimInstance* InAnimInstance)
 		Input.EmotionWeights = Face->GetEmotionWeights();
 		Input.Articulation = Face->Articulation;
 		Input.LipSync = Face->LipSync;
+		Input.Talk = FMath::Clamp(Face->Talk, 0.f, 1.f) * Face->TalkStrength;
+		Input.TalkNarrow = FMath::Clamp(Face->TalkNarrow, 0.f, 1.f);
 		Profile = Face->Profile;
 	}
 
@@ -427,6 +429,16 @@ void FAnimNode_CinemafyFace::Evaluate_AnyThread(FPoseContext& Output)
 	{
 		AddEmotions(Additive);
 		AddLife(Additive);
+
+		if (Input.Talk > 0.01f)
+		{
+			// Audio-driven talking: open on the loud parts, stretch narrow on hissy sounds, lips part with the jaw.
+			const float Open = Input.Talk * (1.f - 0.5f * Input.TalkNarrow);
+			Additive.FindOrAdd(Control(TEXT("jawOpen"))) += 0.55f * Open;
+			AddBoth(Additive, TEXT("mouthLowerLipDepress"), 0.35f * Open);
+			AddBoth(Additive, TEXT("mouthUpperLipRaise"), 0.2f * Open);
+			AddBoth(Additive, TEXT("mouthStretch"), 0.35f * Input.Talk * Input.TalkNarrow);
+		}
 
 		if (Input.bBreathing)
 		{

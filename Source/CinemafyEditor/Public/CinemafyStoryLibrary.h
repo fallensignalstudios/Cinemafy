@@ -80,6 +80,28 @@ public:
 	/** Opens the Story Board on a project. */
 	static void OpenStoryBoard(UCinemafyScriptProject* Project);
 
+	// --- Voices ----------------------------------------------------------------------------------------------------
+
+	/**
+	 * Reads every line without real voice-over aloud with the computer's voices (macOS say, Windows speech, or
+	 * espeak-ng on Linux), each character in their Cast entry's Scratch Voice, and imports the reads under
+	 * /Game/Cinemafy/ScratchVO. Lines get the audio, and so do the Scene Directors that speak them. SceneId empty =
+	 * the whole script. Returns lines voiced.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static int32 GenerateScratchVoices(UCinemafyScriptProject* Project, const FString& SceneId, bool bReplaceExistingScratch = false);
+
+	/**
+	 * Swaps in recorded voice-over from a content folder: sound assets named by line id (KT_1A2B3C4D...), or
+	 * <scene id>_<line number> ("2_1_3_04"). Scratch reads are replaced; directors get the new audio (re-Direct to
+	 * re-time the cut to the real performance). Returns lines matched.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static int32 AssignRecordedVoices(UCinemafyScriptProject* Project, const FString& ContentFolder);
+
+	/** Keys Cinemafy Face's Talk / Talk Narrow on each speaker from their lines' audio, where the director laid it. */
+	static void BakeTalkCurves(ULevelSequence* Sequence, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart);
+
 	/** The actor playing a script character in a world: the cast entry's label, else a matching character label. */
 	static AActor* FindCastActor(const UCinemafyScriptProject* Project, const FString& ScriptName, UWorld* World);
 };

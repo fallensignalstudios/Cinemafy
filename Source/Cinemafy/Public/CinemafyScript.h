@@ -8,6 +8,7 @@
 
 class ULevelSequence;
 class UWorld;
+class USoundBase;
 class UCinemafyScriptProject;
 
 /** How far along a scene is in production. */
@@ -55,6 +56,18 @@ struct CINEMAFY_API FCinemafyScriptLine
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (MultiLine = true))
 	FString Text;
+
+	/** Stable id for dialogue (speaker + words): voice-over files, subtitles and localization key on it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
+	FString LineId;
+
+	/** The spoken line: scratch (generated) or the recorded voice-over. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	TSoftObjectPtr<USoundBase> Audio;
+
+	/** Audio is a generated scratch read, waiting for the real performance. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
+	bool bScratchAudio = false;
 };
 
 /** Something that has to stay true across scenes: an injury, a weapon in hand, a costume, a death. */

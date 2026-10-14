@@ -702,6 +702,14 @@ struct FCinemafyAudioAnalysis
 	/** The most stressed moments (seconds from its start), loudest first: where camera moves should land. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
 	TArray<float> EmphasisTimes;
+
+	/** How open the mouth is, 0..1 at 50 Hz (drives Cinemafy Face's Talk for faces without a performance). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio", AdvancedDisplay)
+	TArray<float> TalkOpen;
+
+	/** How narrow (s, sh, f sounds), 0..1 at 50 Hz. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio", AdvancedDisplay)
+	TArray<float> TalkNarrow;
 };
 
 /** One line of dialogue in a scene script. */

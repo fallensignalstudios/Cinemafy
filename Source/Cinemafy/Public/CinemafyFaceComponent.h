@@ -37,6 +37,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face|Lip Sync")
 	FCinemafyLipSyncSettings LipSync;
 
+	/**
+	 * Talking without a captured performance: 0..1 mouth opening, keyed from a line's audio when the director lays
+	 * it into a sequence (or set live). Adds jaw and lip motion on top of whatever the face is doing.
+	 */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Face|Talk", meta = (ClampMin = "0", ClampMax = "1"))
+	float Talk = 0.f;
+
+	/** 0 = open vowels, 1 = narrow (s, sh, f). Keyed with Talk. */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Face|Talk", meta = (ClampMin = "0", ClampMax = "1"))
+	float TalkNarrow = 0.f;
+
+	/** How much Talk moves the face (lower it when a captured performance is already lip-synced). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face|Talk", meta = (ClampMin = "0", UIMax = "1.5"))
+	float TalkStrength = 1.f;
+
 	// --- Emotion ---------------------------------------------------------------
 
 	/** Emotion layered on top of the performance. Crossfades over EmotionBlendTime when changed. Keyable. */

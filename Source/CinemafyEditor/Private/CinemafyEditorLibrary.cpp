@@ -2,6 +2,7 @@
 #include "CinemafyChoreoTools.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyScript.h"
+#include "CinemafyStoryLibrary.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyPerformerProfile.h"
 #include "GameFramework/Character.h"
@@ -1704,6 +1705,7 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	if (Director->bPlaceDialogueAudio)
 	{
 		PlaceDialogueAudio(MovieScene, EffectiveLines, SceneStart);
+		UCinemafyStoryLibrary::BakeTalkCurves(Sequence, EffectiveLines, SceneStart);
 	}
 	if (Director->bPlacePerformances)
 	{
@@ -2187,9 +2189,12 @@ FCinemafyAudioAnalysis UCinemafyEditorLibrary::AnalyzeDialogueSound(USoundWave* 
 	const int32 Window = FMath::Max(1, static_cast<int32>(SampleRate / 50));
 	TArray<float> WindowDb;
 	TArray<float> WindowPower;
+	TArray<float> WindowCrossings;
 	for (int32 Start = 0; Start + Window <= NumFrames; Start += Window)
 	{
 		double SumSquares = 0.0;
+		int32 Crossings = 0;
+		float Previous = 0.f;
 		for (int32 Frame = Start; Frame < Start + Window; ++Frame)
 		{
 			float Mono = 0.f;
@@ -2199,7 +2204,10 @@ FCinemafyAudioAnalysis UCinemafyEditorLibrary::AnalyzeDialogueSound(USoundWave* 
 			}
 			Mono /= NumChannels;
 			SumSquares += Mono * Mono;
+			Crossings += (Mono >= 0.f) != (Previous >= 0.f) ? 1 : 0;
+			Previous = Mono;
 		}
+		WindowCrossings.Add(static_cast<float>(Crossings) / Window);
 		const float Power = static_cast<float>(SumSquares / Window);
 		WindowPower.Add(Power);
 		WindowDb.Add(10.f * FMath::LogX(10.f, Power + 1e-12f));
@@ -2234,6 +2242,18 @@ FCinemafyAudioAnalysis UCinemafyEditorLibrary::AnalyzeDialogueSound(USoundWave* 
 	Result.LoudnessDb = 10.f * FMath::LogX(10.f, static_cast<float>(SpeechPower / SpeechDb.Num()) + 1e-12f);
 	Result.PeakDb = SpeechDb[FMath::Min(SpeechDb.Num() - 1, FMath::RoundToInt(SpeechDb.Num() * 0.95f))];
 	Result.ActiveRatio = static_cast<float>(SpeechDb.Num()) / WindowDb.Num();
+
+	// Mouth curves for faces with no captured performance (Cinemafy Face's Talk): how open (loudness above
+	// the speech floor) and how narrow (hissy, high zero-crossing sounds: s, sh, f) at 50 Hz.
+	Result.TalkOpen.Reset();
+	Result.TalkNarrow.Reset();
+	const float Range = FMath::Max(Result.PeakDb - SpeechThreshold + 6.f, 6.f);
+	for (int32 Index = 0; Index < WindowDb.Num(); ++Index)
+	{
+		const float Open = FMath::Clamp((WindowDb[Index] - SpeechThreshold + 6.f) / Range, 0.f, 1.f);
+		Result.TalkOpen.Add(Open);
+		Result.TalkNarrow.Add(Open > 0.f ? FMath::Clamp((WindowCrossings[Index] - 0.06f) / 0.2f, 0.f, 1.f) : 0.f);
+	}
 
 	// Speech rate: count loudness bursts (syllable nuclei) at least 80 ms apart that rise 4 dB above the valley before them.
 	int32 Bursts = 0;
@@ -3421,6 +3441,7 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 		Line.Speaker = CinemafyScriptEditor::FindActorForName(World, ScriptLine.Speaker);
 		Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
 		Line.Text = FText::FromString(ScriptLine.Text);
+		Line.Audio = ScriptLine.Audio.LoadSynchronous();
 		// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
 		Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
 		Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene->Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));

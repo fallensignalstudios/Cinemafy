@@ -196,6 +196,12 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 					UCinemafyStoryLibrary::BuildCastAndSets(P);
 					GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(P);
 				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Scratch", "Scratch Voices"), LOCTEXT("ScratchTip", "Read every line without voice-over aloud with the computer's voices (each character's Scratch Voice), so timing works before recording."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					const int32 Voiced = UCinemafyStoryLibrary::GenerateScratchVoices(P, FString(), false);
+					FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("Voiced", "Voiced {0} line(s). Previs or re-Direct scenes to hear them; faces with Cinemafy Face talk along."), Voiced));
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Map", "Map Scenes"), LOCTEXT("MapTip", "Find this level's Scene Directors and mark their scenes' progress."),
 				WithProject([](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::MapScriptScenesInLevel(P); })) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Masters", "Cut Together"), LOCTEXT("MastersTip", "Build a master sequence per act and for the whole story, and open it."),
@@ -393,6 +399,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 				Entry(LOCTEXT("StageOnly", "Stage without recording"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::PrevisScene(P, SceneId, false); });
 				Entry(LOCTEXT("Continuity", "Dress the cast for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneContinuity(P, SceneId); });
 				Entry(LOCTEXT("NewDirector", "New Scene Director from the script"), [SceneId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, SceneId); });
+				Entry(LOCTEXT("ScratchScene", "Scratch voices for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::GenerateScratchVoices(P, SceneId, true); });
 				Entry(LOCTEXT("NewTake", "New take (keep this one)"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::NewTake(P, SceneId); });
 				for (int32 Take = 0; Take < Takes.Num(); ++Take)
 				{

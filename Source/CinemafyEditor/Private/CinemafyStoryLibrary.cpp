@@ -12,6 +12,17 @@
 #include "Tracks/MovieSceneCinematicShotTrack.h"
 #include "Framework/Docking/TabManager.h"
 #include "Misc/PackageName.h"
+#include "AutomatedAssetImportData.h"
+#include "CinemafyFaceComponent.h"
+#include "CinemafySequencerUtils.h"
+#include "Channels/MovieSceneFloatChannel.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Sections/MovieSceneFloatSection.h"
+#include "Sound/SoundWave.h"
+#include "Tracks/MovieSceneFloatTrack.h"
 #include "MovieSceneTimeHelpers.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Subsystems/AssetEditorSubsystem.h"
@@ -442,6 +453,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 			if (!Beat.Line.IsEmpty())
 			{
 				Added.Dialogue = FText::FromString(Beat.Line);
+				Added.DialogueAudio = Beat.LineAudio.LoadSynchronous();
 				Added.Listener = Target;
 			}
 			if (AActor* const* Cue = Actors.Find(Beat.WaitFor))
@@ -712,6 +724,267 @@ void UCinemafyStoryLibrary::OpenStoryBoard(UCinemafyScriptProject* Project)
 	if (Project)
 	{
 		SCinemafyStoryBoard::SetProject(Project);
+	}
+}
+
+namespace CinemafyVoices
+{
+	/** Speaks Text into a .wav with the platform's voices. */
+	bool Synthesize(const FString& Text, const FString& Voice, float Rate, const FString& WavPath)
+	{
+		const FString TextPath = FPaths::ChangeExtension(WavPath, TEXT("txt"));
+		FFileHelper::SaveStringToFile(Text, *TextPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+		IFileManager::Get().Delete(*WavPath, false, true, true);
+		int32 Code = -1;
+		FString Out, Err;
+#if PLATFORM_MAC
+		const int32 WordsPerMinute = FMath::RoundToInt(175.f * Rate);
+		const FString Params = FString::Printf(TEXT("%s-r %d -o \"%s\" --file-format=WAVE --data-format=LEI16@22050 -f \"%s\""),
+			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("-v \"%s\" "), *Voice), WordsPerMinute, *WavPath, *TextPath);
+		FPlatformProcess::ExecProcess(TEXT("/usr/bin/say"), *Params, &Code, &Out, &Err);
+#elif PLATFORM_WINDOWS
+		const int32 SpeechRate = FMath::Clamp(FMath::RoundToInt((Rate - 1.f) * 10.f), -10, 10);
+		const FString Script = FString::Printf(
+			TEXT("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; %s$s.Rate = %d; ")
+			TEXT("$s.SetOutputToWaveFile('%s'); $s.Speak([IO.File]::ReadAllText('%s')); $s.Dispose()"),
+			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("try { $s.SelectVoice('%s') } catch {}; "), *Voice.Replace(TEXT("'"), TEXT("''"))),
+			SpeechRate, *WavPath.Replace(TEXT("'"), TEXT("''")), *TextPath.Replace(TEXT("'"), TEXT("''")));
+		FPlatformProcess::ExecProcess(TEXT("powershell.exe"), *FString::Printf(TEXT("-NoProfile -NonInteractive -Command \"%s\""), *Script), &Code, &Out, &Err);
+#else
+		const int32 WordsPerMinute = FMath::RoundToInt(165.f * Rate);
+		const FString Params = FString::Printf(TEXT("%s-s %d -w \"%s\" -f \"%s\""),
+			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("-v %s "), *Voice), WordsPerMinute, *WavPath, *TextPath);
+		FPlatformProcess::ExecProcess(TEXT("/usr/bin/espeak-ng"), *Params, &Code, &Out, &Err);
+		if (!FPaths::FileExists(WavPath))
+		{
+			FPlatformProcess::ExecProcess(TEXT("/usr/bin/espeak"), *Params, &Code, &Out, &Err);
+		}
+#endif
+		IFileManager::Get().Delete(*TextPath, false, true, true);
+		if (!FPaths::FileExists(WavPath))
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: the scratch voice didn't speak (%d): %s %s"), Code, *Out, *Err);
+			return false;
+		}
+		return true;
+	}
+
+	/** Gives every Scene Director line with these words the audio. */
+	void ShareWithDirectors(UWorld* World, const FString& Text, USoundBase* Audio)
+	{
+		if (!World || !Audio)
+		{
+			return;
+		}
+		for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+		{
+			for (FCinemafyLine& Line : It->Lines)
+			{
+				if (Line.Text.ToString().Equals(Text, ESearchCase::IgnoreCase))
+				{
+					It->Modify();
+					Line.Audio = Audio;
+					Line.bUseAudioDuration = true;
+					Line.Analysis = FCinemafyAudioAnalysis();
+				}
+			}
+		}
+	}
+}
+
+int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Project, const FString& SceneId, bool bReplaceExistingScratch)
+{
+	if (!Project)
+	{
+		return 0;
+	}
+	const FString ProjectName = FPaths::MakeValidFileName(Project->GetName());
+	const FString Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cinemafy") / TEXT("ScratchVO") / ProjectName);
+	IFileManager::Get().MakeDirectory(*Folder, true);
+
+	struct FPending { FCinemafyScriptLine* Line; FString Wav; };
+	TArray<FPending> Spoken;
+	for (FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		if (!SceneId.IsEmpty() && Scene->Id != SceneId)
+		{
+			continue;
+		}
+		for (FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			const bool bHasReal = !Line.Audio.IsNull() && !Line.bScratchAudio;
+			const bool bHasScratch = !Line.Audio.IsNull() && Line.bScratchAudio;
+			if (Line.Kind != ECinemafyScriptLineKind::Dialogue || Line.LineId.IsEmpty() || bHasReal || (bHasScratch && !bReplaceExistingScratch))
+			{
+				continue;
+			}
+			const FCinemafyCastMember* Member = Project->FindCastMember(Line.Speaker);
+			const FString Wav = Folder / (Line.LineId + TEXT(".wav"));
+			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), Member ? Member->ScratchRate : 1.f, Wav))
+			{
+				Spoken.Add({ &Line, Wav });
+			}
+		}
+	}
+	if (Spoken.Num() == 0)
+	{
+		return 0;
+	}
+
+	UAutomatedAssetImportData* Import = NewObject<UAutomatedAssetImportData>();
+	Import->DestinationPath = FString::Printf(TEXT("/Game/Cinemafy/ScratchVO/%s"), *ProjectName);
+	Import->bReplaceExisting = true;
+	for (const FPending& Pending : Spoken)
+	{
+		Import->Filenames.Add(Pending.Wav);
+	}
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+	const TArray<UObject*> Imported = AssetTools.ImportAssetsAutomated(Import);
+
+	const FScopedTransaction Transaction(LOCTEXT("ScratchVO", "Cinemafy: Scratch Voices"));
+	Project->Modify();
+	UWorld* World = CinemafyStory::EditorWorld();
+	int32 Voiced = 0;
+	for (const FPending& Pending : Spoken)
+	{
+		const FString Name = FPaths::GetBaseFilename(Pending.Wav);
+		UObject* const* Found = Imported.FindByPredicate([&Name](const UObject* Object) { return Object && Object->GetName() == Name; });
+		USoundWave* Sound = Found ? Cast<USoundWave>(*Found) : nullptr;
+		if (!Sound)
+		{
+			continue;
+		}
+		Pending.Line->Audio = Sound;
+		Pending.Line->bScratchAudio = true;
+		CinemafyVoices::ShareWithDirectors(World, Pending.Line->Text, Sound);
+		++Voiced;
+	}
+	Project->MarkPackageDirty();
+	return Voiced;
+}
+
+int32 UCinemafyStoryLibrary::AssignRecordedVoices(UCinemafyScriptProject* Project, const FString& ContentFolder)
+{
+	if (!Project || ContentFolder.IsEmpty())
+	{
+		return 0;
+	}
+	const IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	TArray<FAssetData> Assets;
+	Registry.GetAssetsByPath(FName(*ContentFolder), Assets, true);
+	TMap<FString, FAssetData> ByName;
+	for (const FAssetData& Asset : Assets)
+	{
+		if (Asset.IsInstanceOf(USoundBase::StaticClass()))
+		{
+			ByName.Add(Asset.AssetName.ToString().ToUpper(), Asset);
+		}
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("RecordedVO", "Cinemafy: Assign Recorded Voices"));
+	Project->Modify();
+	UWorld* World = CinemafyStory::EditorWorld();
+	int32 Matched = 0;
+	for (FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		int32 Number = 0;
+		for (FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (Line.Kind != ECinemafyScriptLineKind::Dialogue)
+			{
+				continue;
+			}
+			++Number;
+			const FString ByLine = FString::Printf(TEXT("%s_%02d"), *Scene->Id.Replace(TEXT("."), TEXT("_")), Number);
+			const FAssetData* Asset = ByName.Find(Line.LineId.ToUpper());
+			if (!Asset)
+			{
+				Asset = ByName.Find(ByLine);
+			}
+			if (!Asset)
+			{
+				// Prefixed names ("VO_2_1_3_04", "SC2_1_3_04_Kade") still count.
+				for (const TPair<FString, FAssetData>& Pair : ByName)
+				{
+					if (Pair.Key.Contains(Line.LineId.ToUpper()) || Pair.Key.Contains(ByLine))
+					{
+						Asset = &Pair.Value;
+						break;
+					}
+				}
+			}
+			USoundBase* Sound = Asset ? Cast<USoundBase>(Asset->GetAsset()) : nullptr;
+			if (!Sound)
+			{
+				continue;
+			}
+			Line.Audio = Sound;
+			Line.bScratchAudio = false;
+			CinemafyVoices::ShareWithDirectors(World, Line.Text, Sound);
+			++Matched;
+		}
+	}
+	Project->MarkPackageDirty();
+	return Matched;
+}
+
+void UCinemafyStoryLibrary::BakeTalkCurves(ULevelSequence* Sequence, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart)
+{
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	if (!MovieScene)
+	{
+		return;
+	}
+	const FFrameRate Resolution = MovieScene->GetTickResolution();
+	struct FFaceChannels { FMovieSceneFloatChannel* Open = nullptr; FMovieSceneFloatChannel* Narrow = nullptr; };
+	TMap<UCinemafyFaceComponent*, FFaceChannels> Faces;
+
+	auto MakeChannel = [MovieScene](const FGuid& Binding, const FName Property) -> FMovieSceneFloatChannel*
+	{
+		// Rebuilt each time: the old Talk track goes.
+		if (UMovieSceneTrack* Old = MovieScene->FindTrack(UMovieSceneFloatTrack::StaticClass(), Binding, Property))
+		{
+			MovieScene->RemoveTrack(*Old);
+		}
+		UMovieSceneFloatTrack* Track = MovieScene->AddTrack<UMovieSceneFloatTrack>(Binding);
+		Track->SetPropertyNameAndPath(Property, Property.ToString());
+		UMovieSceneSection* Section = Track->CreateNewSection();
+		Section->SetRange(TRange<FFrameNumber>::All());
+		Track->AddSection(*Section);
+		return Section->GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0);
+	};
+
+	float Time = 0.f;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		const TArray<float>& Open = Line.Analysis.TalkOpen;
+		UCinemafyFaceComponent* Face = Line.Speaker && Line.Audio ? Line.Speaker->FindComponentByClass<UCinemafyFaceComponent>() : nullptr;
+		if (Face && Open.Num() > 0)
+		{
+			FFaceChannels* Channels = Faces.Find(Face);
+			if (!Channels)
+			{
+				const FGuid Binding = CinemafySequencer::BindObject(Sequence, Face);
+				if (Binding.IsValid())
+				{
+					Channels = &Faces.Add(Face, FFaceChannels{ MakeChannel(Binding, TEXT("Talk")), MakeChannel(Binding, TEXT("TalkNarrow")) });
+				}
+			}
+			if (Channels && Channels->Open && Channels->Narrow)
+			{
+				// 25 keys a second is plenty for a jaw; close the mouth after the last word.
+				for (int32 Index = 0; Index < Open.Num(); Index += 2)
+				{
+					const FFrameNumber Frame = SceneStart + Resolution.AsFrameNumber(Time + Index * 0.02f);
+					Channels->Open->AddLinearKey(Frame, Open[Index]);
+					Channels->Narrow->AddLinearKey(Frame, Line.Analysis.TalkNarrow.IsValidIndex(Index) ? Line.Analysis.TalkNarrow[Index] : 0.f);
+				}
+				const FFrameNumber End = SceneStart + Resolution.AsFrameNumber(Time + Open.Num() * 0.02f + 0.05f);
+				Channels->Open->AddLinearKey(End, 0.f);
+				Channels->Narrow->AddLinearKey(End, 0.f);
+			}
+		}
+		Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 	}
 }
 
