@@ -32,6 +32,7 @@
 #include "AssetToolsModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimData/IAnimationDataModel.h"
 #include "Misc/FileHelper.h"
 #include "IAssetTools.h"
 #include "SCinemafyShotBrowser.h"
@@ -962,10 +963,10 @@ namespace
 
 	const FText PerformanceTrackName = NSLOCTEXT("CinemafyEditor", "PerformanceTrack", "Cinemafy Performance");
 
-	/** The speaker's skeletal mesh that can play this clip (matching skeleton): body or face. */
+	/** The actor's skeletal mesh that can play this clip (same or compatible skeleton): body or face. */
 	USkeletalMeshComponent* FindMeshForClip(AActor* Actor, const UAnimSequenceBase* Clip)
 	{
-		if (!Actor || !Clip)
+		if (!Actor || !Clip || !Clip->GetSkeleton())
 		{
 			return nullptr;
 		}
@@ -973,7 +974,8 @@ namespace
 		for (USkeletalMeshComponent* Mesh : Meshes)
 		{
 			const USkeletalMesh* Asset = Mesh->GetSkeletalMeshAsset();
-			if (Asset && Asset->GetSkeleton() == Clip->GetSkeleton())
+			const USkeleton* Skeleton = Asset ? Asset->GetSkeleton() : nullptr;
+			if (Skeleton && (Skeleton == Clip->GetSkeleton() || Skeleton->IsCompatibleForEditor(Clip->GetSkeleton())))
 			{
 				return Mesh;
 			}
@@ -981,19 +983,163 @@ namespace
 		return nullptr;
 	}
 
-	/**
-	 * Lays each line's body / face clips onto the speaker, on a "Cinemafy Performance" animation track
-	 * per mesh (replacing the last take's).
-	 */
-	void PlacePerformances(ULevelSequence* Sequence, UMovieScene* MovieScene, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart)
+	/** The actor's main body mesh: the character mesh, else its first skeletal mesh. */
+	USkeletalMeshComponent* FindBodyMesh(AActor* Actor)
 	{
-		struct FPlacement { USkeletalMeshComponent* Mesh; UAnimSequenceBase* Clip; FFrameNumber Start; };
+		if (const ACharacter* Character = Cast<ACharacter>(Actor))
+		{
+			if (Character->GetMesh() && Character->GetMesh()->GetSkeletalMeshAsset())
+			{
+				return Character->GetMesh();
+			}
+		}
+		return Actor ? Actor->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+	}
+
+	/**
+	 * How far a clip moves the body around (cm): the widest horizontal spread of the hips over the clip. In-place
+	 * talking stays under ~30; clips that pace or walk go well past it. 0 when it can't be read.
+	 */
+	float BodyTravel(const UAnimSequenceBase* Clip)
+	{
+		const UAnimSequence* Sequence = Cast<UAnimSequence>(Clip);
+		const USkeleton* Skeleton = Clip ? Clip->GetSkeleton() : nullptr;
+		if (!Sequence || !Skeleton || !Sequence->GetDataModel())
+		{
+			return 0.f;
+		}
+		const IAnimationDataModel* Model = Sequence->GetDataModel();
+		const FReferenceSkeleton& Ref = Skeleton->GetReferenceSkeleton();
+		FName Hips = TEXT("pelvis");
+		if (!Model->IsValidBoneTrackName(Hips) && Ref.GetNum() > 1)
+		{
+			Hips = Ref.GetBoneName(1);
+		}
+		if (!Model->IsValidBoneTrackName(Hips))
+		{
+			return 0.f;
+		}
+		const int32 Frames = FMath::Max(Model->GetNumberOfFrames(), 1);
+		FBox2D Box(ForceInit);
+		for (int32 Sample = 0; Sample <= 16; ++Sample)
+		{
+			const FVector Location = Model->EvaluateBoneTrackTransform(Hips, FFrameTime(Frames * Sample / 16), EAnimInterpolationType::Linear).GetLocation();
+			Box += FVector2D(Location.X, Location.Y);
+		}
+		return Box.GetSize().GetMax();
+	}
+
+	/** True when a Choreographer take is baked onto the actor or one of its components in this sequence. */
+	bool HasChoreographyTake(ULevelSequence* Sequence, UMovieScene* MovieScene, AActor* Actor)
+	{
+		const FGuid ActorBinding = CinemafySequencer::FindBinding(Sequence, Actor);
+		if (!ActorBinding.IsValid())
+		{
+			return false;
+		}
+		static const FString TakeName = TEXT("Cinemafy Take");
+		const UMovieScene* ConstMovieScene = MovieScene;
+		for (const FMovieSceneBinding& Binding : ConstMovieScene->GetBindings())
+		{
+			const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(Binding.GetObjectGuid());
+			const bool bOurs = Binding.GetObjectGuid() == ActorBinding || (Possessable && Possessable->GetParent() == ActorBinding);
+			if (!bOurs)
+			{
+				continue;
+			}
+			for (const UMovieSceneTrack* Track : Binding.GetTracks())
+			{
+				if (Track && Track->GetDisplayName().ToString() == TakeName)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Lays each line's body / face clips onto the speaker, on a "Cinemafy Performance" animation track per mesh
+	 * (replacing the last take's). With bCast, lines without a body clip get one cast from the project's
+	 * animations for their tone: a talking clip on the speaker, a listening one on the listener.
+	 */
+	void PlacePerformances(ULevelSequence* Sequence, UMovieScene* MovieScene, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart,
+		bool bCast, int32 Seed)
+	{
+		struct FPlacement { USkeletalMeshComponent* Mesh; UAnimSequenceBase* Clip; FFrameNumber Start; FFrameNumber End; };
 		TArray<FPlacement> Placements;
 
 		const FFrameRate TickResolution = MovieScene->GetTickResolution();
-		float Time = 0.f;
-		for (const FCinemafyLine& Line : Lines)
+		const float Blend = 0.35f;
+		const float MaxTravel = 40.f;
+
+		// Casting: each body skeleton's candidates, once; who's already performing a recorded take.
+		TMap<const USkeleton*, TArray<FCinemafyMoveCandidate>> CandidatesBySkeleton;
+		TMap<AActor*, bool> Recorded;
+		TMap<USkeletalMeshComponent*, TArray<FSoftObjectPath>> Recent;
+		auto CastClip = [&](AActor* Actor, const FCinemafyLine& Line, int32 LineIndex, bool bSpeaking, float From, float To)
 		{
+			USkeletalMeshComponent* Mesh = FindBodyMesh(Actor);
+			const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+			if (!Skeleton)
+			{
+				return;
+			}
+			bool* bRecorded = Recorded.Find(Actor);
+			if (!bRecorded)
+			{
+				bRecorded = &Recorded.Add(Actor, HasChoreographyTake(Sequence, MovieScene, Actor));
+			}
+			if (*bRecorded)
+			{
+				return;
+			}
+			TArray<FCinemafyMoveCandidate>* Candidates = CandidatesBySkeleton.Find(Skeleton);
+			if (!Candidates)
+			{
+				Candidates = &CandidatesBySkeleton.Add(Skeleton, UCinemafyChoreographyLibrary::GatherCandidates(nullptr, {}, Skeleton));
+			}
+			TArray<FSoftObjectPath>& Used = Recent.FindOrAdd(Mesh);
+			UAnimSequenceBase* Clip = nullptr;
+			FSoftObjectPath ClipPath;
+			for (int32 Attempt = 0; Attempt < 8 && !Clip; ++Attempt)
+			{
+				const int32 Pick = UCinemafyDirectorLibrary::PickDialogueAnimation(Line, bSpeaking, *Candidates,
+					Seed + LineIndex * 7919 + (bSpeaking ? 0 : 104729) + Attempt, Used);
+				if (Pick == INDEX_NONE)
+				{
+					return;
+				}
+				ClipPath = (*Candidates)[Pick].Path;
+				Clip = Cast<UAnimSequenceBase>(ClipPath.TryLoad());
+				// A clip that walks the actor off their mark leaves the shot framed on nobody: never cast it again.
+				if (!Clip || BodyTravel(Clip) > MaxTravel)
+				{
+					UE_LOG(LogCinemafy, Verbose, TEXT("Cinemafy Director: skipped %s for casting (it moves the body around)."), *ClipPath.ToString());
+					Candidates->RemoveAt(Pick);
+					Clip = nullptr;
+				}
+			}
+			if (!Clip)
+			{
+				return;
+			}
+			Used.Add(ClipPath);
+			if (Used.Num() > 4)
+			{
+				Used.RemoveAt(0);
+			}
+			Placements.Add({ Mesh, Clip, SceneStart + TickResolution.AsFrameNumber(From), SceneStart + TickResolution.AsFrameNumber(To) });
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: line %d cast %s as %s (%s, %s)."), LineIndex, *Clip->GetName(),
+				*GetNameSafe(Actor), bSpeaking ? TEXT("speaking") : TEXT("listening"),
+				*StaticEnum<ECinemafyEmotion>()->GetNameStringByValue(static_cast<int64>(UCinemafyDirectorLibrary::ReadLineTone(Line))));
+		};
+
+		float Time = 0.f;
+		for (int32 LineIndex = 0; LineIndex < Lines.Num(); ++LineIndex)
+		{
+			const FCinemafyLine& Line = Lines[LineIndex];
+			const float Length = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 			const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Time);
 			for (UAnimSequenceBase* Clip : { Line.BodyAnimation.Get(), Line.FaceAnimation.Get() })
 			{
@@ -1003,7 +1149,7 @@ namespace
 				}
 				if (USkeletalMeshComponent* Mesh = FindMeshForClip(Line.Speaker, Clip))
 				{
-					Placements.Add({ Mesh, Clip, Start });
+					Placements.Add({ Mesh, Clip, Start, FFrameNumber() });
 				}
 				else
 				{
@@ -1011,7 +1157,24 @@ namespace
 						*Clip->GetName(), *GetNameSafe(Line.Speaker));
 				}
 			}
-			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+
+			// Fights and walks have their own bodies; everyone else gets a performance for the line's tone. Sections
+			// overlap by the blend so one clip eases into the next.
+			const bool bStill = !Line.bAction && !Line.bMoving && Line.Moment != ECinemafyMoment::Action && Line.Moment != ECinemafyMoment::WalkAndTalk;
+			if (bCast && bStill)
+			{
+				const float From = FMath::Max(Time - Blend, 0.f);
+				const float To = Time + Length + Blend;
+				if (!Line.BodyAnimation && Line.Speaker)
+				{
+					CastClip(Line.Speaker, Line, LineIndex, true, From, To);
+				}
+				if (Line.Listener && Line.Listener != Line.Speaker)
+				{
+					CastClip(Line.Listener, Line, LineIndex, false, From, To);
+				}
+			}
+			Time += Length;
 		}
 
 		TMap<USkeletalMeshComponent*, UMovieSceneSkeletalAnimationTrack*> Tracks;
@@ -1046,9 +1209,21 @@ namespace
 
 				UMovieSceneSkeletalAnimationTrack* Track = MovieScene->AddTrack<UMovieSceneSkeletalAnimationTrack>(Binding);
 				Track->SetDisplayName(PerformanceTrackName);
+				// Binding a mesh can auto-add a Control Rig track, which would override the performance.
+				CinemafySequencer::MuteBindingTracks(MovieScene, Binding, TEXT("MovieSceneControlRigParameterTrack"), Track);
 				Found = &Tracks.Add(Placement.Mesh, Track);
 			}
-			(*Found)->AddNewAnimation(Placement.Start, Placement.Clip);
+			UMovieSceneSection* Section = (*Found)->AddNewAnimation(Placement.Start, Placement.Clip);
+			if (Section && Placement.End > Placement.Start)
+			{
+				// A cast clip covers its line: looped if it's short, cut if it's long, eased in and out.
+				Section->SetRange(TRange<FFrameNumber>(Placement.Start, Placement.End));
+				const int32 Ease = TickResolution.AsFrameNumber(Blend).Value;
+				Section->Easing.bManualEaseIn = true;
+				Section->Easing.ManualEaseInDuration = Ease;
+				Section->Easing.bManualEaseOut = true;
+				Section->Easing.ManualEaseOutDuration = Ease;
+			}
 		}
 	}
 
@@ -1504,7 +1679,7 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	}
 	if (Director->bPlacePerformances)
 	{
-		PlacePerformances(Sequence, MovieScene, EffectiveLines, SceneStart);
+		PlacePerformances(Sequence, MovieScene, EffectiveLines, SceneStart, Director->bCastDialogueAnimations, Director->Seed);
 	}
 	if (Director->bShowSubtitles)
 	{

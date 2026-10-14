@@ -1,5 +1,6 @@
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafyFramingLibrary.h"
+#include "CinemafyChoreographyLibrary.h"
 #include "GameFramework/Actor.h"
 
 namespace
@@ -1146,4 +1147,187 @@ FString UCinemafyDirectorLibrary::SummarizeDecisions(const TArray<FCinemafyPlann
 	Add(Locked, TEXT("locked shots"));
 
 	return FString::Printf(TEXT("Read the scene as: %s.\nCut it with: %s."), *Moment, *Tools);
+}
+
+ECinemafyEmotion UCinemafyDirectorLibrary::ReadLineTone(const FCinemafyLine& Line)
+{
+	if (Line.bSetEmotion)
+	{
+		return Line.Emotion;
+	}
+	const FString Text = Line.Text.ToString();
+	int32 Exclamations = 0;
+	for (const TCHAR Char : Text)
+	{
+		Exclamations += Char == TEXT('!') ? 1 : 0;
+	}
+	if (Line.Intensity >= 0.8f || (Exclamations > 0 && Line.Intensity >= 0.6f))
+	{
+		return ECinemafyEmotion::Angry;
+	}
+	if (Line.Intensity >= 0.6f)
+	{
+		return ECinemafyEmotion::Determined;
+	}
+	if (Text.TrimEnd().EndsWith(TEXT("...")) && Line.Intensity <= 0.4f)
+	{
+		return ECinemafyEmotion::Sad;
+	}
+	return ECinemafyEmotion::Neutral;
+}
+
+float UCinemafyDirectorLibrary::ScoreDialogueAnimation(const FCinemafyLine& Line, bool bSpeaking, const TArray<FString>& AnimationTokens)
+{
+	auto Has = [&AnimationTokens](std::initializer_list<const TCHAR*> Words)
+	{
+		for (const TCHAR* Word : Words)
+		{
+			if (AnimationTokens.Contains(Word) || AnimationTokens.Contains(FString(TEXT("@")) + Word))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	// Poses that need a set (seat, wall, curb), moving clips, fights and couples' clips: never under a line.
+	if (Has({ TEXT("sit"), TEXT("siting"), TEXT("sitting"), TEXT("seated"), TEXT("bench"), TEXT("bar"), TEXT("chair"), TEXT("curb"),
+			TEXT("lie"), TEXT("lying"), TEXT("wall"), TEXT("static"), TEXT("leaning"), TEXT("rm"), TEXT("walk"), TEXT("run"), TEXT("jog"),
+			TEXT("sprint"), TEXT("hit"), TEXT("attack"), TEXT("death"), TEXT("deaths"), TEXT("die"), TEXT("punch"), TEXT("kick"),
+			TEXT("combo"), TEXT("dodge"), TEXT("block"), TEXT("jump"), TEXT("fall"), TEXT("hug"), TEXT("hugging"), TEXT("kiss"),
+			TEXT("kissing"), TEXT("romantic"), TEXT("ue4"), TEXT("calling"), TEXT("waving") }))
+	{
+		return -1.f;
+	}
+
+	// The role: what a talker does with their hands, what a listener does while they wait.
+	const bool bTalk = Has({ TEXT("talk"), TEXT("explain"), TEXT("gesture"), TEXT("whisper"), TEXT("insist"), TEXT("emphatic") });
+	const bool bArguing = Has({ TEXT("arguing"), TEXT("argue"), TEXT("argument") });
+	const bool bListen = Has({ TEXT("listen"), TEXT("listening"), TEXT("nod"), TEXT("crossarms"), TEXT("shrug"), TEXT("sigh"),
+		TEXT("shocked"), TEXT("surprise"), TEXT("embarrassed") });
+	const bool bDialogueIdle = Has({ TEXT("idle") }) && Has({ TEXT("dialogue") });
+
+	float Score = 0.f;
+	if (bSpeaking)
+	{
+		Score = bTalk ? 2.f : bArguing ? 1.5f : 0.f;
+	}
+	else
+	{
+		Score = bListen ? 2.f : bDialogueIdle ? 1.5f : bArguing ? 1.f : 0.f;
+		if (bTalk && !bListen)
+		{
+			return -1.f;
+		}
+	}
+	if (Score <= 0.f)
+	{
+		return -1.f;
+	}
+
+	// The tone: words that fit it score, words of another strong tone count against.
+	const ECinemafyEmotion Tone = ReadLineTone(Line);
+	const bool bHigh = Line.Intensity >= 0.6f;
+	// Fits: words that suit the tone, its signature words (the tone itself, "sad" for Sad) first.
+	TArray<const TCHAR*> Fits;
+	int32 Signature = 1;
+	switch (Tone)
+	{
+	case ECinemafyEmotion::Angry:
+	case ECinemafyEmotion::Contempt:
+	case ECinemafyEmotion::Disgust:
+		Fits = { TEXT("furious"), TEXT("arguing"), TEXT("emphatic"), TEXT("insist"), TEXT("crossarms"), TEXT("nono"), TEXT("no") };
+		Signature = 2;
+		break;
+	case ECinemafyEmotion::Sad:
+	case ECinemafyEmotion::Worried:
+		Fits = { TEXT("sad"), TEXT("sigh"), TEXT("serious"), TEXT("whisper"), TEXT("embarrassed") };
+		break;
+	case ECinemafyEmotion::Happy:
+		Fits = { TEXT("laugh"), TEXT("smile"), TEXT("light"), TEXT("yes"), TEXT("calm") };
+		Signature = 2;
+		break;
+	case ECinemafyEmotion::Surprise:
+	case ECinemafyEmotion::Fear:
+		Fits = { TEXT("shocked"), TEXT("surprise"), TEXT("whisper"), TEXT("serious") };
+		Signature = 2;
+		break;
+	case ECinemafyEmotion::Determined:
+		Fits = { TEXT("serious"), TEXT("emphatic"), TEXT("insist"), TEXT("explain"), TEXT("up") };
+		break;
+	default:
+		Fits = bHigh ? TArray<const TCHAR*>{ TEXT("serious"), TEXT("emphatic"), TEXT("explain") }
+			: TArray<const TCHAR*>{ TEXT("calm"), TEXT("talk"), TEXT("explain"), TEXT("listen"), TEXT("neutral"), TEXT("nod"), TEXT("low") };
+		break;
+	}
+	if (!bSpeaking && Line.Moment == ECinemafyMoment::Reveal)
+	{
+		Fits.Add(TEXT("shocked"));
+		Fits.Add(TEXT("surprise"));
+	}
+
+	for (int32 Index = 0; Index < Fits.Num(); ++Index)
+	{
+		const float Weight = Index < Signature ? 2.5f : 1.5f;
+		if (AnimationTokens.Contains(Fits[Index]))
+		{
+			Score += Weight;
+		}
+		else if (AnimationTokens.Contains(FString(TEXT("@")) + Fits[Index]))
+		{
+			Score += Weight * 0.5f;
+		}
+	}
+
+	static const TCHAR* StrongTones[] = { TEXT("furious"), TEXT("arguing"), TEXT("sad"), TEXT("laugh"), TEXT("smile"), TEXT("shocked"),
+		TEXT("surprise"), TEXT("whisper"), TEXT("emphatic"), TEXT("embarrassed") };
+	for (const TCHAR* Word : StrongTones)
+	{
+		if (!Fits.Contains(Word) && Has({ Word }))
+		{
+			Score -= 2.f;
+		}
+	}
+	return Score;
+}
+
+int32 UCinemafyDirectorLibrary::PickDialogueAnimation(const FCinemafyLine& Line, bool bSpeaking, const TArray<FCinemafyMoveCandidate>& Candidates,
+	int32 Seed, const TArray<FSoftObjectPath>& Recent)
+{
+	TArray<TPair<float, int32>> Scored;
+	float Best = 0.f;
+	for (int32 Index = 0; Index < Candidates.Num(); ++Index)
+	{
+		float Score = ScoreDialogueAnimation(Line, bSpeaking, Candidates[Index].Tokens);
+		if (Score <= 0.f)
+		{
+			continue;
+		}
+		Score += Candidates[Index].Bias;
+		const int32 Used = Recent.Find(Candidates[Index].Path);
+		if (Used != INDEX_NONE)
+		{
+			// The more recent, the bigger the penalty.
+			Score -= 1.f + float(Used + 1) / float(Recent.Num());
+		}
+		Scored.Add({ Score, Index });
+		Best = FMath::Max(Best, Score);
+	}
+	if (Scored.Num() == 0)
+	{
+		return INDEX_NONE;
+	}
+
+	// One of the close-to-best fits, so a scene doesn't repeat one clip; stable for a seed.
+	Scored.Sort([&Candidates](const TPair<float, int32>& A, const TPair<float, int32>& B)
+	{
+		return A.Key != B.Key ? A.Key > B.Key : Candidates[A.Value].Name < Candidates[B.Value].Name;
+	});
+	int32 Close = 0;
+	while (Close < Scored.Num() && Scored[Close].Key >= Best - 0.5f)
+	{
+		++Close;
+	}
+	FRandomStream Stream(Seed);
+	return Scored[Stream.RandRange(0, Close - 1)].Value;
 }

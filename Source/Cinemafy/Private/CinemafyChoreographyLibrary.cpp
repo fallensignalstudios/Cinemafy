@@ -1,4 +1,5 @@
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafySettings.h"
 #include "CinemafyModule.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
@@ -28,7 +29,7 @@ namespace
 			{ TEXT("shrug") },
 			{ TEXT("kneel"), TEXT("knee") },
 			{ TEXT("sit"), TEXT("seat") },
-			{ TEXT("die"), TEXT("death"), TEXT("dead"), TEXT("dying") },
+			{ TEXT("die"), TEXT("death"), TEXT("dead"), TEXT("dying"), TEXT("deaths"), TEXT("dies") },
 			{ TEXT("dodge"), TEXT("evade"), TEXT("roll"), TEXT("sidestep"), TEXT("dash") },
 			{ TEXT("block"), TEXT("parry"), TEXT("guard"), TEXT("defend") },
 			{ TEXT("hit"), TEXT("react"), TEXT("reaction"), TEXT("stagger"), TEXT("flinch"), TEXT("hurt") },
@@ -573,6 +574,14 @@ float UCinemafyChoreographyLibrary::ScoreAnimation(const FCinemafyPromptReading&
 		Score += Best;
 	}
 
+	// A death is only ever a death: "Deaths_Hit_Chest" isn't a hit reaction someone gets back up from.
+	static const TArray<FString> DeathWords = { TEXT("die"), TEXT("death"), TEXT("dead"), TEXT("dying"), TEXT("deaths"), TEXT("dies") };
+	const bool bDeathReading = Primary.ContainsByPredicate([](const FString& Word) { return DeathWords.Contains(Word); });
+	if (!bDeathReading && DeathWords.ContainsByPredicate([&AnimationTokens](const FString& Word) { return AnimationTokens.Contains(Word); }))
+	{
+		return -1.f;
+	}
+
 	// Only the folder says the action, and the name says a different one (MM_Dash in a Jump folder): not this.
 	const bool bPrimaryInName = Primary.ContainsByPredicate([&AnimationTokens](const FString& Word) { return AnimationTokens.Contains(Word); });
 	if (!bPrimaryInName)
@@ -730,6 +739,12 @@ TArray<FCinemafyMoveCandidate> UCinemafyChoreographyLibrary::GatherCandidates(co
 {
 	TArray<FCinemafyMoveCandidate> Candidates;
 
+	// No library of its own: use the project's default one (Project Settings > Plugins > Cinemafy), if set.
+	if (!Library)
+	{
+		Library = UCinemafySettings::GetDefaultMoveLibrary();
+	}
+
 	if (Library && Library->Moves.Num() > 0)
 	{
 		for (const FCinemafyMoveEntry& Entry : Library->Moves)
@@ -799,6 +814,7 @@ TArray<FCinemafyMoveCandidate> UCinemafyChoreographyLibrary::GatherCandidates(co
 		Candidate.Path = Asset.GetSoftObjectPath();
 		Candidate.Name = Asset.AssetName.ToString();
 		Candidate.Tokens = TokenizeName(Asset.PackageName.ToString());
+		Candidate.Bias = UCinemafySettings::GetFolderBias(Asset.PackageName.ToString());
 		if (Asset.AssetClassPath == UAnimMontage::StaticClass()->GetClassPathName())
 		{
 			Candidate.Tokens.AddUnique(TEXT("montage"));
@@ -887,7 +903,7 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::MakeReactionReading(ECinema
 	// Where the blow comes from is a preference, not a requirement (it's scored, never required).
 	const FString Side = ReactionDirection(RelativeYaw);
 	static const TMap<FString, FString> Sides = {
-		{ TEXT("front"), TEXT("front|forward|fwd") }, { TEXT("back"), TEXT("back|backward|behind|bwd|rear") },
+		{ TEXT("front"), TEXT("front|forward|fwd|chest|gut|guts") }, { TEXT("back"), TEXT("back|backward|behind|bwd|rear") },
 		{ TEXT("left"), TEXT("left|lft") }, { TEXT("right"), TEXT("right|rgt") } };
 	if (Reaction != ECinemafyHitReaction::Block)
 	{

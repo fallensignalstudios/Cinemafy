@@ -23,7 +23,8 @@ public class Cinemafy : ModuleRules
 			"SlateCore",
 			"AssetRegistry",
 			"NavigationSystem",
-			"MotionWarping"
+			"MotionWarping",
+			"DeveloperSettings"
 		});
 	}
 }

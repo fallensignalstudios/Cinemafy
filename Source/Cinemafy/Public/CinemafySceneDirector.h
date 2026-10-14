@@ -107,6 +107,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
 	bool bPlacePerformances = true;
 
+	/**
+	 * Cast body animations for lines that don't name one, from the project's clips (or the default Move Library):
+	 * a talking clip for the speaker and a listening one for the listener, matched to each line's tone. Characters
+	 * performing a recorded Choreographer take keep their take.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio", meta = (EditCondition = "bPlacePerformances"))
+	bool bCastDialogueAnimations = true;
+
 	/** Lay each line's audio into the sequence when directing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
 	bool bPlaceDialogueAudio = true;

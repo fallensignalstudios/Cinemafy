@@ -65,4 +65,27 @@ public:
 
 	/** How tight a shot type is: 0 = wide two-shot ... 5 = extreme close-up. */
 	static float GetShotSize(ECinemafyShotType ShotType);
+
+	/**
+	 * The tone a line is played in: its Emotion when set, otherwise read from how intense it is and its punctuation
+	 * (heated lines play angry, quiet trailing ones sad).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
+	static ECinemafyEmotion ReadLineTone(const FCinemafyLine& Line);
+
+	/**
+	 * How well a body clip fits a line, from its name and folder words: the role (talking vs listening) and the
+	 * tone ("furious", "sad", "laugh"...). Below 0 = never use it (sitting, walking, fighting, root motion...).
+	 * @param bSpeaking The speaker's clip; false for the listener's.
+	 * @param AnimationTokens The clip's words (UCinemafyChoreographyLibrary::TokenizeName).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
+	static float ScoreDialogueAnimation(const FCinemafyLine& Line, bool bSpeaking, const TArray<FString>& AnimationTokens);
+
+	/**
+	 * Casts a body clip for a line from the candidates: one of the best fits, varied by the seed and away from
+	 * the ones in Recent. INDEX_NONE when nothing fits.
+	 */
+	static int32 PickDialogueAnimation(const FCinemafyLine& Line, bool bSpeaking, const TArray<struct FCinemafyMoveCandidate>& Candidates,
+		int32 Seed, const TArray<FSoftObjectPath>& Recent);
 };

@@ -610,4 +610,85 @@ bool FCinemafyChoreoReactionTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyDialogueCastTest, "Cinemafy.Director.CastsDialogueByTone", CinemafyTests::Flags)
+bool FCinemafyDialogueCastTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+	using Dir = UCinemafyDirectorLibrary;
+
+	auto Line = [](ECinemafyEmotion Emotion, float Intensity)
+	{
+		FCinemafyLine Out;
+		Out.bSetEmotion = Emotion != ECinemafyEmotion::Neutral;
+		Out.Emotion = Emotion;
+		Out.Intensity = Intensity;
+		return Out;
+	};
+	auto Score = [](const FCinemafyLine& L, bool bSpeaking, const TCHAR* Path) { return Dir::ScoreDialogueAnimation(L, bSpeaking, Lib::TokenizeName(Path)); };
+
+	const TCHAR* Furious = TEXT("/Game/Dialogue/Vol1/IP/Furious/ANIM_IP_Dialogue_furious_talk_low");
+	const TCHAR* Arguing = TEXT("/Game/CinemafyLibrary/Arguing/05_AA_Arguing_Standing_type01_Male_Female");
+	const TCHAR* Sad = TEXT("/Game/Dialogue/Vol1/IP/Sad/ANIM_IP_Dialogue_Sad_talk_01");
+	const TCHAR* Laugh = TEXT("/Game/Dialogue/Vol1/IP/Laugh/ANIM_IP_Dialogue_laugh_talk_low_01");
+	const TCHAR* Calm = TEXT("/Game/Dialogue/Vol2/IP/Standing/ANIM_IP_Talk_Calm");
+	const TCHAR* Listen = TEXT("/Game/Dialogue/Vol1/IP/Listening/ANIM_IP_Dialogue_listening_idle_01");
+	const TCHAR* Shocked = TEXT("/Game/Dialogue/Vol2/IP/Standing/ANIM_IP_React_Shocked");
+
+	const FCinemafyLine Angry = Line(ECinemafyEmotion::Angry, 0.9f);
+	TestTrue(TEXT("An angry line plays furious over calm"), Score(Angry, true, Furious) > Score(Angry, true, Calm));
+	TestTrue(TEXT("...and can argue"), Score(Angry, true, Arguing) > 0.f);
+	TestTrue(TEXT("...but never laughs"), Score(Angry, true, Laugh) < Score(Angry, true, Furious));
+
+	const FCinemafyLine Sorrow = Line(ECinemafyEmotion::Sad, 0.3f);
+	TestTrue(TEXT("A sad line plays sad"), Score(Sorrow, true, Sad) > Score(Sorrow, true, Laugh) && Score(Sorrow, true, Sad) > Score(Sorrow, true, Furious));
+	TestTrue(TEXT("...over merely serious"), Score(Sorrow, true, Sad) > Score(Sorrow, true, TEXT("/Game/Dialogue/Vol1/IP/Serious/ANIM_IP_Dialogue_Serious_gesture_03")));
+
+	const FCinemafyLine Plain = Line(ECinemafyEmotion::Neutral, 0.3f);
+	TestTrue(TEXT("A plain line talks calmly"), Score(Plain, true, Calm) > Score(Plain, true, Furious));
+	TestTrue(TEXT("Arguing needs a heated line"), Score(Plain, true, Arguing) <= 0.f);
+
+	TestTrue(TEXT("A listener listens"), Score(Plain, false, Listen) > 0.f);
+	TestTrue(TEXT("...and doesn't talk"), Score(Plain, false, Calm) < 0.f);
+	TestTrue(TEXT("A speaker doesn't just listen"), Score(Plain, true, Listen) < 0.f);
+	FCinemafyLine Reveal = Plain;
+	Reveal.Moment = ECinemafyMoment::Reveal;
+	TestTrue(TEXT("A reveal shocks the listener"), Score(Reveal, false, Shocked) > Score(Reveal, false, Listen));
+
+	TestTrue(TEXT("Sitting clips need a seat"), Score(Plain, true, TEXT("/Game/Dialogue/Vol2/IP/Sitting/ANIM_IP_SittingChair_Talk_ArmsOpen")) < 0.f);
+	TestTrue(TEXT("...and the arguing pack's too"), Score(Angry, true, TEXT("/Game/CinemafyLibrary/Arguing/01_AA_Arguing_Siting_type01_Male_Female")) < 0.f);
+	TestTrue(TEXT("Walking talk is for walk & talk"), Score(Plain, true, TEXT("/Game/Dialogue/Vol2/IP/Walking/ANIM_IP_Walk_TalkLeft")) < 0.f);
+	TestTrue(TEXT("Root-motion copies are skipped"), Score(Plain, true, TEXT("/Game/Dialogue/Vol2/RM/Standing/ANIM_IP_Talk_Calm")) < 0.f);
+	TestTrue(TEXT("Fights aren't dialogue"), Score(Angry, true, TEXT("/Game/Combat/AM_Punch_Attack_01")) < 0.f);
+
+	FCinemafyLine Shouted;
+	Shouted.Intensity = 0.7f;
+	Shouted.Text = FText::FromString(TEXT("Get off my bridge!"));
+	TestEqual(TEXT("A heated, shouted line reads angry"), Dir::ReadLineTone(Shouted), ECinemafyEmotion::Angry);
+
+	// Picking: the best fit, varied, away from what was just used.
+	TArray<FCinemafyMoveCandidate> Candidates;
+	for (const TCHAR* Path : { Furious, Sad, Laugh, Calm, Listen })
+	{
+		FCinemafyMoveCandidate& C = Candidates.AddDefaulted_GetRef();
+		C.Path = FSoftObjectPath(FString(Path) + TEXT(".") + FPaths::GetBaseFilename(Path));
+		C.Name = FPaths::GetBaseFilename(Path);
+		C.Tokens = Lib::TokenizeName(Path);
+	}
+	TestEqual(TEXT("An angry speaker is cast furious"), Dir::PickDialogueAnimation(Angry, true, Candidates, 3, {}), 0);
+	TestEqual(TEXT("A sad speaker is cast sad"), Dir::PickDialogueAnimation(Sorrow, true, Candidates, 3, {}), 1);
+	TestEqual(TEXT("The listener is cast listening"), Dir::PickDialogueAnimation(Plain, false, Candidates, 3, {}), 4);
+	TestEqual(TEXT("Nothing fits a listener's reveal from these: still listening"), Dir::PickDialogueAnimation(Reveal, false, Candidates, 3, {}), 4);
+
+	// Deaths: a deaths pack's names ("Deaths_Shot_In_Chest") are deaths too.
+	const FCinemafyPromptReading Death = Lib::MakeReactionReading(ECinemafyHitReaction::Death, 0.f);
+	TestTrue(TEXT("A deaths-pack clip is a death"), Lib::ScoreAnimation(Death, Lib::TokenizeName(TEXT("/Game/CinemafyLibrary/Deaths/Deaths_Shot_In_Chest"))) > 0.f);
+	TestTrue(TEXT("...a chest shot is a death from the front"),
+		Lib::ScoreAnimation(Death, Lib::TokenizeName(TEXT("/Game/CinemafyLibrary/Deaths/Deaths_Shot_In_Chest")))
+		> Lib::ScoreAnimation(Death, Lib::TokenizeName(TEXT("/Game/CinemafyLibrary/Deaths/Deaths_Hit_Slow_Bleedout"))));
+	TestTrue(TEXT("...but never a plain hit reaction"),
+		Lib::ScoreAnimation(Lib::MakeReactionReading(ECinemafyHitReaction::Hit, 0.f), Lib::TokenizeName(TEXT("/Game/CinemafyLibrary/Deaths/Deaths_Hit_Left_Chest_Head"))) < 0.f);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
