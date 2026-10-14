@@ -127,6 +127,8 @@ void SCinemafyHub::Construct(const FArguments& InArgs)
 						[]() { Lib::ChoreographSelection(); }),
 					MakeButton(LOCTEXT("MoveLibrary", "Build Move Library"), LOCTEXT("MoveLibraryTip", "Gather the project's attacks, gestures and reactions into a curatable asset."),
 						[]() { Lib::CreateMoveLibraryFromFolder(TEXT("/Game")); }),
+					MakeButton(LOCTEXT("ImportScript", "Import Script"), LOCTEXT("ImportScriptTip", "Break a full script (Fountain, Final Draft, or text) into acts, chapters and scenes: the project's checklist."),
+						[]() { Lib::ImportScriptWithDialog(); }),
 				})
 			]
 

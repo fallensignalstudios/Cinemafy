@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.12.0: "Productions"
+- **Planned traversal routes:**
+  - Vault and climb beats square up to the obstacle's face when the approach is oblique. They used to
+    refuse it.
+  - The route plans a run-up (vaults and gaps want speed, so a walking performer picks up to a run), a
+    takeoff and an exit: the landing, the top of a mantle, or the far side of a gap.
+  - The take follows the route: navmesh to the run-up start, then straight across the face. The next beat
+    measures from where the route comes out. The route is drawn in the viewport.
+- **Gaps and ledges:** the floor is walked for edges.
+  - A gap is jumped from its edge, and a ledge is dropped from. Each is judged against new limits: Max Gap
+    Width, Max Drop Height, Recovery Drop Height and Vault Run Up.
+  - Too wide, too high, or a far side out of reach is refused with the numbers.
+- **Transitions between actions:** each beat's in-between moves are planned from the beats around it.
+  - **Draw before the strike:** `sword attack` draws the sword if it isn't in hand. `shoot` with nothing
+    that shoots in hand draws a sidearm. From far off, the weapon comes out on the move; close in, a draw
+    clip plays before the strike, with no contact scheduled on it.
+  - **Brake out of a sprint:** before a jump, a climb or a melee charge, the performer gathers by dropping
+    to a run, 2.4 to 3.2 m before committing.
+  - **Roll or recovery:** a big drop or a long jump ends in a roll if the performer moves on, or a hard
+    landing and recovery if it stops. A fall seen during the take adds one even when it wasn't planned.
+  - The transitions show on beat labels ("+ draws the sword first, brakes out of the sprint") and are
+    logged as Transition events. Switch them off per beat with **Auto Transitions**. Set what's in hand at
+    the start with **Starting Weapon**.
+- **Script breakdown** ([SCRIPTS](Docs/SCRIPTS.md)): import a full script (Fountain, Final Draft or game
+  script) into a **Script Project**.
+  - The script is broken into acts, chapters and scenes. Where the script doesn't mark them, acts and
+    chapters are inferred, and the report says why each break is where it is.
+  - Per scene: cast, lines, estimated time, and continuity (injuries, props in hand, costumes and deaths
+    carried between scenes, with warnings).
+  - Finished work maps back:
+    - **Create Director For Scene** spawns a director with the scene's dialogue.
+    - Directing a linked scene marks it Directed.
+    - **Map Scenes In Level** matches directors by their lines.
+  - **Export Checklist** writes a Markdown production checklist.
+  - New MCP tools: `import_script`, `get_script_checklist`, `map_script_scenes`,
+    `create_director_for_scene`, `set_script_scene_status`.
+  - Sample: `Docs/samples/TheBridge.fountain`.
+
 ## 0.11.0: "Scenes"
 - **Dialogue and choreography in one scene:**
   - Quoted words in a prompt are a line: `walk "Stand down, Admiral"` says it while walking.

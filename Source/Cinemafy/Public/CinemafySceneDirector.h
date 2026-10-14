@@ -8,6 +8,8 @@
 
 class ACineCameraActor;
 class UCinemafyDirectorStyleAsset;
+class UCinemafyScriptProject;
+class ULevelSequence;
 class USoundBase;
 class ACinemafySceneDirector;
 
@@ -64,6 +66,18 @@ public:
 	/** The scene, line by line. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Script", meta = (TitleProperty = "Note"))
 	TArray<FCinemafyLine> Lines;
+
+	/** The script this scene comes from (a Cinemafy Script Project), for the project checklist. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Script")
+	TObjectPtr<UCinemafyScriptProject> ScriptProject = nullptr;
+
+	/** Which scene of it this is ("2.3.1"). Empty = matched by the lines when the project maps scenes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Script")
+	FString ScriptSceneId;
+
+	/** The Level Sequence this director last cut into. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Script", AdvancedDisplay)
+	TSoftObjectPtr<ULevelSequence> LastSequence;
 
 	/**
 	 * Cross-cut with another director's scene: blocks of lines alternate between the two, getting

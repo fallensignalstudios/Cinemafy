@@ -267,6 +267,15 @@ says it. Back on Kade, `sword after` draws once he's done, then `sword attack` o
 **Dialogue Audio** and it plays during the take and lands in the cut. The director cuts it all as one scene:
 walk-and-talk, the exchange, then the fight.
 
+**Routes and transitions:** vault, climb and jump beats plan their route. They square up to the obstacle,
+take a run-up, and come out the other side. Gaps are jumped from the edge, and ledges are dropped. The
+performer also adds what a stunt performer would:
+
+- a gather step out of a full sprint before a jump or a strike
+- a roll or a hard-landing recovery after a big fall
+- drawing the weapon an attack needs before swinging it (`sword attack` with the sword sheathed draws it
+  first)
+
 **Before you record:** vault and climb beats measure their obstacle. A label like *"140 cm high, 40 cm deep:
 no room to land on the far side"* turns red, and the measured shape is drawn in the viewport. Perform &
 Record lists anything that can't work and asks first.
@@ -283,6 +292,22 @@ generic). It holds the gait / crouch / traversal / overlay hooks, what the chara
 height and depth, mantle height, landing room), its move library, and which meshes not to record. Map
 classes to profiles in **Project Settings > Plugins > Cinemafy**. **Check Wiring** names anything the
 character is missing.
+
+---
+
+## Scripts: acts, chapters, scenes and the checklist
+
+**Hub > Import Script** reads a whole script: Fountain, Final Draft `.fdx`, or a plain screenplay or game
+script with `NAME: line` and `MISSION 3` markers. It breaks the script down into a **Script Project**:
+
+- acts and chapters, as marked or inferred (with the reason for each break)
+- scenes, with cast, lines, estimated length, and a continuity pass that tracks injuries, props in hand,
+  costumes and deaths from scene to scene
+
+**Create Director For Scene** spawns a Scene Director with that scene's lines. Directing it marks the scene
+done. **Map Scenes In Level** finds the directors you've already made by what they say. **Export Checklist**
+writes the whole project's progress and continuity checklist. See [SCRIPTS](Docs/SCRIPTS.md), and try
+`Docs/samples/TheBridge.fountain`.
 
 ---
 

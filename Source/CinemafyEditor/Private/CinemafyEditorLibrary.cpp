@@ -1,6 +1,7 @@
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyChoreoTools.h"
 #include "CinemafyChoreography.h"
+#include "CinemafyScript.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyPerformerProfile.h"
 #include "GameFramework/Character.h"
@@ -35,6 +36,12 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimData/IAnimationDataModel.h"
 #include "Misc/FileHelper.h"
+#include "DesktopPlatformModule.h"
+#include "Framework/Application/SlateApplication.h"
+#include "GameFramework/Pawn.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "IDesktopPlatform.h"
+#include "Misc/Paths.h"
 #include "IAssetTools.h"
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
@@ -1534,7 +1541,27 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	UCinemafyDirectorLibrary::ReadMoments(Director->LastDirectedLines);
 	Director->LastDecisionSummary = UCinemafyDirectorLibrary::SummarizeDecisions(NewPlan, Director->LastDirectedLines);
 	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Director->LastDecisionSummary);
-	return BakeDirectorPlan(Director, false);
+	const int32 Shots = BakeDirectorPlan(Director, false);
+	if (Shots > 0)
+	{
+		// The script's checklist hears about it: this scene is cut, in this sequence.
+		Director->LastSequence = Sequence;
+		if (Director->ScriptProject)
+		{
+			if (FCinemafyScriptScene* Scene = Director->ScriptProject->FindScene(Director->ScriptSceneId))
+			{
+				Director->ScriptProject->Modify();
+				Scene->Sequence = Sequence;
+				Scene->Level = Director->GetWorld();
+				Scene->DirectorLabel = Director->GetActorLabel();
+				if (Scene->Status < ECinemafySceneStatus::Directed)
+				{
+					Scene->Status = ECinemafySceneStatus::Directed;
+				}
+			}
+		}
+	}
+	return Shots;
 }
 
 int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director, bool bAtLastSceneStart)
@@ -3167,3 +3194,318 @@ bool UCinemafyEditorLibrary::SetChoreographyBeatLine(ACinemafyChoreography* Chor
 	Choreography->RefreshLabels();
 	return true;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Script breakdown
+// ---------------------------------------------------------------------------------------------------------------------
+
+#define LOCTEXT_NAMESPACE "CinemafyEditor"
+
+namespace CinemafyScriptEditor
+{
+	UCinemafyScriptProject* FindOrCreateProject(const FString& Name)
+	{
+		const FString Clean = FPaths::MakeValidFileName(Name.IsEmpty() ? FString(TEXT("Script")) : Name).Replace(TEXT(" "), TEXT("_"));
+		const FString PackageName = FString::Printf(TEXT("/Game/Cinemafy/Scripts/SP_%s"), *Clean);
+		if (UCinemafyScriptProject* Existing = LoadObject<UCinemafyScriptProject>(nullptr, *(PackageName + TEXT(".SP_") + Clean), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			return Existing;
+		}
+		UPackage* Package = CreatePackage(*PackageName);
+		UCinemafyScriptProject* Project = NewObject<UCinemafyScriptProject>(Package, *(TEXT("SP_") + Clean), RF_Public | RF_Standalone | RF_Transactional);
+		FAssetRegistryModule::AssetCreated(Project);
+		Package->MarkPackageDirty();
+		return Project;
+	}
+
+	/** An actor in the level for a script name: label equal, then a character whose label contains the name (or its last word). */
+	AActor* FindActorForName(UWorld* World, const FString& ScriptName)
+	{
+		if (!World || ScriptName.IsEmpty())
+		{
+			return nullptr;
+		}
+		const FString Name = ScriptName.ToLower();
+		FString LastWord = Name;
+		int32 Space = INDEX_NONE;
+		if (Name.FindLastChar(TEXT(' '), Space))
+		{
+			LastWord = Name.Mid(Space + 1);
+		}
+		AActor* Partial = nullptr;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			const FString Label = It->GetActorLabel().ToLower();
+			if (Label == Name)
+			{
+				return *It;
+			}
+			if (!Partial && It->IsA<APawn>() && (Label.Contains(Name) || (LastWord.Len() >= 3 && Label.Contains(LastWord))))
+			{
+				Partial = *It;
+			}
+		}
+		return Partial;
+	}
+}
+
+UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptFile(const FString& FilePath, const FString& Name)
+{
+	FString Text;
+	if (!FFileHelper::LoadFileToString(Text, *FilePath))
+	{
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't read a script from %s."), *FilePath);
+		return nullptr;
+	}
+	UCinemafyScriptProject* Project = CinemafyScriptEditor::FindOrCreateProject(Name.IsEmpty() ? FPaths::GetBaseFilename(FilePath) : Name);
+	const FScopedTransaction Transaction(LOCTEXT("ImportScriptProject", "Cinemafy: Import Script"));
+	Project->Modify();
+	Project->ScriptFile.FilePath = FilePath;
+	Project->BreakDown(Text);
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: broke down %s:\n%s"), *FilePath, *Project->BreakdownReport);
+	return Project;
+}
+
+bool UCinemafyEditorLibrary::ReimportScriptProject(UCinemafyScriptProject* Project)
+{
+	FString Text;
+	if (!Project || !FFileHelper::LoadFileToString(Text, *Project->ScriptFile.FilePath))
+	{
+		return false;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("ReimportScriptProject", "Cinemafy: Re-import Script"));
+	Project->Modify();
+	Project->BreakDown(Text);
+	return true;
+}
+
+UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptWithDialog()
+{
+	IDesktopPlatform* Desktop = FDesktopPlatformModule::Get();
+	if (!Desktop)
+	{
+		return nullptr;
+	}
+	TArray<FString> Files;
+	const void* Parent = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+	if (!Desktop->OpenFileDialog(Parent, TEXT("Import a script"), FPaths::ProjectDir(), FString(),
+		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md)|*.fountain;*.fdx;*.txt;*.md"), EFileDialogFlags::None, Files) || Files.Num() == 0)
+	{
+		return nullptr;
+	}
+	UCinemafyScriptProject* Project = ImportScriptFile(Files[0], FString());
+	if (Project)
+	{
+		TArray<UObject*> ToSync = { Project };
+		GEditor->SyncBrowserToObjects(ToSync);
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Project);
+		FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
+	}
+	return Project;
+}
+
+int32 UCinemafyEditorLibrary::MapScriptScenesInLevel(UCinemafyScriptProject* Project)
+{
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!Project || !World)
+	{
+		return 0;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("MapScriptScenes", "Cinemafy: Map Script Scenes"));
+	Project->Modify();
+
+	// Directors with a recorded take handed to them (choreographies).
+	TSet<const ACinemafySceneDirector*> Recorded;
+	for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
+	{
+		if (It->TakeDuration > 0.f && It->SceneDirector)
+		{
+			Recorded.Add(It->SceneDirector);
+		}
+	}
+
+	int32 Mapped = 0;
+	TArray<FCinemafyScriptScene*> Scenes = Project->GetAllScenes();
+	for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+	{
+		ACinemafySceneDirector* Director = *It;
+		FCinemafyScriptScene* Scene = nullptr;
+		float Score = 1.f;
+		if (Director->ScriptProject == Project && !Director->ScriptSceneId.IsEmpty())
+		{
+			Scene = Project->FindScene(Director->ScriptSceneId);
+		}
+		if (!Scene)
+		{
+			// Match by what's said.
+			TArray<FString> Spoken;
+			for (const FCinemafyLine& Line : Director->Lines)
+			{
+				if (!Line.Text.IsEmpty())
+				{
+					Spoken.Add(Line.Text.ToString());
+				}
+			}
+			float Best = 0.f;
+			for (FCinemafyScriptScene* Candidate : Scenes)
+			{
+				const float CandidateScore = UCinemafyScriptLibrary::ScoreLinesAgainstScene(Spoken, *Candidate);
+				if (CandidateScore > Best)
+				{
+					Best = CandidateScore;
+					Scene = Candidate;
+				}
+			}
+			Score = Best;
+			if (Best < 0.5f)
+			{
+				Scene = nullptr;
+			}
+		}
+		if (!Scene)
+		{
+			continue;
+		}
+
+		Director->Modify();
+		Director->ScriptProject = Project;
+		Director->ScriptSceneId = Scene->Id;
+		Scene->DirectorLabel = Director->GetActorLabel();
+		Scene->Level = World;
+		Scene->MatchScore = Score;
+		if (!Director->LastSequence.IsNull())
+		{
+			Scene->Sequence = Director->LastSequence;
+		}
+		ECinemafySceneStatus Reached = ECinemafySceneStatus::Blocking;
+		if (Recorded.Contains(Director))
+		{
+			Reached = ECinemafySceneStatus::Recorded;
+		}
+		if (Director->LastPlan.Num() > 0)
+		{
+			Reached = ECinemafySceneStatus::Directed;
+		}
+		if (Scene->Status < Reached && Scene->Status != ECinemafySceneStatus::Cut)
+		{
+			Scene->Status = Reached;
+		}
+		++Mapped;
+	}
+	Project->MarkPackageDirty();
+	return Mapped;
+}
+
+ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafyScriptProject* Project, const FString& SceneId)
+{
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
+	if (!World || !Scene)
+	{
+		return nullptr;
+	}
+
+	const FScopedTransaction Transaction(LOCTEXT("DirectorForScene", "Cinemafy: Director for Scene"));
+	TArray<AActor*> Performers;
+	TArray<FCinemafyLine> Lines;
+	FString PreviousSpeaker;
+	AActor* PreviousActor = nullptr;
+	int32 Unmatched = 0;
+	for (const FCinemafyScriptLine& ScriptLine : Scene->Lines)
+	{
+		if (ScriptLine.Kind != ECinemafyScriptLineKind::Dialogue)
+		{
+			continue;
+		}
+		FCinemafyLine& Line = Lines.AddDefaulted_GetRef();
+		Line.Speaker = CinemafyScriptEditor::FindActorForName(World, ScriptLine.Speaker);
+		Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
+		Line.Text = FText::FromString(ScriptLine.Text);
+		// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
+		Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
+		Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene->Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));
+		TArray<FString> Words;
+		ScriptLine.Text.ParseIntoArrayWS(Words);
+		Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
+		Unmatched += Line.Speaker ? 0 : 1;
+		if (Line.Speaker)
+		{
+			Performers.AddUnique(Line.Speaker);
+		}
+		if (PreviousSpeaker != ScriptLine.Speaker)
+		{
+			PreviousSpeaker = ScriptLine.Speaker;
+			PreviousActor = Line.Speaker;
+		}
+	}
+	if (Lines.Num() > 1 && !Lines[0].Listener)
+	{
+		for (int32 Index = 1; Index < Lines.Num(); ++Index)
+		{
+			if (Lines[Index].Speaker && Lines[Index].Speaker != Lines[0].Speaker)
+			{
+				Lines[0].Listener = Lines[Index].Speaker;
+				break;
+			}
+		}
+	}
+
+	FVector Location = FVector::ZeroVector;
+	for (AActor* Member : Performers)
+	{
+		Location += Member->GetActorLocation() / Performers.Num();
+	}
+	FActorSpawnParameters Params;
+	ACinemafySceneDirector* Director = World->SpawnActor<ACinemafySceneDirector>(Location, FRotator::ZeroRotator, Params);
+	if (!Director)
+	{
+		return nullptr;
+	}
+	Director->SetActorLabel(FString::Printf(TEXT("Director_%s"), *Scene->Id.Replace(TEXT("."), TEXT("_"))));
+	Director->Lines = Lines;
+	Director->ScriptProject = Project;
+	Director->ScriptSceneId = Scene->Id;
+
+	Project->Modify();
+	Scene->DirectorLabel = Director->GetActorLabel();
+	Scene->Level = World;
+	Scene->MatchScore = 1.f;
+	if (Scene->Status == ECinemafySceneStatus::NotStarted)
+	{
+		Scene->Status = ECinemafySceneStatus::Blocking;
+	}
+	if (Unmatched > 0)
+	{
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: %d line(s) in scene %s have a speaker with no matching actor label; set those Speakers by hand."), Unmatched, *Scene->Id);
+	}
+	GEditor->SelectNone(false, true);
+	GEditor->SelectActor(Director, true, true);
+	return Director;
+}
+
+bool UCinemafyEditorLibrary::SetScriptSceneStatus(UCinemafyScriptProject* Project, const FString& SceneId, ECinemafySceneStatus Status)
+{
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
+	if (!Scene)
+	{
+		return false;
+	}
+	Project->Modify();
+	Scene->Status = Status;
+	Project->MarkPackageDirty();
+	return true;
+}
+
+FString UCinemafyEditorLibrary::ExportScriptChecklist(UCinemafyScriptProject* Project)
+{
+	if (!Project)
+	{
+		return FString();
+	}
+	const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cinemafy") /
+		(FPaths::MakeValidFileName(Project->Title.IsEmpty() ? Project->GetName() : Project->Title) + TEXT("_Checklist.md")));
+	FFileHelper::SaveStringToFile(Project->BuildChecklist(), *Path, FFileHelper::EEncodingOptions::ForceUTF8);
+	return Path;
+}
+
+#undef LOCTEXT_NAMESPACE

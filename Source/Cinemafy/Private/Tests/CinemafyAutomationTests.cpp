@@ -6,6 +6,7 @@
 
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyChoreographyLibrary.h"
+#include "CinemafyScript.h"
 #include "GameFramework/Pawn.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyDirectorLibrary.h"
@@ -931,6 +932,124 @@ bool FCinemafyTraversalRouteTest::RunTest(const FString& Parameters)
 	Armed.Add(MakeBeat(TEXT("sword attack"), Thane));
 	Lib::PlanTransitions(Armed, TEXT("sword"), Envelope);
 	TestTrue(TEXT("Starting with the sword out: nothing to draw"), Armed[0].Transitions.DrawWeapon.IsEmpty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyScriptBreakdownTest, "Cinemafy.Script.BreaksDownActsChaptersScenes", CinemafyTests::Flags)
+bool FCinemafyScriptBreakdownTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	FString Setting, Location, Time;
+	TestTrue(TEXT("A scene heading"), Script::ParseHeading(TEXT("INT. BRIDGE - NIGHT"), Setting, Location, Time));
+	TestEqual(TEXT("...its place"), Location, FString(TEXT("BRIDGE")));
+	TestEqual(TEXT("...its time"), Time, FString(TEXT("NIGHT")));
+	TestTrue(TEXT("En dashes and INT/EXT"), Script::ParseHeading(TEXT("EXT./INT. CAR \u2013 DAY"), Setting, Location, Time) && Setting == TEXT("INT/EXT") && Time == TEXT("DAY"));
+	TestFalse(TEXT("Not a heading"), Script::ParseHeading(TEXT("Interesting idea."), Setting, Location, Time));
+
+	// A screenplay with marked acts: cues, parentheticals, transitions, continuity.
+	const FString Screenplay = TEXT(
+		"Title: The Bridge\n"
+		"Author: Test\n"
+		"\n"
+		"# ACT ONE\n"
+		"\n"
+		"INT. BRIDGE - NIGHT\n"
+		"\n"
+		"Kade walks to the console. She draws her pistol.\n"
+		"\n"
+		"KADE\n"
+		"Stand down, Admiral.\n"
+		"\n"
+		"THANE\n"
+		"(coldly)\n"
+		"Make me.\n"
+		"\n"
+		"Thane is wounded. He limps away.\n"
+		"\n"
+		"FADE OUT.\n"
+		"\n"
+		"# ACT TWO\n"
+		"\n"
+		"EXT. HANGAR - DAY\n"
+		"\n"
+		"THANE\n"
+		"You'll regret this.\n"
+		"\n"
+		"Kade kills Thane.\n"
+		"\n"
+		"INT. CORRIDOR - CONTINUOUS\n"
+		"\n"
+		"THANE\n"
+		"Still here.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Screenplay, true, 5, Title, Report);
+	TestEqual(TEXT("The title page"), Title, FString(TEXT("The Bridge")));
+	TestEqual(TEXT("Two marked acts"), Acts.Num(), 2);
+	if (Acts.Num() == 2 && Acts[0].Chapters.Num() > 0 && Acts[0].Chapters[0].Scenes.Num() > 0 && Acts[1].Chapters.Num() > 0 && Acts[1].Chapters.Last().Scenes.Num() > 0)
+	{
+		TestFalse(TEXT("...not inferred"), Acts[0].bInferred);
+		const FCinemafyScriptScene& Bridge = Acts[0].Chapters[0].Scenes[0];
+		TestEqual(TEXT("Scene ids are act.chapter.scene"), Bridge.Id, FString(TEXT("1.1.1")));
+		TestEqual(TEXT("Two lines on the bridge"), Bridge.DialogueLines, 2);
+		TestTrue(TEXT("Kade and Thane are in it"), Bridge.Characters.Contains(TEXT("KADE")) && Bridge.Characters.Contains(TEXT("THANE")));
+		const FCinemafyScriptLine* Make = Bridge.Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("Make me."); });
+		TestTrue(TEXT("Parentheticals are how it's said"), Make && Make->Direction == TEXT("(coldly)"));
+		TestTrue(TEXT("Kade picks up her pistol"), Bridge.Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("KADE") && F.Category == TEXT("Carrying") && F.Fact.Contains(TEXT("pistol")); }));
+
+		const FCinemafyScriptScene& Hangar = Acts[1].Chapters[0].Scenes[0];
+		TestTrue(TEXT("Thane carries his wound into the hangar"), Hangar.CarriedIn.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("THANE") && F.Category == TEXT("Injury"); }));
+		TestTrue(TEXT("...and Kade her pistol"), Hangar.CarriedIn.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("KADE") && F.Fact.Contains(TEXT("pistol")); }));
+
+		const FCinemafyScriptScene& Corridor = Acts[1].Chapters.Last().Scenes.Last();
+		TestTrue(TEXT("The dead don't talk: flagged"), Corridor.Warnings.ContainsByPredicate([](const FString& W) { return W.Contains(TEXT("THANE")) && W.Contains(TEXT("died")); }));
+	}
+
+	// A game script: mission markers, bracketed scenes, NAME: lines, no blank lines.
+	const FString Game = TEXT(
+		"MISSION 1: Blackout\n"
+		"[Scene: Hangar]\n"
+		"KADE: We go in quiet.\n"
+		"VOSS: Quiet's my middle name.\n"
+		"[Scene: Corridor]\n"
+		"KADE: Lights.\n"
+		"MISSION 2: Fallout\n"
+		"[Scene: Reactor]\n"
+		"VOSS: It's going to blow!\n");
+	const TArray<FCinemafyScriptAct> GameActs = Script::BreakDownScript(Game, true, 5, Title, Report);
+	TestEqual(TEXT("A short game script is one act"), GameActs.Num(), 1);
+	if (GameActs.Num() == 1)
+	{
+		TestEqual(TEXT("Two missions are two chapters"), GameActs[0].Chapters.Num(), 2);
+		if (GameActs[0].Chapters.Num() == 2)
+		{
+			TestEqual(TEXT("...the first has two scenes"), GameActs[0].Chapters[0].Scenes.Num(), 2);
+			TestTrue(TEXT("...named by the script"), GameActs[0].Chapters[0].Title.Contains(TEXT("Blackout")));
+			const FCinemafyScriptScene& Hangar = GameActs[0].Chapters[0].Scenes[0];
+			TestEqual(TEXT("NAME: lines are dialogue"), Hangar.DialogueLines, 2);
+			TestTrue(TEXT("A director with those lines (reworded on the day) maps to it"),
+				Script::ScoreLinesAgainstScene({ TEXT("We go in quiet"), TEXT("Quiet is my middle name") }, Hangar) >= 0.99f);
+			TestTrue(TEXT("...and not to another scene"), Script::ScoreLinesAgainstScene({ TEXT("We go in quiet") }, GameActs[0].Chapters[1].Scenes[0]) < 0.5f);
+		}
+	}
+
+	// No act markers: three acts placed on the turns near the quarter marks.
+	FString Long;
+	for (int32 Index = 0; Index < 12; ++Index)
+	{
+		if (Index == 3)
+		{
+			Long += TEXT("FADE OUT.\n\n");
+		}
+		Long += FString::Printf(TEXT("INT. ROOM %d - %s\n\nKADE: Hello there, friend number %d.\n\n"), Index + 1, Index == 9 ? TEXT("YEARS LATER") : TEXT("DAY"), Index);
+	}
+	const TArray<FCinemafyScriptAct> Inferred = Script::BreakDownScript(Long, true, 5, Title, Report);
+	TestEqual(TEXT("Three inferred acts"), Inferred.Num(), 3);
+	if (Inferred.Num() == 3 && Inferred[1].Chapters.Num() > 0 && Inferred[2].Chapters.Num() > 0)
+	{
+		TestTrue(TEXT("...inferred"), Inferred[1].bInferred);
+		TestEqual(TEXT("Act Two opens after the fade out"), Inferred[1].Chapters[0].Scenes[0].Number, 4);
+		TestEqual(TEXT("Act Three opens on the time jump"), Inferred[2].Chapters[0].Scenes[0].Number, 10);
+	}
 	return true;
 }
 

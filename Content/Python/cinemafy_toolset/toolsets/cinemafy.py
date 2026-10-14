@@ -653,6 +653,91 @@ class CinemafyTools(unreal.ToolsetDefinition):
             raise RuntimeError('Could not save a profile (does the choreography have a performer?).')
         return _lib.get_wiring_report(choreography)
 
+    # --- Script breakdown (acts, chapters, scenes, continuity checklist) -------------------
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def import_script(file_path: str, name: str = '') -> str:
+        """Reads a full script (Fountain .fountain, Final Draft .fdx, or plain screenplay / game-script text) and
+        breaks it into acts, chapters and scenes in a Script Project asset (/Game/Cinemafy/Scripts/SP_<name>).
+        Acts and chapters the script doesn't mark are inferred (three-act breaks on the story's turns near the
+        quarter marks; chapters by continuous time and place). Re-importing keeps scene status and links.
+
+        Args:
+            file_path: Absolute path to the script file.
+            name: Project name (defaults to the file name).
+
+        Returns:
+            The breakdown report: scenes, acts and chapters found, and why each break is where it is.
+        """
+        project = _lib.import_script_file(file_path, name)
+        if not project:
+            raise RuntimeError('Could not read a script from ' + file_path)
+        return project.get_editor_property('breakdown_report')
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def get_script_checklist(project: unreal.CinemafyScriptProject) -> str:
+        """The production checklist for a script: progress per act and chapter, each scene's status, director and
+        sequence, who's in it, what has to carry in from earlier scenes (injuries, props in hand, costumes), and
+        continuity warnings (e.g. a character who died speaking later).
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            The checklist as Markdown.
+        """
+        return project.build_checklist()
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def map_script_scenes(project: unreal.CinemafyScriptProject) -> str:
+        """Matches the Scene Directors in the open level to the script's scenes (by Script Scene Id, else by their
+        lines) and updates each scene's status (Blocking, Recorded, Directed), director, sequence and level.
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            How many directors were mapped and the overall progress.
+        """
+        mapped = _lib.map_script_scenes_in_level(project)
+        return '{} director(s) mapped; {:.0f}% of the script directed.'.format(mapped, project.get_progress() * 100.0)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def create_director_for_scene(project: unreal.CinemafyScriptProject, scene_id: str) -> unreal.CinemafySceneDirector:
+        """Spawns a Scene Director for one scene of the script, its lines filled from the script's dialogue
+        (speakers matched to actor labels in the level), linked back to the scene for the checklist.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("2.3.1") or its running number ("14").
+
+        Returns:
+            The new director.
+        """
+        director = _lib.create_director_for_scene(project, scene_id)
+        if not director:
+            raise ValueError('No scene ' + scene_id + ' in the project (or no level open).')
+        return director
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def set_script_scene_status(project: unreal.CinemafyScriptProject, scene_id: str, status: unreal.CinemafySceneStatus) -> bool:
+        """Sets a scene's production status (NOT_STARTED, BLOCKING, RECORDED, DIRECTED, FINAL, CUT).
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("2.3.1") or running number.
+            status: The new status.
+
+        Returns:
+            True if the scene was found.
+        """
+        return _lib.set_script_scene_status(project, scene_id, status)
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
     @toolset_registry.tool_call

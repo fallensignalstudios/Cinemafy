@@ -6,6 +6,8 @@
 #include "CinemafySceneDirector.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreoTools.h"
+#include "CinemafyScript.h"
+#include "HAL/PlatformProcess.h"
 #include "CinemafyEditCommands.h"
 #include "CinemafyEditLibrary.h"
 #include "SCinemafyEditPanel.h"
@@ -174,6 +176,44 @@ void FCinemafyEditorModule::StartupModule()
 	});
 	CinemafyChoreoTake::Initialize();
 
+	// Script project buttons: import, map the level's directors onto scenes, export the checklist.
+	ScriptRequestHandle = UCinemafyScriptProject::OnEditorRequest.AddLambda([](UCinemafyScriptProject* Project, ECinemafyScriptRequest Request)
+	{
+		switch (Request)
+		{
+		case ECinemafyScriptRequest::Import:
+			if (Project->ScriptFile.FilePath.IsEmpty())
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoScriptFile", "Set Script File first (a .fountain, .fdx or .txt script)."));
+			}
+			else if (UCinemafyEditorLibrary::ReimportScriptProject(Project))
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
+			}
+			else
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ScriptUnreadable", "Couldn't read {0}."), FText::FromString(Project->ScriptFile.FilePath)));
+			}
+			break;
+		case ECinemafyScriptRequest::MapScenes:
+		{
+			const int32 Mapped = UCinemafyEditorLibrary::MapScriptScenesInLevel(Project);
+			FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ScenesMapped",
+				"Mapped {0} Scene Director(s) in this level to scenes. {1}% of the script is directed."), Mapped, FMath::RoundToInt(Project->GetProgress() * 100.f)));
+			break;
+		}
+		case ECinemafyScriptRequest::ExportChecklist:
+		{
+			const FString Path = UCinemafyEditorLibrary::ExportScriptChecklist(Project);
+			if (!Path.IsEmpty())
+			{
+				FPlatformProcess::LaunchFileInDefaultExternalApplication(*Path);
+			}
+			break;
+		}
+		}
+	});
+
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyShotBrowser::TabName,
 		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
 		{
@@ -245,6 +285,7 @@ void FCinemafyEditorModule::ShutdownModule()
 {
 	ACinemafySceneDirector::OnEditorRequest.Remove(DirectorRequestHandle);
 	ACinemafyChoreography::OnEditorRequest.Remove(ChoreoRequestHandle);
+	UCinemafyScriptProject::OnEditorRequest.Remove(ScriptRequestHandle);
 	FCinemafyChoreoMode::Stop();
 	CinemafyChoreoTake::Shutdown();
 
