@@ -1,5 +1,6 @@
 #include "SCinemafyStoryBoard.h"
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyPreflight.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafyScript.h"
 #include "CinemafyStoryLibrary.h"
@@ -62,6 +63,12 @@ namespace CinemafyStoryBoardUI
 	}
 
 	/** A small modal text box; empty if cancelled. */
+	bool ConfirmDailies()
+	{
+		return FMessageDialog::Open(EAppMsgType::OkCancel, NSLOCTEXT("CinemafyStoryBoard", "DailiesConfirm",
+			"Dailies render with Movie Render Queue to Saved/Cinemafy/Dailies. This replaces the jobs in the editor's render queue. Go ahead?")) == EAppReturnType::Ok;
+	}
+
 	FString AskText(const FText& Title, const FText& Hint)
 	{
 		FString Result;
@@ -271,7 +278,18 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 					}
 				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Dailies", "Dailies"), LOCTEXT("DailiesTip", "Render every recorded or directed scene with Movie Render Queue (720p frames) to Saved/Cinemafy/Dailies."),
-				WithProject([](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::RenderDailies(P, FString()); })) ]
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					if (CinemafyStoryBoardUI::ConfirmDailies())
+					{
+						UCinemafyStoryLibrary::RenderDailies(P, FString());
+					}
+				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Preflight", "Pre-flight"), LOCTEXT("PreflightTip", "Check the whole project for what's missing (cast, marks, nav mesh, voices, revisions) and fix it."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					UCinemafyPreflightLibrary::ShowPreflight(P, FString(), LOCTEXT("PreflightTitle", "Pre-flight check"), FText::GetEmpty(), FText::GetEmpty());
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Paperwork", "Paperwork"), LOCTEXT("PaperworkTip", "Voice-over scripts per actor, subtitles, a localization string table, shot lists and an HTML storyboard."),
 				WithProject([](UCinemafyScriptProject* P)
 				{
@@ -451,8 +469,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 			ToolButton(LOCTEXT("Previs", "Previs"), LOCTEXT("PrevisTip", "Stage this scene from the script and record a take."),
 				Act([](UCinemafyScriptProject* P, const FString& Id)
 				{
-					const FString Report = UCinemafyStoryLibrary::PrevisScene(P, Id, true);
-					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
+					UCinemafyPreflightLibrary::PrevisWithPreflight(P, Id, true);
 				}))
 		]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f)
@@ -508,7 +525,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 						}
 					})));
 				};
-				Entry(LOCTEXT("StageOnly", "Stage without recording"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::PrevisScene(P, SceneId, false); });
+				Entry(LOCTEXT("StageOnly", "Stage without recording"), [SceneId](UCinemafyScriptProject* P) { UCinemafyPreflightLibrary::PrevisWithPreflight(P, SceneId, false); });
 				Entry(LOCTEXT("Continuity", "Dress the cast for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneContinuity(P, SceneId); });
 				Entry(LOCTEXT("NewDirector", "New Scene Director from the script"), [SceneId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, SceneId); });
 				Entry(LOCTEXT("ScratchScene", "Scratch voices for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::GenerateScratchVoices(P, SceneId, true); });
@@ -517,12 +534,28 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 					const FString Text = CinemafyStoryBoardUI::AskText(LOCTEXT("AddNoteTitle", "Review note"), LOCTEXT("AddNoteHint", "What should change in this scene?"));
 					UCinemafyStoryLibrary::AddReviewNote(P, SceneId, Text);
 				});
-				Entry(LOCTEXT("RenderDaily", "Render a daily"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::RenderDailies(P, SceneId); });
+				Entry(LOCTEXT("RenderDaily", "Render a daily"), [SceneId](UCinemafyScriptProject* P)
+				{
+					if (CinemafyStoryBoardUI::ConfirmDailies())
+					{
+						UCinemafyStoryLibrary::RenderDailies(P, SceneId);
+					}
+				});
+				Entry(LOCTEXT("CheckScene", "Pre-flight check"), [SceneId](UCinemafyScriptProject* P)
+				{
+					UCinemafyPreflightLibrary::ShowPreflight(P, SceneId, FText::Format(LOCTEXT("CheckSceneTitle", "Pre-flight: {0}"), FText::FromString(SceneId)), FText::GetEmpty(), FText::GetEmpty());
+				});
 				Entry(LOCTEXT("Mood", "Set the mood (style, music, ambience)"), [SceneId](UCinemafyScriptProject* P)
 				{
 					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, false)));
 				});
-				Entry(LOCTEXT("LightSet", "Light the set for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, true); });
+				Entry(LOCTEXT("LightSet", "Light the set for this scene"), [SceneId](UCinemafyScriptProject* P)
+				{
+					if (FMessageDialog::Open(EAppMsgType::OkCancel, LOCTEXT("LightConfirm", "Light the set: this sets the director's style, temp music and ambience, and turns the level's sun and sky lights to the scene's time of day. Ctrl+Z undoes it.")) == EAppReturnType::Ok)
+					{
+						FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, true)));
+					}
+				});
 				Entry(LOCTEXT("NewTake", "New take (keep this one)"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::NewTake(P, SceneId); });
 				for (int32 Take = 0; Take < Takes.Num(); ++Take)
 				{

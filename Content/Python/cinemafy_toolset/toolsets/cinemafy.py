@@ -854,6 +854,33 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def check_scene(project: unreal.CinemafyScriptProject, scene_id: str = '', fix: bool = False) -> str:
+        """Pre-flight check: what a scene (or, with no scene id, the whole project) is missing before Previs: cast on
+        set or castable, marks for the places the script names, a nav mesh, voices, the right level, revisions.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: One scene ("1.1.1"), or empty for the whole project.
+            fix: Run every fix that needs no decision (build cast & sets, place marks, add a nav mesh, scratch
+                voices, cast template characters, update changed scenes), then check again.
+
+        Returns:
+            The findings, worst first ([BLOCKER] / [warning] / [info], with the fix each one has).
+        """
+        def run():
+            if scene_id:
+                return unreal.CinemafyPreflightLibrary.check_scene(project, scene_id)
+            return unreal.CinemafyPreflightLibrary.check_project(project)
+        checks = run()
+        prefix = ''
+        if fix:
+            fixed = unreal.CinemafyPreflightLibrary.fix_all(project, checks)
+            prefix = f'Ran {fixed} fix(es).\n'
+            checks = run()
+        return prefix + unreal.CinemafyPreflightLibrary.format_checks(checks)
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

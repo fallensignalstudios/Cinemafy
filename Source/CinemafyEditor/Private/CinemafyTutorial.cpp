@@ -1,4 +1,5 @@
 #include "CinemafyTutorial.h"
+#include "CinemafyPreflight.h"
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyModule.h"
 #include "CinemafyProduction.h"
@@ -149,7 +150,7 @@ namespace CinemafyTutorialState
 						const TArray<FCinemafyScriptScene*> Scenes = P->GetAllScenes();
 						if (Scenes.Num() > 0)
 						{
-							FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::PrevisScene(P, Scenes[0]->Id, true).Left(3000)));
+							UCinemafyPreflightLibrary::PrevisWithPreflight(P, Scenes[0]->Id, true);
 						}
 					}); } },
 			} });
