@@ -188,4 +188,26 @@ bool FCinemafyPacingTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGroupTest, "Cinemafy.Director.GroupScenesOpenOnTheGroup", CinemafyTests::Flags)
+bool FCinemafyGroupTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	AActor* Third = Scene.World->SpawnActor<AActor>();
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(6);
+	Lines[2].Speaker = Third;
+	Lines[3].Listener = Third;
+
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood), 11);
+	TestEqual(TEXT("Three-hander opens on the group"), static_cast<int32>(Plan[0].ShotType), static_cast<int32>(ECinemafyShotType::GroupShot));
+	TestTrue(TEXT("Group shot knows who else is in it"), Plan[0].Group.Num() >= 1);
+
+	const TArray<FCinemafyPlannedShot> TwoHander = UCinemafyDirectorLibrary::PlanScene(Scene.MakeConversation(6),
+		UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood), 11);
+	for (const FCinemafyPlannedShot& Shot : TwoHander)
+	{
+		TestNotEqual(TEXT("No group shots with only two people"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::GroupShot));
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

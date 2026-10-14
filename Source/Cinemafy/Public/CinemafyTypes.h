@@ -46,7 +46,9 @@ enum class ECinemafyShotType : uint8
 	MediumCloseUp   UMETA(DisplayName = "Medium Close-Up"),
 	CloseUp         UMETA(DisplayName = "Close-Up"),
 	ExtremeCloseUp  UMETA(DisplayName = "Extreme Close-Up"),
-	LowHero         UMETA(DisplayName = "Low Hero")
+	LowHero         UMETA(DisplayName = "Low Hero"),
+	/** Frames everyone in a 3+ character scene. */
+	GroupShot       UMETA(DisplayName = "Group Shot")
 };
 
 /** How a camera operator would be holding the camera. */
@@ -137,6 +139,10 @@ struct FCinemafyShotRequest
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
 	bool bFlipSide = false;
+
+	/** Everyone else a Group Shot should include (beyond Subject and Counterpart). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	TArray<TObjectPtr<AActor>> Group;
 
 	/** Swing the camera further around the subject (degrees), staying on the same side of the line. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot", AdvancedDisplay)
@@ -706,6 +712,10 @@ struct FCinemafyPlannedShot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	int32 LineIndex = 0;
+
+	/** Everyone else in frame for a Group Shot. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	TArray<TObjectPtr<AActor>> Group;
 
 	/** First shot of its line (where the line, its subtitle and its emotion start). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

@@ -117,6 +117,11 @@ Each clip goes on whichever mesh matches its skeleton (body or face), on a *Cine
 track that re-takes replace without touching your other animation tracks. Script in, full scene out:
 cameras, audio and performance.
 
+**Group scenes 👥:** put 3+ characters in the script (or select 3+ for the starter script) and the
+director opens on a **Group Shot** framing everyone. When a new pair starts talking it sometimes
+re-establishes, and some reaction cuts go to **bystanders**, whose faces often tell the story. Create
+Shot also offers Group Shot: select the subject, their partner, then everyone else.
+
 **Subtitles 💬:** fill in each line's **Text** (and optionally a **Speaker Name**). Subtitles show
 live during `StartConversation` / `DirectLine` (pass the text as `Subtitle`), and Direct keys the
 director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the game. Anything else can

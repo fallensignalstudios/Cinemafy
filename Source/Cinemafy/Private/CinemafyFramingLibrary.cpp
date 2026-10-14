@@ -32,6 +32,7 @@ namespace
 		case ECinemafyShotType::CloseUp:         return { 38.f, 15.f, 0.f, 0.f };
 		case ECinemafyShotType::ExtremeCloseUp:  return { 20.f, 12.f, 0.f, 0.f };
 		case ECinemafyShotType::LowHero:         return { 110.f, 25.f, -75.f, 0.f };
+		case ECinemafyShotType::GroupShot:       return { 230.f, 0.f, 10.f, 200.f };
 		}
 		return { 60.f, 18.f, 0.f, 0.f };
 	}
@@ -63,6 +64,7 @@ ECinemafyPrime UCinemafyFramingLibrary::GetRecommendedPrime(ECinemafyShotType Sh
 	case ECinemafyShotType::CloseUp:         return ECinemafyPrime::Prime85;
 	case ECinemafyShotType::ExtremeCloseUp:  return ECinemafyPrime::Prime135;
 	case ECinemafyShotType::LowHero:         return ECinemafyPrime::Prime24;
+	case ECinemafyShotType::GroupShot:       return ECinemafyPrime::Prime24;
 	}
 	return ECinemafyPrime::Prime50;
 }
@@ -190,6 +192,43 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 		break;
 	}
 
+	case ECinemafyShotType::GroupShot:
+	{
+		// Everyone in: center on the group, wide enough for its spread, from the camera side of the main pair.
+		TArray<FVector, TInlineAllocator<8>> Eyes;
+		Eyes.Add(SubjectEye);
+		if (Counterpart)
+		{
+			Eyes.Add(OtherEye);
+		}
+		for (const AActor* Member : Request.Group)
+		{
+			if (Member && Member != Subject && Member != Counterpart)
+			{
+				Eyes.Add(GetEyePoint(Member));
+			}
+		}
+
+		FVector Center = FVector::ZeroVector;
+		for (const FVector& Eye : Eyes)
+		{
+			Center += Eye / Eyes.Num();
+		}
+		float Spread = 0.f;
+		for (const FVector& Eye : Eyes)
+		{
+			Spread = FMath::Max(Spread, static_cast<float>(FVector::Dist2D(Eye, Center)));
+		}
+
+		const float FrameH = FMath::Max(Spec.FrameHeight, (2.f * Spread + Spec.TwoShotPadding) / Aspect);
+		const FVector Dir = SideDir.RotateAngleAxis(Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
+		// A touch above eye level helps separate people standing in depth.
+		CamPos = Center + Dir * (DistanceForFrame(FrameH, Focal, SensorH) + Spread) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = Center - Up * (FrameH / 6.f);
+		FocusPoint = Center;
+		break;
+	}
+
 	case ECinemafyShotType::OverTheShoulder:
 	{
 		// Sit just behind the counterpart's shoulder (camera side of the line) and look back at the subject.
@@ -262,6 +301,17 @@ bool UCinemafyFramingLibrary::IsShotClear(const UWorld* World, const FCinemafySh
 	if (Request.Counterpart && Request.ShotType != ECinemafyShotType::OverTheShoulder && ShotNeedsCounterpart(Request.ShotType))
 	{
 		Targets.Add(GetEyePoint(Request.Counterpart));
+	}
+	if (Request.ShotType == ECinemafyShotType::GroupShot)
+	{
+		for (const AActor* Member : Request.Group)
+		{
+			if (Member)
+			{
+				Params.AddIgnoredActor(Member);
+				Targets.Add(GetEyePoint(Member));
+			}
+		}
 	}
 	for (const FVector& Target : Targets)
 	{

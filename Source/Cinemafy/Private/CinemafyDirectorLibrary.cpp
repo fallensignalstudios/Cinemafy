@@ -7,7 +7,7 @@ namespace
 	const ECinemafyShotType AllShotTypes[] = {
 		ECinemafyShotType::WideTwoShot, ECinemafyShotType::MediumTwoShot, ECinemafyShotType::OverTheShoulder,
 		ECinemafyShotType::MediumShot, ECinemafyShotType::MediumCloseUp, ECinemafyShotType::CloseUp,
-		ECinemafyShotType::ExtremeCloseUp, ECinemafyShotType::LowHero };
+		ECinemafyShotType::ExtremeCloseUp, ECinemafyShotType::LowHero, ECinemafyShotType::GroupShot };
 
 	const ECinemafyPrime AllPrimes[] = {
 		ECinemafyPrime::Prime18, ECinemafyPrime::Prime24, ECinemafyPrime::Prime35,
@@ -15,7 +15,7 @@ namespace
 
 	bool IsTwoShot(ECinemafyShotType Type)
 	{
-		return Type == ECinemafyShotType::WideTwoShot || Type == ECinemafyShotType::MediumTwoShot;
+		return Type == ECinemafyShotType::WideTwoShot || Type == ECinemafyShotType::MediumTwoShot || Type == ECinemafyShotType::GroupShot;
 	}
 
 	FString ShotName(ECinemafyShotType Type)
@@ -50,7 +50,7 @@ namespace
 	}
 
 	ECinemafyShotType PickShotType(const FCinemafyDirectorStyle& Style, FRandomStream& Random, float Intensity,
-		const AActor* Subject, const AActor* Counterpart, bool bReaction, const FCinemafyPlannedShot* Previous)
+		const AActor* Subject, const AActor* Counterpart, bool bReaction, const FCinemafyPlannedShot* Previous, bool bGroupScene)
 	{
 		// Where on the wide..tight scale this moment wants to be.
 		const float NeutralSize = 2.5f;
@@ -62,6 +62,10 @@ namespace
 		for (ECinemafyShotType Type : AllShotTypes)
 		{
 			if (UCinemafyFramingLibrary::ShotNeedsCounterpart(Type) && !Counterpart)
+			{
+				continue;
+			}
+			if (Type == ECinemafyShotType::GroupShot && !bGroupScene)
 			{
 				continue;
 			}
@@ -80,6 +84,7 @@ namespace
 			if (Type == ECinemafyShotType::LowHero)        { Weight *= Intensity > 0.5f ? Style.LowAngleBias * 2.f : 0.1f; }
 			if (Type == ECinemafyShotType::ExtremeCloseUp) { Weight *= Intensity > 0.7f ? 1.f : 0.1f; }
 			if (Type == ECinemafyShotType::WideTwoShot)    { Weight *= Intensity > 0.6f ? 0.3f : 1.f; }
+			if (Type == ECinemafyShotType::GroupShot)      { Weight *= Intensity > 0.5f ? 0.2f : 0.8f; }
 			if (bReaction && IsTwoShot(Type))              { Weight *= 0.3f; }
 
 			if (Previous)
@@ -150,6 +155,7 @@ float UCinemafyDirectorLibrary::GetShotSize(ECinemafyShotType ShotType)
 {
 	switch (ShotType)
 	{
+	case ECinemafyShotType::GroupShot:       return -0.5f;
 	case ECinemafyShotType::WideTwoShot:     return 0.f;
 	case ECinemafyShotType::MediumTwoShot:   return 1.f;
 	case ECinemafyShotType::MediumShot:      return 2.f;
@@ -246,8 +252,22 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 }
 
 TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyLine& Line, int32 LineIndex, const FCinemafyDirectorStyle& Style,
-	FRandomStream& Random, const FCinemafyPlannedShot* Previous, bool bOpensScene, float StartTime)
+	FRandomStream& Random, const FCinemafyPlannedShot* Previous, bool bOpensScene, float StartTime, const TArray<AActor*>& SceneCast)
 {
+	const bool bGroupScene = SceneCast.Num() >= 3;
+	auto OthersInGroup = [&SceneCast](const AActor* A, const AActor* B)
+	{
+		TArray<TObjectPtr<AActor>> Others;
+		for (AActor* Member : SceneCast)
+		{
+			if (Member != A && Member != B)
+			{
+				Others.Add(Member);
+			}
+		}
+		return Others;
+	};
+
 	constexpr float MinShotLength = 0.8f;
 
 	TArray<FCinemafyPlannedShot> Shots;
@@ -300,18 +320,38 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 
 		// Later in a line (and especially in the pause after it), cut to the listener's reaction.
 		const bool bInPause = (Time - StartTime) >= Line.Duration;
+		FString Why;
 		if (Line.Listener && Segment > 0 && Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f))
 		{
 			Shot.Subject = Line.Listener;
 			Shot.Counterpart = Line.Speaker;
 			Shot.bIsReaction = true;
+
+			// In a group, sometimes it's a bystander's face that tells the story.
+			if (bGroupScene && Random.FRand() < 0.3f)
+			{
+				const TArray<TObjectPtr<AActor>> Bystanders = OthersInGroup(Line.Speaker, Line.Listener);
+				if (Bystanders.Num() > 0)
+				{
+					Shot.Subject = Bystanders[Random.RandRange(0, Bystanders.Num() - 1)];
+					Why = TEXT("bystander reaction");
+				}
+			}
 		}
 
-		FString Why;
+		// A new pair talking in a group: sometimes step back so the audience knows where everyone is.
+		const bool bNewExchange = bGroupScene && Segment == 0 && bHasLast &&
+			!((Last.Subject == Line.Speaker && Last.Counterpart == Line.Listener) || (Last.Subject == Line.Listener && Last.Counterpart == Line.Speaker));
+
 		if (bOpensScene && Segment == 0 && Style.bEstablishingShot && Shot.Counterpart)
 		{
-			Shot.ShotType = ECinemafyShotType::WideTwoShot;
+			Shot.ShotType = bGroupScene ? ECinemafyShotType::GroupShot : ECinemafyShotType::WideTwoShot;
 			Why = TEXT("establishing the space");
+		}
+		else if (bNewExchange && Random.FRand() < 0.35f * (1.f - Intensity) && Last.ShotType != ECinemafyShotType::GroupShot)
+		{
+			Shot.ShotType = ECinemafyShotType::GroupShot;
+			Why = TEXT("re-establishing for the new exchange");
 		}
 		else if (Line.bForceShot && Segment == 0)
 		{
@@ -320,8 +360,16 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		}
 		else
 		{
-			Shot.ShotType = PickShotType(Style, Random, Intensity, Shot.Subject, Shot.Counterpart, Shot.bIsReaction, bHasLast ? &Last : nullptr);
-			Why = Shot.bIsReaction ? TEXT("reaction") : (Intensity > 0.7f ? TEXT("tightening for drama") : TEXT("coverage"));
+			Shot.ShotType = PickShotType(Style, Random, Intensity, Shot.Subject, Shot.Counterpart, Shot.bIsReaction, bHasLast ? &Last : nullptr, bGroupScene);
+			if (Why.IsEmpty())
+			{
+				Why = Shot.bIsReaction ? TEXT("reaction") : (Intensity > 0.7f ? TEXT("tightening for drama") : TEXT("coverage"));
+			}
+		}
+
+		if (Shot.ShotType == ECinemafyShotType::GroupShot)
+		{
+			Shot.Group = OthersInGroup(Shot.Subject, Shot.Counterpart);
 		}
 
 		Shot.Lens = BiasLens(UCinemafyFramingLibrary::GetRecommendedPrime(Shot.ShotType), Style.LensBias);
@@ -392,9 +440,21 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 	return Shots;
 }
 
+TArray<AActor*> UCinemafyDirectorLibrary::GetCast(const TArray<FCinemafyLine>& Lines)
+{
+	TArray<AActor*> SceneCast;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		if (Line.Speaker) { SceneCast.AddUnique(Line.Speaker); }
+		if (Line.Listener) { SceneCast.AddUnique(Line.Listener); }
+	}
+	return SceneCast;
+}
+
 TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FCinemafyLine>& Lines, const FCinemafyDirectorStyle& Style, int32 Seed)
 {
 	FRandomStream Random(Seed);
+	const TArray<AActor*> SceneCast = GetCast(Lines);
 	TArray<FCinemafyPlannedShot> Plan;
 	float Time = 0.f;
 
@@ -402,7 +462,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 	{
 		const FCinemafyPlannedShot* Previous = Plan.Num() > 0 ? &Plan.Last() : nullptr;
 		const FCinemafyPlannedShot PreviousCopy = Previous ? *Previous : FCinemafyPlannedShot();
-		TArray<FCinemafyPlannedShot> LineShots = PlanLine(Lines[Index], Index, Style, Random, Previous ? &PreviousCopy : nullptr, Plan.Num() == 0, Time);
+		TArray<FCinemafyPlannedShot> LineShots = PlanLine(Lines[Index], Index, Style, Random, Previous ? &PreviousCopy : nullptr, Plan.Num() == 0, Time, SceneCast);
 		Time += FMath::Max(Lines[Index].Duration + Lines[Index].PauseAfter, 0.2f);
 		Plan.Append(LineShots);
 	}

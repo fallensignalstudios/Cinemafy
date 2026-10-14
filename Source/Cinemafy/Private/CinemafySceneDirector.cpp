@@ -186,6 +186,7 @@ void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float
 		LiveEndTime = 0.f;
 		LiveLineIndex = 0;
 		bHasLastLiveShot = false;
+		LiveCast.Reset();
 		LiveRandom.Initialize(Seed);
 	}
 	// Lines driven by a dialogue system end when it says so.
@@ -200,8 +201,14 @@ void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float
 	Line.Text = Subtitle;
 	CurrentLiveLine = Line;
 
+	LiveCast.AddUnique(Speaker);
+	if (Listener)
+	{
+		LiveCast.AddUnique(Listener);
+	}
+
 	const TArray<FCinemafyPlannedShot> Shots = UCinemafyDirectorLibrary::PlanLine(
-		Line, LiveLineIndex++, GetStyle(), LiveRandom, bHasLastLiveShot ? &LastLiveShot : nullptr, bFirstCut, 0.f);
+		Line, LiveLineIndex++, GetStyle(), LiveRandom, bHasLastLiveShot ? &LastLiveShot : nullptr, bFirstCut, 0.f, LiveCast);
 	QueueShots(Shots, LiveTime);
 	SetActorTickEnabled(true);
 }
@@ -287,6 +294,7 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	Request.ShotType = Shot.ShotType;
 	Request.Subject = Shot.Subject;
 	Request.Counterpart = Shot.Counterpart;
+	Request.Group = Shot.Group;
 	Request.bUseRecommendedLens = false;
 	Request.Lens = Shot.Lens;
 	Request.bFlipSide = bFlipSide;

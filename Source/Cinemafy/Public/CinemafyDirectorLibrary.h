@@ -29,7 +29,11 @@ public:
 	 * Used for live directing, where lines arrive one at a time.
 	 */
 	static TArray<FCinemafyPlannedShot> PlanLine(const FCinemafyLine& Line, int32 LineIndex, const FCinemafyDirectorStyle& Style,
-		FRandomStream& Random, const FCinemafyPlannedShot* Previous, bool bOpensScene, float StartTime);
+		FRandomStream& Random, const FCinemafyPlannedShot* Previous, bool bOpensScene, float StartTime,
+		const TArray<AActor*>& SceneCast = TArray<AActor*>());
+
+	/** Everyone who speaks or is spoken to in a script. */
+	static TArray<AActor*> GetCast(const TArray<FCinemafyLine>& Lines);
 
 	/** How tight a shot type is: 0 = wide two-shot ... 5 = extreme close-up. */
 	static float GetShotSize(ECinemafyShotType ShotType);

@@ -158,6 +158,7 @@ private:
 
 	int32 ShownSubtitleIndex = -1;
 	FCinemafyLine CurrentLiveLine;
+	TArray<AActor*> LiveCast;
 	bool bLive = false;
 	bool bAutoEnd = false;
 	bool bFirstCut = true;

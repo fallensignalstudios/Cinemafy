@@ -218,6 +218,10 @@ ACineCameraActor* UCinemafyEditorLibrary::CreateShotFromSelection(ECinemafyShotT
 	Request.ShotType = ShotType;
 	Request.Subject = Selected[0];
 	Request.Counterpart = Selected.Num() > 1 ? Selected[1] : nullptr;
+	for (int32 Index = 2; Index < Selected.Num(); ++Index)
+	{
+		Request.Group.Add(Selected[Index]);
+	}
 	Request.bFlipSide = bFlipSide;
 	return CreateShot(Request);
 }
@@ -1081,6 +1085,7 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 			Request.ShotType = Shot.ShotType;
 			Request.Subject = Shot.Subject;
 			Request.Counterpart = Shot.Counterpart;
+			Request.Group = Shot.Group;
 			Request.bUseRecommendedLens = false;
 			Request.Lens = Shot.Lens;
 			Request.bFlipSide = Director->bFlipSide;
@@ -1252,7 +1257,8 @@ namespace
 
 		Out.bLowAngle = View.Location.Z < Subject->Eye.Z - 50.f && FrameHeight > 70.f && FrameHeight < 220.f;
 
-		if (PeersInFrame > 0)                    { Out.Type = FrameHeight > 180.f ? ECinemafyShotType::WideTwoShot : ECinemafyShotType::MediumTwoShot; }
+		if (PeersInFrame >= 2)                   { Out.Type = ECinemafyShotType::GroupShot; }
+		else if (PeersInFrame > 0)               { Out.Type = FrameHeight > 180.f ? ECinemafyShotType::WideTwoShot : ECinemafyShotType::MediumTwoShot; }
 		else if (bOverShoulder)                  { Out.Type = ECinemafyShotType::OverTheShoulder; }
 		else if (Out.bLowAngle)                  { Out.Type = ECinemafyShotType::LowHero; }
 		else if (FrameHeight > 80.f)             { Out.Type = ECinemafyShotType::MediumShot; }
@@ -1411,7 +1417,8 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 	Style.LowAngleBias = FMath::Clamp(4.f * LowAngle / Observed.Num(), 0.05f, 1.f);
 	Style.MoveChance = FMath::Clamp(static_cast<float>(Moving) / Observed.Num(), 0.f, 1.f);
 	Style.LensBias = LensSamples > 0 ? FMath::Clamp(FMath::RoundToInt((LensLogSum / LensSamples) / 0.5f), -2, 2) : 0;
-	Style.bEstablishingShot = Observed[0].Type == ECinemafyShotType::WideTwoShot || Observed[0].Type == ECinemafyShotType::MediumTwoShot;
+	Style.bEstablishingShot = Observed[0].Type == ECinemafyShotType::WideTwoShot || Observed[0].Type == ECinemafyShotType::MediumTwoShot
+		|| Observed[0].Type == ECinemafyShotType::GroupShot;
 
 	// Feel: the most common one is "calm"; the wildest one seen is "intense".
 	ECinemafyCameraFeel MostCommon = ECinemafyCameraFeel::Tripod;
@@ -1710,11 +1717,13 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection
 	if (Characters.Num() >= 2)
 	{
 		const float Intensities[] = { 0.2f, 0.35f, 0.5f, 0.65f, 0.8f, 0.95f };
+		const int32 CastSize = Characters.Num();
 		for (int32 Index = 0; Index < static_cast<int32>(UE_ARRAY_COUNT(Intensities)); ++Index)
 		{
+			// Round-robin: each character speaks to the next one around the group.
 			FCinemafyLine Line;
-			Line.Speaker = Characters[Index % 2];
-			Line.Listener = Characters[(Index + 1) % 2];
+			Line.Speaker = Characters[Index % CastSize];
+			Line.Listener = Characters[(Index + 1) % CastSize];
 			Line.Intensity = Intensities[Index];
 			Line.Duration = FMath::Lerp(4.f, 2.5f, Line.Intensity);
 			Line.PauseAfter = 0.6f;
