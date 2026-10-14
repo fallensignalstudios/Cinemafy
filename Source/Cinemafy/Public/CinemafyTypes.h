@@ -741,6 +741,10 @@ struct FCinemafyLine
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
 	TArray<float> ImpactTimes;
 
+	/** The last impact kills: the director holds both fighters in frame and ramps it (set from a choreography's death reactions). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
+	bool bLethal = false;
+
 	/** How the director read this line (set automatically when directing). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
 	ECinemafyMoment Moment = ECinemafyMoment::Dialogue;
@@ -922,6 +926,14 @@ struct FCinemafyPlannedShot
 	/** When the slowed impact happens, in seconds from the start of the shot. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	float SlowMoTime = 0.f;
+
+	/** How slow the ramp gets (time dilation at the hit). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float SlowMoRate = 0.3f;
+
+	/** How long it stays slow after the hit, in seconds of sequence time. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float SlowMoHold = 0.5f;
 
 	/** How this shot arrives (opening / scene break). Anything but Cut is a transition. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

@@ -33,6 +33,13 @@ public:
 	/** True if the camera has room around it and an unobstructed view of the request's characters. */
 	static bool IsShotClear(const UWorld* World, const FCinemafyShotRequest& Request, const FCinemafyShotSolution& Solution);
 
+	/**
+	 * True if a foreground character's head or shoulders cover the subject's face from the camera (the classic
+	 * bad over-the-shoulder). ForegroundEye/Right describe the near character; their body is approximated as
+	 * a head and two shoulders.
+	 */
+	static bool IsFaceCoveredByForeground(const FVector& Camera, const FVector& SubjectEye, const FVector& ForegroundEye, const FVector& ForegroundRight);
+
 	/** The lens most DPs would reach for on this shot type. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
 	static ECinemafyPrime GetRecommendedPrime(ECinemafyShotType ShotType);

@@ -934,7 +934,7 @@ namespace CinemafyChoreoTake
 		bSessionActive = false;
 	}
 
-	void PerformAndRecord(ACinemafyChoreography* Primary)
+	void PerformAndRecord(ACinemafyChoreography* Primary, bool bAskAboutProblems)
 	{
 		if (!Primary || !GEditor)
 		{
@@ -985,7 +985,11 @@ namespace CinemafyChoreoTake
 			}
 		}
 
-		if (WontWork.Num() > 0)
+		for (const FString& Problem : WontWork)
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Choreography: won't work as placed: %s"), *Problem);
+		}
+		if (WontWork.Num() > 0 && bAskAboutProblems)
 		{
 			const FText Message = FText::Format(LOCTEXT("TraversalWontWork",
 				"These won't work as placed:\n\n{0}\n\nRecord anyway? (They'll be marked Failed in the take, not faked.)"),
@@ -1016,6 +1020,7 @@ namespace CinemafyChoreoTake
 		struct FTimedLine { float Start; FCinemafyLine Line; };
 		TArray<FTimedLine> Timed;
 		TArray<TPair<float, float>> Impacts; // absolute time, intensity
+		TArray<float> Kills; // absolute times of killing blows
 		float TakeEnd = 0.f;
 		for (const ACinemafyChoreography* Choreo : Ensemble)
 		{
@@ -1026,6 +1031,15 @@ namespace CinemafyChoreoTake
 				for (float Impact : Line.ImpactTimes)
 				{
 					Impacts.Add({ Time + Impact, 0.f });
+				}
+				if (Line.bLethal && Line.ImpactTimes.Num() > 0)
+				{
+					float LastImpact = Line.ImpactTimes[0];
+					for (float Impact : Line.ImpactTimes)
+					{
+						LastImpact = FMath::Max(LastImpact, Impact);
+					}
+					Kills.Add(Time + LastImpact);
 				}
 				Time += Line.Duration + Line.PauseAfter;
 			}
@@ -1077,6 +1091,8 @@ namespace CinemafyChoreoTake
 				}
 			}
 			Line.bAction |= Line.ImpactTimes.Num() > 0;
+			// Whichever line the killing blow lands in carries it (lines get re-cut when performers are merged).
+			Line.bLethal = Kills.ContainsByPredicate([Start, End](float Kill) { return Kill >= Start && Kill < End; });
 			Lines.Add(Line);
 		}
 		return Lines;

@@ -366,7 +366,54 @@ bool UCinemafyFramingLibrary::IsShotClear(const UWorld* World, const FCinemafySh
 			return false;
 		}
 	}
+
+	// The counterpart is ignored by the traces above (it's meant to be in an OTS), so check it separately:
+	// a shoulder in the foreground is framing, a shoulder over the subject's face is a ruined shot.
+	if (Request.Subject && Request.Counterpart && Request.ShotType != ECinemafyShotType::GroupShot)
+	{
+		if (IsFaceCoveredByForeground(Camera, GetEyePoint(Request.Subject), GetEyePoint(Request.Counterpart), Request.Counterpart->GetActorRightVector()))
+		{
+			return false;
+		}
+	}
 	return true;
+}
+
+bool UCinemafyFramingLibrary::IsFaceCoveredByForeground(const FVector& Camera, const FVector& SubjectEye, const FVector& ForegroundEye, const FVector& ForegroundRight)
+{
+	const float SubjectDistance = FVector::Dist(Camera, SubjectEye);
+	if (SubjectDistance < 1.f)
+	{
+		return false;
+	}
+	const FVector ToFace = (SubjectEye - Camera) / SubjectDistance;
+	// Half the face (about 9 cm) may be overlapped before it reads as covered.
+	const float FaceAllowance = FMath::Asin(FMath::Clamp(9.f / SubjectDistance, 0.f, 1.f)) * 0.5f;
+
+	const FVector Right = ForegroundRight.GetSafeNormal2D();
+	struct FBlob { FVector Center; float Radius; };
+	const FBlob Blobs[] =
+	{
+		{ ForegroundEye + FVector(0.f, 0.f, 4.f), 12.f },                      // head
+		{ ForegroundEye - FVector(0.f, 0.f, 24.f) + Right * 18.f, 13.f },      // shoulders
+		{ ForegroundEye - FVector(0.f, 0.f, 24.f) - Right * 18.f, 13.f },
+	};
+	for (const FBlob& Blob : Blobs)
+	{
+		const float BlobDistance = FVector::Dist(Camera, Blob.Center);
+		if (BlobDistance < 1.f || BlobDistance >= SubjectDistance - 10.f)
+		{
+			continue; // Behind (or beside) the subject: can't cover them.
+		}
+		const FVector ToBlob = (Blob.Center - Camera) / BlobDistance;
+		const float Separation = FMath::Acos(FMath::Clamp(FVector::DotProduct(ToFace, ToBlob), -1.f, 1.f));
+		const float BlobRadius = FMath::Asin(FMath::Clamp(Blob.Radius / BlobDistance, 0.f, 1.f));
+		if (Separation < BlobRadius - FaceAllowance + FMath::Asin(FMath::Clamp(9.f / SubjectDistance, 0.f, 1.f)))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldContextObject, const FCinemafyShotRequest& Request,

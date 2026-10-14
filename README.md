@@ -261,11 +261,28 @@ Blocked, Failed or Timed Out. Problems turn the beat's label red or amber in the
 beats have an **Arrival** policy: pass through, stop, or enter the next action moving. Auto picks one
 from what follows. See the [design contract](Docs/CHOREOGRAPHY.md).
 
+**Dialogue in the same scene:** put the line in quotes. `walk "Stand down, Admiral"` says it while walking
+to the mark. Click Thane and type `answer "Make me."`: his beat waits for her line, then he turns to her and
+says it. Back on Kade, `sword after` draws once he's done, then `sword attack` on Thane. Give a beat
+**Dialogue Audio** and it plays during the take and lands in the cut. The director cuts it all as one scene:
+walk-and-talk, the exchange, then the fight.
+
+**Before you record:** vault and climb beats measure their obstacle. A label like *"140 cm high, 40 cm deep:
+no room to land on the far side"* turns red, and the measured shape is drawn in the viewport. Perform &
+Record lists anything that can't work and asks first.
+
 Each beat shows how it was read (**Reading**) and what it picked (**Chosen Animations**). Override any
 beat with **Animation Override**. For full control, **Build Move Library** gathers the project's
 one-shots into an asset you can curate (add keywords, bias favorites), and set it as the
 choreography's **Move Library**. The **Wiring Report** says what Cinemafy found on the character. If it
 guessed wrong, set the function names under *Wiring*.
+
+**Performer profiles** write that down once per kind of character. **Save Wiring As Profile** turns what
+was found into a `PP_` asset, or make one from a preset (GASP, GASPALS, SignalForge, MetaHuman on GASP,
+generic). It holds the gait / crouch / traversal / overlay hooks, what the character can climb (vault
+height and depth, mantle height, landing room), its move library, and which meshes not to record. Map
+classes to profiles in **Project Settings > Plugins > Cinemafy**. **Check Wiring** names anything the
+character is missing.
 
 ---
 

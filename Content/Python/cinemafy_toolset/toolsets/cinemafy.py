@@ -574,6 +574,85 @@ class CinemafyTools(unreal.ToolsetDefinition):
         director = choreography.get_editor_property('scene_director')
         return list(director.last_plan) if director else []
 
+    @toolset_registry.tool_call
+    @staticmethod
+    def set_choreography_beat_line(choreography: unreal.CinemafyChoreography, beat_index: int, text: str = '',
+                                   audio: unreal.SoundBase = None, listener: unreal.Actor = None,
+                                   wait_for_line_from: unreal.Actor = None) -> str:
+        """Gives a beat a line of dialogue. The line is spoken while the beat performs (walk-and-talk), and the
+        director cuts it as dialogue. A prompt can also carry a line directly: walk "Stand down, Admiral",
+        or answer "Make me." for a reply that waits for the other character.
+
+        Args:
+            choreography: The choreography.
+            beat_index: Which beat (0-based).
+            text: The words. Empty keeps the prompt's quoted words.
+            audio: The recorded line, if any (played during the take and laid into the cut).
+            listener: Who it's said to (defaults to a character target, or whoever was last addressed).
+            wait_for_line_from: Hold the beat until this character finishes their line.
+
+        Returns:
+            The beat's reading.
+        """
+        if not _lib.set_choreography_beat_line(choreography, beat_index, unreal.Text(text), audio, listener, wait_for_line_from):
+            raise ValueError('No such beat.')
+        beat = choreography.get_editor_property('beats')[beat_index]
+        return beat.get_editor_property('reading').get_editor_property('summary')
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def check_choreography_traversal(choreography: unreal.CinemafyChoreography, beat_index: int) -> str:
+        """Measures a vault / climb beat's obstacle (height, depth, headroom, landing room, approach angle)
+        against what the performer can do, before recording.
+
+        Args:
+            choreography: The choreography.
+            beat_index: A Traverse beat (0-based).
+
+        Returns:
+            The verdict and the reason in plain words, e.g. "Too Tall: 310 cm high (a platform): too tall (climbs up to 275 cm)".
+        """
+        check = _lib.check_choreography_traversal(choreography, beat_index)
+        verdict = check.get_editor_property('verdict')
+        return '{}{}: {}'.format('' if check.get_editor_property('possible') else 'WON\'T WORK, ',
+                                 str(verdict).split('.')[-1], check.get_editor_property('reason'))
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def create_performer_profile(preset: unreal.CinemafyPerformerPreset, name: str) -> unreal.CinemafyPerformerProfile:
+        """Makes a Performer Profile (how to drive one kind of character: gait, crouch, traversal, overlays,
+        climb limits) from a preset, in /Game/Cinemafy/Performers. Assign it to a choreography's Profile, or map
+        it to a character class in Project Settings > Plugins > Cinemafy.
+
+        Args:
+            preset: GASP, GASPALS, SIGNAL_FORGE, META_HUMAN_GASP or GENERIC_CHARACTER.
+            name: Asset name (saved as PP_<name>).
+
+        Returns:
+            The profile.
+        """
+        profile = _lib.create_performer_profile(preset, name)
+        if not profile:
+            raise RuntimeError('Could not create the profile.')
+        return profile
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def get_choreography_wiring(choreography: unreal.CinemafyChoreography, save_as_profile: bool = False) -> str:
+        """Reports how Cinemafy drives a choreography's performer (gait, crouch, traversal, overlay hooks, climb
+        limits), and checks it against its profile. Optionally saves what was found as a new profile.
+
+        Args:
+            choreography: The choreography.
+            save_as_profile: Save the found wiring as a Performer Profile and assign it.
+
+        Returns:
+            The wiring report.
+        """
+        if save_as_profile and not _lib.save_wiring_as_profile(choreography):
+            raise RuntimeError('Could not save a profile (does the choreography have a performer?).')
+        return _lib.get_wiring_report(choreography)
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
     @toolset_registry.tool_call

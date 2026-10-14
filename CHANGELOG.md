@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.11.0: "Scenes"
+- **Dialogue and choreography in one scene:**
+  - Quoted words in a prompt are a line: `walk "Stand down, Admiral"` says it while walking.
+  - A bare quote, `say`, or `answer "Make me."` is a **Say** beat: it faces its listener and holds for the line.
+  - `answer` / `after` (or the beat's **Wait For Line From**) holds a beat until the other character's line
+    ends, so Thane answers Kade, then she draws.
+  - Beats have **Dialogue**, **Dialogue Audio**, **Listener** and **Wait For Line From**. During the take the
+    audio plays on the performer with a subtitle, and `LineStart` / `LineEnd` events are logged.
+  - The director cuts the take as one scene: lines become dialogue or walk-and-talk lines that start on
+    their first word, the audio is laid into the cut, and strikes stay action.
+- **Performer profiles** (`UCinemafyPerformerProfile` data asset): gait, crouch, traversal and overlay wiring,
+  climb limits, move library and recording skips, written down once per character type.
+  - Presets: GASP, GASPALS, SignalForge, MetaHuman on GASP, generic Character.
+  - Map character classes to profiles in **Project Settings > Plugins > Cinemafy**, or set one per choreography.
+  - **Save Wiring As Profile** and **Check Wiring** buttons; missing hooks are named, not guessed around.
+- **Measured traversal:** each vault / climb beat measures its obstacle (height, depth, headroom, landing
+  room, approach angle) against the performer's limits.
+  - It says why before you record: "too tall (climbs up to 275 cm)", "no room to land on the far side",
+    "approaching at 70 degrees".
+  - The measured shape is drawn in the viewport (green works, red doesn't) and the label turns red.
+  - Perform & Record lists impossible beats and asks first. During the take they fail honestly (no fake
+    jump), and ankle-high obstacles are simply walked over.
+- **The director watches the fight:**
+  - Shots that land a hit frame both fighters: over the attacker's shoulder onto the hit, then over the
+    defender's shoulder into the strike.
+  - The killing blow gets a two-shot and a speed ramp, scaled to the style (gentle for calm styles, a hard
+    drop for action ones; none for styles that never ramp). Focus goes to the one who falls.
+  - Over-the-shoulders (and any shot with the counterpart in front) are rejected when the foreground
+    head or shoulders cover the subject's face; the framing tries nearby angles instead.
+- Scripted Perform & Record logs impossible beats instead of asking. New MCP tools:
+  `set_choreography_beat_line`, `check_choreography_traversal`, `create_performer_profile`,
+  `get_choreography_wiring`.
+
 ## 0.10.0: "Fights"
 - **Synchronized attacker and defender:**
   - An attack on a character makes the target react, its impact frame timed to the strike's contact.

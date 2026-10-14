@@ -802,4 +802,61 @@ bool FCinemafyChoreoDialogueTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyFightCoverageTest, "Cinemafy.Director.WatchesTheFight", CinemafyTests::Flags)
+bool FCinemafyFightCoverageTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(1);
+	Lines[0].bAction = true;
+	Lines[0].Duration = 6.f;
+	Lines[0].PauseAfter = 0.f;
+	Lines[0].ImpactTimes = { 1.5f, 3.0f, 4.5f };
+	Lines[0].bLethal = true;
+
+	for (const ECinemafyDirectorPreset Preset : { ECinemafyDirectorPreset::KineticAction, ECinemafyDirectorPreset::ClassicHollywood })
+	{
+		const FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(Preset);
+		for (int32 Seed = 1; Seed <= 6; ++Seed)
+		{
+			const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, Style, Seed);
+			int32 Ramps = 0;
+			for (const FCinemafyPlannedShot& Shot : Plan)
+			{
+				const bool bHasImpact = Lines[0].ImpactTimes.ContainsByPredicate([&Shot](float I) { return I >= Shot.StartTime && I < Shot.StartTime + Shot.Duration; });
+				if (bHasImpact)
+				{
+					const bool bBothSides = Shot.ShotType == ECinemafyShotType::OverTheShoulder || Shot.ShotType == ECinemafyShotType::MediumTwoShot
+						|| Shot.ShotType == ECinemafyShotType::WideTwoShot;
+					TestTrue(FString::Printf(TEXT("Seed %d: every hit shows both fighters (%s)"), Seed, *Shot.Reason), bBothSides);
+				}
+				Ramps += Shot.bSlowMo ? 1 : 0;
+				if (Shot.bSlowMo)
+				{
+					TestTrue(TEXT("The ramp is on the killing blow"), FMath::IsNearlyEqual(Shot.StartTime + Shot.SlowMoTime, 4.5f, 0.01f));
+				}
+			}
+			if (Style.SlowMoChance > 0.f)
+			{
+				TestEqual(FString::Printf(TEXT("Seed %d: exactly one ramp, on the kill"), Seed), Ramps, 1);
+			}
+		}
+	}
+
+	// Gentle styles ease into it; action styles drop hard.
+	const TArray<FCinemafyPlannedShot> Kinetic = UCinemafyDirectorLibrary::PlanScene(Lines, UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::KineticAction), 3);
+	const FCinemafyPlannedShot* KineticRamp = Kinetic.FindByPredicate([](const FCinemafyPlannedShot& Shot) { return Shot.bSlowMo; });
+	TestTrue(TEXT("An action style ramps hard"), KineticRamp && KineticRamp->SlowMoRate <= 0.35f);
+
+	// A shoulder in the foreground is framing; a shoulder over the face is a ruined shot.
+	const FVector Camera(0.f, 0.f, 160.f);
+	const FVector Face(400.f, 0.f, 160.f);
+	TestTrue(TEXT("Head straight in line covers the face"),
+		UCinemafyFramingLibrary::IsFaceCoveredByForeground(Camera, Face, FVector(120.f, 0.f, 160.f), FVector(0.f, 1.f, 0.f)));
+	TestFalse(TEXT("A shoulder to the side frames it"),
+		UCinemafyFramingLibrary::IsFaceCoveredByForeground(Camera, Face, FVector(120.f, -60.f, 160.f), FVector(0.f, 1.f, 0.f)));
+	TestFalse(TEXT("Someone behind the subject can't cover them"),
+		UCinemafyFramingLibrary::IsFaceCoveredByForeground(Camera, Face, FVector(500.f, 0.f, 160.f), FVector(0.f, 1.f, 0.f)));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

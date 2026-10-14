@@ -154,7 +154,19 @@ void FCinemafyEditorModule::StartupModule()
 		case ECinemafyChoreoRequest::Choreograph:      FCinemafyChoreoMode::Start(Choreography); break;
 		case ECinemafyChoreoRequest::PerformAndRecord: CinemafyChoreoTake::PerformAndRecord(Choreography); break;
 		case ECinemafyChoreoRequest::DirectShots:      CinemafyChoreoTake::DirectShots(Choreography); break;
-		case ECinemafyChoreoRequest::SaveProfile:      UCinemafyEditorLibrary::SaveWiringAsProfile(Choreography); break;
+		case ECinemafyChoreoRequest::SaveProfile:
+			// The button gets a dialog; scripts get the asset and a log line.
+			if (UCinemafyPerformerProfile* Profile = UCinemafyEditorLibrary::SaveWiringAsProfile(Choreography))
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ProfileSaved",
+					"Saved {0} and assigned it.\n\n{1}\n\nAdd it under Project Settings > Plugins > Cinemafy > Performer Profiles to use it for every character of this class."),
+					FText::FromString(Profile->GetName()), FText::FromString(Profile->Validate(Choreography->Performer))));
+			}
+			else
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoPerformerProfile", "Pick a performer first: the profile is made from what's found on it."));
+			}
+			break;
 		case ECinemafyChoreoRequest::CheckWiring:
 			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyEditorLibrary::GetWiringReport(Choreography)));
 			break;

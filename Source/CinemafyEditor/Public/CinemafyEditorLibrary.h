@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "CinemafyTypes.h"
+#include "CinemafyChoreographyTypes.h"
 #include "CinemafyPerformerProfile.h"
 #include "CinemafyEditorLibrary.generated.h"
 
@@ -12,6 +13,7 @@ class ACinemafySceneDirector;
 class USoundWave;
 class UCinemafyDirectorStyleAsset;
 class ACinemafyChoreography;
+class USoundBase;
 class UCinemafyMoveLibrary;
 class UCinemafyPerformerProfile;
 
@@ -236,6 +238,18 @@ public:
 	/** The wiring report for a choreography's performer (and its profile's check), as text. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
 	static FString GetWiringReport(ACinemafyChoreography* Choreography);
+
+	/** Measures a Traverse beat's obstacle now (height, depth, landing room) and refreshes its label. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static FCinemafyTraversalCheck CheckChoreographyTraversal(ACinemafyChoreography* Choreography, int32 BeatIndex);
+
+	/**
+	 * Gives a beat a line: its words, optional recorded audio, who it's said to, and whose line it waits for.
+	 * Empty text keeps the prompt's quoted words.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Choreography")
+	static bool SetChoreographyBeatLine(ACinemafyChoreography* Choreography, int32 BeatIndex, const FText& Text, USoundBase* Audio,
+		AActor* Listener, AActor* WaitForLineFrom);
 
 	static TArray<AActor*> GetSelectedActorsInOrder();
 };

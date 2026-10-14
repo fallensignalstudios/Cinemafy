@@ -1433,9 +1433,9 @@ namespace
 			}
 			const float Hit = Shot.StartTime + Shot.SlowMoTime;
 			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(FMath::Max(Hit - 0.15f, 0.f)), 1.f);
-			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit), 0.3f);
-			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit + 0.5f), 0.3f);
-			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit + 0.8f), 1.f);
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit), Shot.SlowMoRate);
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit + Shot.SlowMoHold), Shot.SlowMoRate);
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit + Shot.SlowMoHold + 0.3f), 1.f);
 		}
 	}
 
@@ -2985,7 +2985,7 @@ ACinemafyChoreography* UCinemafyEditorLibrary::ChoreographSelection()
 
 void UCinemafyEditorLibrary::PerformAndRecordChoreography(ACinemafyChoreography* Choreography)
 {
-	CinemafyChoreoTake::PerformAndRecord(Choreography);
+	CinemafyChoreoTake::PerformAndRecord(Choreography, /*bAskAboutProblems*/ false);
 }
 
 int32 UCinemafyEditorLibrary::DirectChoreography(ACinemafyChoreography* Choreography)
@@ -3078,7 +3078,7 @@ UCinemafyPerformerProfile* UCinemafyEditorLibrary::SaveWiringAsProfile(ACinemafy
 {
 	if (!Choreography || !Choreography->Performer)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoPerformerProfile", "Pick a performer first: the profile is made from what's found on it."));
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: pick a performer first: a profile is made from what's found on it."));
 		return nullptr;
 	}
 
@@ -3110,9 +3110,7 @@ UCinemafyPerformerProfile* UCinemafyEditorLibrary::SaveWiringAsProfile(ACinemafy
 	Choreography->Profile = Profile;
 	Choreography->RefreshWiring();
 
-	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("ProfileSaved",
-		"Saved {0} and assigned it.\n\n{1}\n\nAdd it under Project Settings > Plugins > Cinemafy > Performer Profiles to use it for every {2}."),
-		FText::FromString(Profile->GetName()), FText::FromString(Profile->Validate(Choreography->Performer)), FText::FromString(ClassName)));
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: saved %s from %s and assigned it."), *Profile->GetName(), *ClassName);
 	return Profile;
 }
 
@@ -3136,3 +3134,36 @@ FString UCinemafyEditorLibrary::GetWiringReport(ACinemafyChoreography* Choreogra
 }
 
 #undef LOCTEXT_NAMESPACE
+
+FCinemafyTraversalCheck UCinemafyEditorLibrary::CheckChoreographyTraversal(ACinemafyChoreography* Choreography, int32 BeatIndex)
+{
+	if (!Choreography || !Choreography->Beats.IsValidIndex(BeatIndex))
+	{
+		return FCinemafyTraversalCheck();
+	}
+	FCinemafyChoreoBeat& Beat = Choreography->Beats[BeatIndex];
+	if (Beat.Reading.Summary.IsEmpty())
+	{
+		Choreography->ResolveBeat(BeatIndex);
+	}
+	Beat.TraversalCheck = Choreography->MeasureTraversal(BeatIndex);
+	Choreography->RefreshLabels();
+	return Beat.TraversalCheck;
+}
+
+bool UCinemafyEditorLibrary::SetChoreographyBeatLine(ACinemafyChoreography* Choreography, int32 BeatIndex, const FText& Text, USoundBase* Audio,
+	AActor* Listener, AActor* WaitForLineFrom)
+{
+	if (!Choreography || !Choreography->Beats.IsValidIndex(BeatIndex))
+	{
+		return false;
+	}
+	Choreography->Modify();
+	FCinemafyChoreoBeat& Beat = Choreography->Beats[BeatIndex];
+	Beat.Dialogue = Text;
+	Beat.DialogueAudio = Audio;
+	Beat.Listener = Listener;
+	Beat.WaitForLineFrom = WaitForLineFrom;
+	Choreography->RefreshLabels();
+	return true;
+}

@@ -1243,6 +1243,8 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 			Previous.Duration += Duration;
 			Previous.bAction |= bAction;
 			Previous.bMoving |= bMoving;
+			const ECinemafyHitReaction RideAnswer = Beat.bOverrideReaction ? Beat.Reaction : Beat.Reading.Reaction;
+			Previous.bLethal |= Kind == ECinemafyActionKind::Attack && Beat.bTargetReacts && Cast<APawn>(Beat.Target.Get()) && RideAnswer == ECinemafyHitReaction::Death && Beat.ImpactTimes.Num() > 0;
 			Previous.Note += TEXT(", ") + Beat.Prompt;
 			continue;
 		}
@@ -1264,6 +1266,8 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 		Line.bAction = bAction;
 		Line.bMoving = bMoving;
 		Line.Note = FString::Printf(TEXT("%s (%s)"), *Beat.Prompt, *Beat.Reading.Summary);
+		const ECinemafyHitReaction Answer = Beat.bOverrideReaction ? Beat.Reaction : Beat.Reading.Reaction;
+		Line.bLethal = Kind == ECinemafyActionKind::Attack && Beat.bTargetReacts && TargetPawn && Answer == ECinemafyHitReaction::Death && Beat.ImpactTimes.Num() > 0;
 		for (float Impact : Beat.ImpactTimes)
 		{
 			if (!Piece.bLine || Pieces.Num() == 1 || Beat.LineStartTime <= Beat.StartTime + 0.5f)

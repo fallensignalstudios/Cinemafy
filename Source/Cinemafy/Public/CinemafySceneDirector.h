@@ -263,6 +263,7 @@ private:
 	int32 TriggeredTransitionCue = -1;
 	float SlowMoDelay = -1.f;
 	float SlowMoRemaining = 0.f;
+	float SlowMoRate = 0.3f;
 	TWeakObjectPtr<AActor> LastLiveCamera;
 
 	int32 ShownSubtitleIndex = -1;
