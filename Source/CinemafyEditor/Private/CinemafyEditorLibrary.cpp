@@ -3416,6 +3416,69 @@ int32 UCinemafyEditorLibrary::MapScriptScenesInLevel(UCinemafyScriptProject* Pro
 	return Mapped;
 }
 
+namespace CinemafyScriptEditor
+{
+	/** The director's lines for a script scene: speakers matched to actor labels, delivery read from the parentheticals. */
+	TArray<FCinemafyLine> BuildDirectorLines(UWorld* World, const FCinemafyScriptScene& Scene, TArray<AActor*>& OutPerformers, int32& OutUnmatched)
+	{
+		TArray<FCinemafyLine> Lines;
+		FString PreviousSpeaker;
+		AActor* PreviousActor = nullptr;
+		for (const FCinemafyScriptLine& ScriptLine : Scene.Lines)
+		{
+			if (ScriptLine.Kind != ECinemafyScriptLineKind::Dialogue)
+			{
+				continue;
+			}
+			FCinemafyLine& Line = Lines.AddDefaulted_GetRef();
+			Line.Speaker = FindActorForName(World, ScriptLine.Speaker);
+			Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
+			Line.Text = FText::FromString(ScriptLine.Text);
+			Line.Audio = ScriptLine.Audio.LoadSynchronous();
+			// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
+			if (Delivery.bHasEmotion)
+			{
+				Line.bSetEmotion = true;
+				Line.Emotion = Delivery.Emotion;
+			}
+			if (!Delivery.Cue.IsEmpty())
+			{
+				Line.Intensity = Delivery.Intensity;
+				Line.bAutoIntensity = false;
+			}
+			// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
+			Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
+			Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene.Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));
+			TArray<FString> Words;
+			ScriptLine.Text.ParseIntoArrayWS(Words);
+			Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
+			OutUnmatched += Line.Speaker ? 0 : 1;
+			if (Line.Speaker)
+			{
+				OutPerformers.AddUnique(Line.Speaker);
+			}
+			if (PreviousSpeaker != ScriptLine.Speaker)
+			{
+				PreviousSpeaker = ScriptLine.Speaker;
+				PreviousActor = Line.Speaker;
+			}
+		}
+		if (Lines.Num() > 1 && !Lines[0].Listener)
+		{
+			for (int32 Index = 1; Index < Lines.Num(); ++Index)
+			{
+				if (Lines[Index].Speaker && Lines[Index].Speaker != Lines[0].Speaker)
+				{
+					Lines[0].Listener = Lines[Index].Speaker;
+					break;
+				}
+			}
+		}
+		return Lines;
+	}
+}
+
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafyScriptProject* Project, const FString& SceneId)
 {
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -3427,61 +3490,8 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 
 	const FScopedTransaction Transaction(LOCTEXT("DirectorForScene", "Cinemafy: Director for Scene"));
 	TArray<AActor*> Performers;
-	TArray<FCinemafyLine> Lines;
-	FString PreviousSpeaker;
-	AActor* PreviousActor = nullptr;
 	int32 Unmatched = 0;
-	for (const FCinemafyScriptLine& ScriptLine : Scene->Lines)
-	{
-		if (ScriptLine.Kind != ECinemafyScriptLineKind::Dialogue)
-		{
-			continue;
-		}
-		FCinemafyLine& Line = Lines.AddDefaulted_GetRef();
-		Line.Speaker = CinemafyScriptEditor::FindActorForName(World, ScriptLine.Speaker);
-		Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
-		Line.Text = FText::FromString(ScriptLine.Text);
-		Line.Audio = ScriptLine.Audio.LoadSynchronous();
-		// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
-		const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
-		if (Delivery.bHasEmotion)
-		{
-			Line.bSetEmotion = true;
-			Line.Emotion = Delivery.Emotion;
-		}
-		if (!Delivery.Cue.IsEmpty())
-		{
-			Line.Intensity = Delivery.Intensity;
-			Line.bAutoIntensity = false;
-		}
-		// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
-		Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
-		Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene->Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));
-		TArray<FString> Words;
-		ScriptLine.Text.ParseIntoArrayWS(Words);
-		Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
-		Unmatched += Line.Speaker ? 0 : 1;
-		if (Line.Speaker)
-		{
-			Performers.AddUnique(Line.Speaker);
-		}
-		if (PreviousSpeaker != ScriptLine.Speaker)
-		{
-			PreviousSpeaker = ScriptLine.Speaker;
-			PreviousActor = Line.Speaker;
-		}
-	}
-	if (Lines.Num() > 1 && !Lines[0].Listener)
-	{
-		for (int32 Index = 1; Index < Lines.Num(); ++Index)
-		{
-			if (Lines[Index].Speaker && Lines[Index].Speaker != Lines[0].Speaker)
-			{
-				Lines[0].Listener = Lines[Index].Speaker;
-				break;
-			}
-		}
-	}
+	const TArray<FCinemafyLine> Lines = CinemafyScriptEditor::BuildDirectorLines(World, *Scene, Performers, Unmatched);
 
 	FVector Location = FVector::ZeroVector;
 	for (AActor* Member : Performers)
@@ -3503,6 +3513,7 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 	Scene->DirectorLabel = Director->GetActorLabel();
 	Scene->Level = World;
 	Scene->MatchScore = 1.f;
+	Scene->StagedHash = Scene->ContentHash;
 	if (Scene->Status == ECinemafySceneStatus::NotStarted)
 	{
 		Scene->Status = ECinemafySceneStatus::Blocking;
@@ -3514,6 +3525,59 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 	GEditor->SelectNone(false, true);
 	GEditor->SelectActor(Director, true, true);
 	return Director;
+}
+
+int32 UCinemafyEditorLibrary::RefreshDirectorFromScript(ACinemafySceneDirector* Director)
+{
+	UCinemafyScriptProject* Project = Director ? Director->ScriptProject.Get() : nullptr;
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(Director->ScriptSceneId) : nullptr;
+	if (!Scene || !Director->GetWorld())
+	{
+		return -1;
+	}
+	TArray<AActor*> Performers;
+	int32 Unmatched = 0;
+	TArray<FCinemafyLine> Fresh = CinemafyScriptEditor::BuildDirectorLines(Director->GetWorld(), *Scene, Performers, Unmatched);
+
+	// Unchanged words keep the line as it was tuned (first unused match, so repeated lines pair up in order).
+	TArray<bool> Used;
+	Used.Init(false, Director->Lines.Num());
+	int32 Changed = 0;
+	for (FCinemafyLine& Line : Fresh)
+	{
+		const FString Words = Line.Text.ToString();
+		int32 Found = INDEX_NONE;
+		for (int32 Index = 0; Index < Director->Lines.Num(); ++Index)
+		{
+			if (!Used[Index] && Director->Lines[Index].Text.ToString().Equals(Words, ESearchCase::IgnoreCase))
+			{
+				Found = Index;
+				break;
+			}
+		}
+		if (Found != INDEX_NONE)
+		{
+			Used[Found] = true;
+			const FString Note = Line.Note;
+			Line = Director->Lines[Found];
+			Line.Note = Note;
+		}
+		else
+		{
+			++Changed;
+		}
+	}
+	for (bool bUsed : Used)
+	{
+		Changed += bUsed ? 0 : 1;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("RefreshDirector", "Cinemafy: Refresh Director from Script"));
+	Director->Modify();
+	Director->Lines = MoveTemp(Fresh);
+	Project->Modify();
+	Scene->StagedHash = Scene->ContentHash;
+	Project->MarkPackageDirty();
+	return Changed;
 }
 
 bool UCinemafyEditorLibrary::SetScriptSceneStatus(UCinemafyScriptProject* Project, const FString& SceneId, ECinemafySceneStatus Status)

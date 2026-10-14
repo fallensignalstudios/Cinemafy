@@ -262,6 +262,22 @@ ULevelSequence* UCinemafyStoryLibrary::OpenSceneSequence(UCinemafyScriptProject*
 	return Sequence;
 }
 
+namespace CinemafyRevision
+{
+	/** A fingerprint of a choreography's beats as staged (what, where, at whom, which line): changes mean hand edits. */
+	FString BeatPrint(const ACinemafyChoreography* Choreo)
+	{
+		FString Words;
+		for (const FCinemafyChoreoBeat& Beat : Choreo->Beats)
+		{
+			const FIntVector Rounded(FMath::RoundToInt(Beat.Location.X / 10.f), FMath::RoundToInt(Beat.Location.Y / 10.f), FMath::RoundToInt(Beat.Location.Z / 10.f));
+			Words += FString::Printf(TEXT("|%s|%s|%s|%s|%d|%s"), *Beat.Prompt, *Rounded.ToString(), Beat.Target ? *Beat.Target->GetName() : TEXT(""),
+				*Beat.Dialogue.ToString(), static_cast<int32>(Beat.Arrival), Beat.AnimationOverride ? *Beat.AnimationOverride->GetName() : TEXT(""));
+		}
+		return FString::Printf(TEXT("%08X"), FCrc::StrCrc32(*Words));
+	}
+}
+
 FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bRecord)
 {
 	UWorld* World = CinemafyStory::EditorWorld();
@@ -345,7 +361,8 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	}
 	ApplySceneContinuity(Project, SceneId);
 
-	// Last pass's previs for this scene goes; the new one is built fresh.
+	// Last pass's previs for this scene goes; the new one is built fresh. Choreographies changed by hand since
+	// they were generated are kept (renamed Edited_..., sitting out takes) so no work is lost.
 	const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *Scene->Id.Replace(TEXT("."), TEXT("_")));
 	TArray<ACinemafyChoreography*> Old;
 	for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
@@ -357,6 +374,16 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	}
 	for (ACinemafyChoreography* Choreo : Old)
 	{
+		const FString Label = Choreo->GetActorLabel();
+		const FString* Generated = Scene->GeneratedPrints.Find(Label);
+		if (Generated && *Generated != CinemafyRevision::BeatPrint(Choreo))
+		{
+			Choreo->Modify();
+			Choreo->SetActorLabel(TEXT("Edited_") + Label);
+			Choreo->bIncludeInTakes = false;
+			Report.Add(FString::Printf(TEXT("Kept your edits: %s is now Edited_%s (out of takes). Copy beats across, or delete it."), *Label, *Label));
+			continue;
+		}
 		World->EditorDestroyActor(Choreo, true);
 	}
 	// Other choreographies in the level sit this take out (Include In Takes is turned off on them; turn it back on to mix them in).
@@ -472,9 +499,11 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		}
 		++BeatCount;
 	}
+	Project->Modify();
 	for (const TPair<FString, ACinemafyChoreography*>& Pair : Choreos)
 	{
 		Pair.Value->RefreshLabels();
+		Scene->GeneratedPrints.Add(Pair.Value->GetActorLabel(), CinemafyRevision::BeatPrint(Pair.Value));
 	}
 	Report.Add(FString::Printf(TEXT("Staged %d beat(s) for %d character(s)."), BeatCount, Choreos.Num()));
 	for (const FString& Clause : NotStaged)
@@ -497,6 +526,12 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	{
 		Director = UCinemafyEditorLibrary::CreateDirectorForScene(Project, Scene->Id);
 	}
+	else if (Scene->IsOutOfDate())
+	{
+		const int32 Changed = UCinemafyEditorLibrary::RefreshDirectorFromScript(Director);
+		Report.Add(FString::Printf(TEXT("The script changed: %d of the director's line(s) updated (unchanged lines keep your tweaks)."), FMath::Max(0, Changed)));
+	}
+	Scene->StagedHash = Scene->ContentHash;
 
 	ACinemafyChoreography* Primary = nullptr;
 	for (const TPair<FString, ACinemafyChoreography*>& Pair : Choreos)
@@ -529,6 +564,88 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		CinemafyChoreoTake::PerformAndRecord(Primary, /*bAskAboutProblems*/ false);
 		Report.Add(TEXT("Recording: play stops by itself, then the take is baked and cut into the scene's sequence."));
 	}
+	const FString Text = FString::Join(Report, TEXT("\n"));
+	UE_LOG(LogCinemafy, Log, TEXT("%s"), *Text);
+	return Text;
+}
+
+FString UCinemafyStoryLibrary::UpdateChangedScenes(UCinemafyScriptProject* Project)
+{
+	UWorld* World = CinemafyStory::EditorWorld();
+	if (!Project || !World)
+	{
+		return TEXT("No script project, or no level open.");
+	}
+	if (GEditor->PlayWorld)
+	{
+		return TEXT("Stop the play session first.");
+	}
+	TArray<FString> Report;
+	TArray<FString> Ids;
+	for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		if (Scene->IsOutOfDate() && Scene->Status != ECinemafySceneStatus::Cut)
+		{
+			Ids.Add(Scene->Id);
+		}
+	}
+	int32 Updated = 0;
+	for (const FString& Id : Ids)
+	{
+		FCinemafyScriptScene* Scene = Project->FindScene(Id);
+		if (!Scene->Level.IsNull() && Scene->Level.ToSoftObjectPath() != FSoftObjectPath(World))
+		{
+			Report.Add(FString::Printf(TEXT("%s %s: staged in %s; open it and update again."), *Scene->Id, *Scene->Heading, *Scene->Level.GetAssetName()));
+			continue;
+		}
+		const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *Scene->Id.Replace(TEXT("."), TEXT("_")));
+		bool bPrevisd = false;
+		for (TActorIterator<ACinemafyChoreography> It(World); It && !bPrevisd; ++It)
+		{
+			bPrevisd = It->GetActorLabel().StartsWith(Prefix);
+		}
+		if (bPrevisd)
+		{
+			Report.Add(PrevisScene(Project, Id, false));
+			Report.Add(TEXT("  Re-staged: Perform & Record (or Previs) to shoot the new version."));
+			++Updated;
+			continue;
+		}
+		ACinemafySceneDirector* Director = nullptr;
+		for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+		{
+			if (It->ScriptProject == Project && It->ScriptSceneId == Scene->Id)
+			{
+				Director = *It;
+				break;
+			}
+		}
+		if (Director)
+		{
+			const int32 Changed = UCinemafyEditorLibrary::RefreshDirectorFromScript(Director);
+			Report.Add(FString::Printf(TEXT("%s %s: %d director line(s) updated. Direct again to re-cut."), *Scene->Id, *Scene->Heading, FMath::Max(0, Changed)));
+			++Updated;
+		}
+		else
+		{
+			Report.Add(FString::Printf(TEXT("%s %s: nothing of it in this level; Previs it again."), *Scene->Id, *Scene->Heading));
+		}
+	}
+
+	// The booth's list.
+	for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		for (const FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (Line.bNeedsRerecord)
+			{
+				Report.Add(FString::Printf(TEXT("Re-record %s (%s): \"%s\" (was \"%s\")"), *Line.LineId, *Line.Speaker, *Line.Text, *Line.PreviousText));
+			}
+		}
+	}
+	Report.Insert(Ids.Num() == 0 ? FString(TEXT("Every staged scene matches the script.")) :
+		FString::Printf(TEXT("Updated %d of %d out-of-date scene(s)."), Updated, Ids.Num()), 0);
+	Project->MarkPackageDirty();
 	const FString Text = FString::Join(Report, TEXT("\n"));
 	UE_LOG(LogCinemafy, Log, TEXT("%s"), *Text);
 	return Text;
@@ -948,6 +1065,8 @@ int32 UCinemafyStoryLibrary::AssignRecordedVoices(UCinemafyScriptProject* Projec
 			}
 			Line.Audio = Sound;
 			Line.bScratchAudio = false;
+			Line.bNeedsRerecord = false;
+			Line.PreviousText.Reset();
 			CinemafyVoices::ShareWithDirectors(World, Line.Text, Sound);
 			++Matched;
 		}

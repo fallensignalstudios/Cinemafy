@@ -1588,7 +1588,7 @@ FCinemafyScriptScene* UCinemafyScriptProject::FindScene(const FString& SceneId)
 
 void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 {
-	// Keep production work for scenes that are still there: matched by heading and first line, then by heading alone.
+	// The script as it was: every scene, to carry production work across and to see what changed.
 	struct FKept { FString Key; FString Heading; FCinemafyScriptScene Scene; bool bUsed = false; };
 	TArray<FKept> Kept;
 	auto KeyFor = [](const FCinemafyScriptScene& Scene)
@@ -1604,19 +1604,22 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		}
 		return CinemafyScriptText::Normalize(Scene.Heading) + TEXT("|") + CinemafyScriptText::Normalize(First);
 	};
+	const bool bReimport = GetAllScenes().Num() > 0;
 	for (const FCinemafyScriptScene* Scene : GetAllScenes())
 	{
-		if (Scene->Status != ECinemafySceneStatus::NotStarted || !Scene->Notes.IsEmpty() || !Scene->DirectorLabel.IsEmpty() || !Scene->Sequence.IsNull() || Scene->ReviewNotes.Num() > 0)
+		FCinemafyScriptScene Copy = *Scene;
+		if (Copy.ContentHash.IsEmpty())
 		{
-			Kept.Add(FKept{ KeyFor(*Scene), CinemafyScriptText::Normalize(Scene->Heading), *Scene });
+			Copy.ContentHash = UCinemafyScriptLibrary::ComputeContentHash(Copy);
 		}
+		Kept.Add(FKept{ KeyFor(Copy), CinemafyScriptText::Normalize(Copy.Heading), MoveTemp(Copy) });
 	}
 
 	// Voice-over follows its line (by id), so a re-import keeps recorded and scratch audio.
 	TMap<FString, TPair<TSoftObjectPtr<USoundBase>, bool>> LineAudio;
-	for (const FCinemafyScriptScene* Scene : GetAllScenes())
+	for (const FKept& Old : Kept)
 	{
-		for (const FCinemafyScriptLine& Line : Scene->Lines)
+		for (const FCinemafyScriptLine& Line : Old.Scene.Lines)
 		{
 			if (!Line.LineId.IsEmpty() && !Line.Audio.IsNull())
 			{
@@ -1659,42 +1662,111 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 				Line.bScratchAudio = KeptAudio->Value;
 			}
 		}
+		Scene->ContentHash = UCinemafyScriptLibrary::ComputeContentHash(*Scene);
 	}
 	if (Title.IsEmpty())
 	{
 		Title = FoundTitle.IsEmpty() ? GetName() : FoundTitle;
 	}
 
+	// Match each scene to the one it was: same heading and first line, else same heading, else the same words.
 	int32 Carried = 0;
+	TArray<FString> Rewritten, Added, Rerecord;
 	for (FCinemafyScriptScene* Scene : GetAllScenes())
 	{
 		const FString Key = KeyFor(*Scene);
+		const FString Heading = CinemafyScriptText::Normalize(Scene->Heading);
 		FKept* Match = Kept.FindByPredicate([&Key](const FKept& K) { return !K.bUsed && K.Key == Key; });
 		if (!Match)
 		{
-			const FString Heading = CinemafyScriptText::Normalize(Scene->Heading);
 			Match = Kept.FindByPredicate([&Heading](const FKept& K) { return !K.bUsed && !Heading.IsEmpty() && K.Heading == Heading; });
 		}
-		if (Match)
+		if (!Match)
 		{
-			Match->bUsed = true;
-			Scene->Status = Match->Scene.Status;
-			Scene->Sequence = Match->Scene.Sequence;
-			Scene->Level = Match->Scene.Level;
-			Scene->DirectorLabel = Match->Scene.DirectorLabel;
-			Scene->MatchScore = Match->Scene.MatchScore;
-			Scene->Notes = Match->Scene.Notes;
-			Scene->Takes = Match->Scene.Takes;
-			Scene->ReviewNotes = Match->Scene.ReviewNotes;
-			Scene->DailiesFolder = Match->Scene.DailiesFolder;
-			++Carried;
+			Match = Kept.FindByPredicate([Scene](const FKept& K) { return !K.bUsed && K.Scene.ContentHash == Scene->ContentHash; });
+		}
+		if (!Match)
+		{
+			Scene->Revision = ECinemafySceneRevision::New;
+			if (bReimport)
+			{
+				Added.Add(FString::Printf(TEXT("%s %s"), *Scene->Id, *Scene->Heading));
+			}
+			continue;
+		}
+		Match->bUsed = true;
+		const FCinemafyScriptScene& Old = Match->Scene;
+		Scene->Status = Old.Status;
+		Scene->Sequence = Old.Sequence;
+		Scene->Level = Old.Level;
+		Scene->DirectorLabel = Old.DirectorLabel;
+		Scene->MatchScore = Old.MatchScore;
+		Scene->Notes = Old.Notes;
+		Scene->Takes = Old.Takes;
+		Scene->ReviewNotes = Old.ReviewNotes;
+		Scene->DailiesFolder = Old.DailiesFolder;
+		Scene->StagedHash = Old.StagedHash;
+		Scene->GeneratedPrints = Old.GeneratedPrints;
+		Scene->Revision = Old.ContentHash == Scene->ContentHash ? ECinemafySceneRevision::Unchanged : ECinemafySceneRevision::Rewritten;
+		++Carried;
+		if (Scene->Revision != ECinemafySceneRevision::Rewritten)
+		{
+			continue;
+		}
+		Rewritten.Add(FString::Printf(TEXT("%s %s"), *Scene->Id, *Scene->Heading));
+
+		// Lines rewritten after recording: the Nth line of each speaker, compared with what it was.
+		TMap<FString, TArray<const FCinemafyScriptLine*>> OldBySpeaker;
+		for (const FCinemafyScriptLine& Line : Old.Lines)
+		{
+			if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+			{
+				OldBySpeaker.FindOrAdd(Line.Speaker).Add(&Line);
+			}
+		}
+		TMap<FString, int32> Seen;
+		for (FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (Line.Kind != ECinemafyScriptLineKind::Dialogue)
+			{
+				continue;
+			}
+			const int32 Nth = Seen.FindOrAdd(Line.Speaker)++;
+			const TArray<const FCinemafyScriptLine*>* Theirs = OldBySpeaker.Find(Line.Speaker);
+			const FCinemafyScriptLine* Before = Theirs && Theirs->IsValidIndex(Nth) ? (*Theirs)[Nth] : nullptr;
+			if (Before && Before->LineId != Line.LineId && !Before->Audio.IsNull() && !Before->bScratchAudio && Line.Audio.IsNull())
+			{
+				Line.bNeedsRerecord = true;
+				Line.PreviousText = Before->Text;
+				Rerecord.Add(FString::Printf(TEXT("%s %s: \"%s\""), *Scene->Id, *Line.Speaker, *Line.Text.Left(50)));
+			}
 		}
 	}
-	const int32 Lost = Kept.FilterByPredicate([](const FKept& K) { return !K.bUsed; }).Num();
-	if (Kept.Num() > 0)
+	TArray<FString> Removed;
+	for (const FKept& Old : Kept)
 	{
-		BreakdownReport += FString::Printf(TEXT("\nKept production status for %d scene(s)%s."), Carried,
-			Lost > 0 ? *FString::Printf(TEXT("; %d scene(s) with status no longer match the script (check the old checklist)"), Lost) : TEXT(""));
+		if (!Old.bUsed)
+		{
+			const bool bHadWork = Old.Scene.Status != ECinemafySceneStatus::NotStarted || !Old.Scene.Sequence.IsNull();
+			Removed.Add(FString::Printf(TEXT("%s %s%s"), *Old.Scene.Id, *Old.Scene.Heading, bHadWork ? TEXT(" (had production work: its sequence and director are still in the project)") : TEXT("")));
+		}
+	}
+
+	// What changed, in plain words.
+	TArray<FString> Revision;
+	if (bReimport)
+	{
+		Revision.Add(FString::Printf(TEXT("Revision: %d rewritten, %d new, %d removed, %d line(s) to re-record."), Rewritten.Num(), Added.Num(), Removed.Num(), Rerecord.Num()));
+		for (const FString& Item : Rewritten) { Revision.Add(TEXT("  Rewritten: ") + Item); }
+		for (const FString& Item : Added) { Revision.Add(TEXT("  New: ") + Item); }
+		for (const FString& Item : Removed) { Revision.Add(TEXT("  Removed: ") + Item); }
+		for (const FString& Item : Rerecord) { Revision.Add(TEXT("  Re-record: ") + Item); }
+		BreakdownReport += FString::Printf(TEXT("\nKept production work for %d scene(s)."), Carried);
+	}
+	RevisionReport = FString::Join(Revision, TEXT("\n"));
+	if (!RevisionReport.IsEmpty())
+	{
+		BreakdownReport += TEXT("\n") + RevisionReport;
 	}
 
 	// The cast, most lines first.
@@ -2008,4 +2080,15 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 		Delivery.Cue = TEXT("shouted");
 	}
 	return Delivery;
+}
+
+FString UCinemafyScriptLibrary::ComputeContentHash(const FCinemafyScriptScene& Scene)
+{
+	FString Words = CinemafyScriptText::Normalize(Scene.Heading);
+	for (const FCinemafyScriptLine& Line : Scene.Lines)
+	{
+		Words += FString::Printf(TEXT("|%d|%s|%s|%s"), static_cast<int32>(Line.Kind), *CinemafyScriptText::Normalize(Line.Speaker),
+			*CinemafyScriptText::Normalize(Line.Direction), *CinemafyScriptText::Normalize(Line.Text));
+	}
+	return FString::Printf(TEXT("%08X"), FCrc::StrCrc32(*Words));
 }

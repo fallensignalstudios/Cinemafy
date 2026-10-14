@@ -254,6 +254,12 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 					const int32 Voiced = UCinemafyStoryLibrary::GenerateScratchVoices(P, FString(), false);
 					FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("Voiced", "Voiced {0} line(s). Previs or re-Direct scenes to hear them; faces with Cinemafy Face talk along."), Voiced));
 				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("UpdateChanged", "Update Changed"), LOCTEXT("UpdateChangedTip", "After re-importing a revised script: re-stage the scenes whose pages changed (hand-edited choreographies are kept), refill their directors' lines, and list lines to re-record."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					const FString Report = UCinemafyStoryLibrary::UpdateChangedScenes(P);
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Map", "Map Scenes"), LOCTEXT("MapTip", "Find this level's Scene Directors and mark their scenes' progress."),
 				WithProject([](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::MapScriptScenesInLevel(P); })) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Masters", "Cut Together"), LOCTEXT("MastersTip", "Build a master sequence per act and for the whole story, and open it."),
@@ -396,6 +402,35 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 				Tip += FString::Printf(TEXT("\nNote (%s): %s"), *Note.Author, *Note.Text);
 			}
 		}
+	}
+	if (Scene.IsOutOfDate())
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("OutOfDate", "Out of date: the script changed"))
+			.ColorAndOpacity(FLinearColor(1.f, 0.55f, 0.1f))
+		];
+		Tip += TEXT("\nThe pages changed since this scene was staged: Update Changed, or Previs again.");
+	}
+	else if (Scene.Revision == ECinemafySceneRevision::Rewritten || (Scene.Revision == ECinemafySceneRevision::New && Project.IsValid() && !Project->RevisionReport.IsEmpty()))
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(Scene.Revision == ECinemafySceneRevision::New ? LOCTEXT("RevNew", "New in this revision") : LOCTEXT("RevRewritten", "Rewritten in this revision"))
+			.ColorAndOpacity(FLinearColor(0.5f, 0.8f, 1.f))
+		];
+	}
+	const int32 Rerecord = Scene.Lines.FilterByPredicate([](const FCinemafyScriptLine& Line) { return Line.bNeedsRerecord; }).Num();
+	if (Rerecord > 0)
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::Format(LOCTEXT("Rerecord", "{0} line(s) to re-record"), Rerecord))
+			.ColorAndOpacity(FLinearColor(1.f, 0.55f, 0.1f))
+		];
 	}
 	if (Scene.Warnings.Num() > 0)
 	{

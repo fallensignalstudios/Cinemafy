@@ -50,6 +50,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static FString PrevisScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bRecord = true);
 
+	/**
+	 * After a script revision: brings every out-of-date scene in the open level up to the new pages. Previs'd
+	 * scenes are re-staged (without recording; hand-edited choreographies are kept as Edited_...), directed-only
+	 * scenes get their lines refilled (unchanged lines keep their tweaks). Scenes on other levels are listed.
+	 * Returns a report, including lines that need re-recording.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString UpdateChangedScenes(UCinemafyScriptProject* Project);
+
 	/** The scene's Level Sequence (/Game/Cinemafy/Scenes/SC_<id>_<place>), made if it doesn't exist yet, opened in Sequencer. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static ULevelSequence* OpenSceneSequence(UCinemafyScriptProject* Project, const FString& SceneId);

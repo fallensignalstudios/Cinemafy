@@ -29,6 +29,15 @@ enum class ECinemafySceneStatus : uint8
 	Cut         UMETA(DisplayName = "Cut")
 };
 
+/** What the last re-import did to a scene. */
+UENUM(BlueprintType)
+enum class ECinemafySceneRevision : uint8
+{
+	Unchanged  UMETA(DisplayName = "Unchanged"),
+	Rewritten  UMETA(DisplayName = "Rewritten"),
+	New        UMETA(DisplayName = "New")
+};
+
 /** What kind of script paragraph a line is. */
 UENUM(BlueprintType)
 enum class ECinemafyScriptLineKind : uint8
@@ -69,6 +78,14 @@ struct CINEMAFY_API FCinemafyScriptLine
 	/** Audio is a generated scratch read, waiting for the real performance. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
 	bool bScratchAudio = false;
+
+	/** The line was rewritten after its voice-over was recorded: it needs recording again. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
+	bool bNeedsRerecord = false;
+
+	/** What it said before the rewrite (for the booth). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
+	FString PreviousText;
 };
 
 /** Something that has to stay true across scenes: an injury, a weapon in hand, a costume, a death. */
@@ -298,6 +315,27 @@ struct CINEMAFY_API FCinemafyScriptScene
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production", meta = (TitleProperty = "{Author}: {Text}"))
 	TArray<FCinemafyReviewNote> ReviewNotes;
 
+	// --- Revisions ------------------------------------------------------------------------------------------------
+
+	/** A fingerprint of the scene's words (heading, action, dialogue, directions). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Revision")
+	FString ContentHash;
+
+	/** The fingerprint when it was last staged or given a director: differs = the script changed since. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Revision")
+	FString StagedHash;
+
+	/** What the last re-import did to it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Revision")
+	ECinemafySceneRevision Revision = ECinemafySceneRevision::New;
+
+	/** Fingerprints of what was generated for it (choreography / director label -> beats), to spot hand edits. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Revision", AdvancedDisplay)
+	TMap<FString, FString> GeneratedPrints;
+
+	/** Staged (or directed) from an older version of the script. */
+	bool IsOutOfDate() const { return !StagedHash.IsEmpty() && StagedHash != ContentHash; }
+
 	/** Rendered dailies for the current take (folder). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Production")
 	FString DailiesFolder;
@@ -423,6 +461,10 @@ public:
 	const FCinemafyCastMember* FindCastMember(const FString& ScriptName) const;
 	const FCinemafySet* FindSet(const FString& ScriptLocation) const;
 
+	/** What the last re-import changed: rewritten, new and removed scenes, lines to re-record. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Script", meta = (MultiLine = true))
+	FString RevisionReport;
+
 	/** What the breakdown found and decided. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Script", meta = (MultiLine = true))
 	FString BreakdownReport;
@@ -495,6 +537,9 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static FCinemafyDelivery ReadDelivery(const FString& Direction, const FString& Text);
+
+	/** A fingerprint of a scene's words (what Revision and Out of Date compare). */
+	static FString ComputeContentHash(const FCinemafyScriptScene& Scene);
 
 	/** Points choice and divert targets at scene ids (after a breakdown or an edit). */
 	static void ResolveStoryTargets(TArray<FCinemafyScriptAct>& Acts);

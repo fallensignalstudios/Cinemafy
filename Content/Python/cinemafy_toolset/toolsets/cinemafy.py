@@ -818,6 +818,42 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def script_revision(project: unreal.CinemafyScriptProject) -> str:
+        """What the last re-import of a revised script changed, and which staged scenes are now out of date.
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            The revision report (rewritten / new / removed scenes, lines to re-record) and the out-of-date scene ids.
+        """
+        stale = []
+        for act in project.get_editor_property('acts'):
+            for chapter in act.get_editor_property('chapters'):
+                for scene in chapter.get_editor_property('scenes'):
+                    staged = scene.get_editor_property('staged_hash')
+                    if staged and staged != scene.get_editor_property('content_hash'):
+                        stale.append(f"{scene.get_editor_property('id')} {scene.get_editor_property('heading')}")
+        report = project.get_editor_property('revision_report') or 'No revision yet (first import).'
+        return report + '\nOut of date: ' + (', '.join(stale) if stale else 'none')
+
+    @_tool
+    @staticmethod
+    def update_changed_scenes(project: unreal.CinemafyScriptProject) -> str:
+        """After re-importing a revised script, brings every out-of-date scene in the open level up to the new pages:
+        previs'd scenes are re-staged without recording (hand-edited choreographies are kept as Edited_...),
+        directed-only scenes get their lines refilled (unchanged lines keep their tweaks).
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            What was updated, what needs another level open, and lines that need re-recording.
+        """
+        return unreal.CinemafyStoryLibrary.update_changed_scenes(project)
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

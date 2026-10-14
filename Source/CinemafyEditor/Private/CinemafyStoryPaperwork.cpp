@@ -205,9 +205,9 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 			}
 			const FString File = Line.LineId + TEXT(".wav");
 			Script.Add(FString::Printf(TEXT("| %s | %s %s | %s | %s | %s |"), *File, *Scene->Id, *Scene->Heading.Replace(TEXT("|"), TEXT("/")),
-				*Cue.Replace(TEXT("|"), TEXT("/")), *Line.Direction, *Line.Text.Replace(TEXT("|"), TEXT("/"))));
+				*Cue.Replace(TEXT("|"), TEXT("/")), *Line.Direction, *(Line.bNeedsRerecord ? TEXT("**RE-RECORD** ") + Line.Text.Replace(TEXT("|"), TEXT("/")) + TEXT(" (was: ") + Line.PreviousText.Replace(TEXT("|"), TEXT("/")) + TEXT(")") : Line.Text.Replace(TEXT("|"), TEXT("/")))));
 			BoothCsv.FindOrAdd(Line.Speaker).Add(FString::Printf(TEXT("%s,%s,%d,%s,%s,%s,%s"), *Csv(File), *Csv(Scene->Id), Number, *Csv(Cue), *Csv(Line.Direction), *Csv(Line.Text),
-				*Csv(Line.Audio.IsNull() ? TEXT("to record") : (Line.bScratchAudio ? TEXT("scratch only") : TEXT("recorded")))));
+				*Csv(Line.bNeedsRerecord ? TEXT("re-record (rewritten)") : Line.Audio.IsNull() ? TEXT("to record") : (Line.bScratchAudio ? TEXT("scratch only") : TEXT("recorded")))));
 			Cue = FString::Printf(TEXT("%s: %s"), *Line.Speaker, *Line.Text.Left(60));
 		}
 	}

@@ -1221,4 +1221,64 @@ bool FCinemafyDeliveryTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyRevisionTest, "Cinemafy.Script.RevisionsFindWhatChanged", CinemafyTests::Flags)
+bool FCinemafyRevisionTest::RunTest(const FString& Parameters)
+{
+	const FString Draft1 = TEXT(
+		"INT. BRIDGE - NIGHT\n\n"
+		"KADE\nStand down, Admiral.\n\n"
+		"THANE\nMake me.\n\n"
+		"EXT. HANGAR - DAY\n\n"
+		"THANE\nYou'll regret this.\n");
+	const FString Draft2 = TEXT(
+		"INT. BRIDGE - NIGHT\n\n"
+		"KADE\nStand down, Thane. Now.\n\n"
+		"THANE\nMake me.\n\n"
+		"EXT. HANGAR - DAY\n\n"
+		"THANE\nYou'll regret this.\n\n"
+		"INT. BRIG - NIGHT\n\n"
+		"KADE\nComfortable?\n");
+	UCinemafyScriptProject* Project = NewObject<UCinemafyScriptProject>(GetTransientPackage());
+	Project->bInferActs = false;
+	Project->BreakDown(Draft1);
+	TestTrue(TEXT("A first import is no revision"), Project->RevisionReport.IsEmpty());
+	TArray<FCinemafyScriptScene*> Scenes = Project->GetAllScenes();
+	if (!TestEqual(TEXT("Two scenes"), Scenes.Num(), 2))
+	{
+		return false;
+	}
+	// The bridge is staged, and Kade's line was recorded.
+	const FSoftObjectPath Recorded(TEXT("/Game/VO/Kade_Bridge.Kade_Bridge"));
+	Scenes[0]->StagedHash = Scenes[0]->ContentHash;
+	Scenes[0]->Status = ECinemafySceneStatus::Recorded;
+	for (FCinemafyScriptLine& Line : Scenes[0]->Lines)
+	{
+		if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+		{
+			Line.Audio = TSoftObjectPtr<USoundBase>(Recorded);
+		}
+	}
+	TestFalse(TEXT("Staged from these pages: up to date"), Scenes[0]->IsOutOfDate());
+
+	Project->BreakDown(Draft2);
+	Scenes = Project->GetAllScenes();
+	if (!TestEqual(TEXT("Three scenes after the revision"), Scenes.Num(), 3))
+	{
+		return false;
+	}
+	const FCinemafyScriptScene& Bridge = *Scenes[0];
+	TestEqual(TEXT("The bridge was rewritten"), static_cast<int32>(Bridge.Revision), static_cast<int32>(ECinemafySceneRevision::Rewritten));
+	TestTrue(TEXT("...so its staging is out of date"), Bridge.IsOutOfDate());
+	TestEqual(TEXT("...and its production work is kept"), static_cast<int32>(Bridge.Status), static_cast<int32>(ECinemafySceneStatus::Recorded));
+	const FCinemafyScriptLine* Kade = Bridge.Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Speaker == TEXT("KADE"); });
+	TestTrue(TEXT("Kade's rewritten line needs re-recording"), Kade && Kade->bNeedsRerecord && Kade->PreviousText == TEXT("Stand down, Admiral."));
+	const FCinemafyScriptLine* Thane = Bridge.Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Speaker == TEXT("THANE"); });
+	TestTrue(TEXT("Thane's unchanged line keeps its recording"), Thane && !Thane->bNeedsRerecord && Thane->Audio.ToSoftObjectPath() == Recorded);
+	TestEqual(TEXT("The hangar didn't change"), static_cast<int32>(Scenes[1]->Revision), static_cast<int32>(ECinemafySceneRevision::Unchanged));
+	TestFalse(TEXT("...and was never staged, so it isn't out of date"), Scenes[1]->IsOutOfDate());
+	TestEqual(TEXT("The brig is new"), static_cast<int32>(Scenes[2]->Revision), static_cast<int32>(ECinemafySceneRevision::New));
+	TestTrue(TEXT("The report counts it all"), Project->RevisionReport.Contains(TEXT("1 rewritten, 1 new, 0 removed, 1 line(s) to re-record")));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
