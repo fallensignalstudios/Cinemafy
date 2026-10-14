@@ -1562,6 +1562,7 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 			Scene->DirectorLabel = Match->Scene.DirectorLabel;
 			Scene->MatchScore = Match->Scene.MatchScore;
 			Scene->Notes = Match->Scene.Notes;
+			Scene->Takes = Match->Scene.Takes;
 			++Carried;
 		}
 	}

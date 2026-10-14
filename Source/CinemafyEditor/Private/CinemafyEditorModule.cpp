@@ -3,6 +3,7 @@
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
 #include "SCinemafyHub.h"
+#include "SCinemafyStoryBoard.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreoTools.h"
@@ -211,7 +212,7 @@ void FCinemafyEditorModule::StartupModule()
 			break;
 		}
 		case ECinemafyScriptRequest::OpenStoryBoard:
-			FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("CinemafyStoryBoard")));
+			UCinemafyStoryLibrary::OpenStoryBoard(Project);
 			break;
 		case ECinemafyScriptRequest::ExportChecklist:
 		{
@@ -236,6 +237,19 @@ void FCinemafyEditorModule::StartupModule()
 		}))
 		.SetDisplayName(LOCTEXT("ShotBrowserTab", "Cinemafy Shot Browser"))
 		.SetTooltipText(LOCTEXT("ShotBrowserTabTip", "Film strip of every camera cut in the open Level Sequence."))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyStoryBoard::TabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				[
+					SNew(SCinemafyStoryBoard)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("StoryBoardTab", "Cinemafy Story Board"))
+		.SetTooltipText(LOCTEXT("StoryBoardTabTip", "Every scene of your script as a card: previs, direct, track."))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyHub::TabName,
@@ -304,6 +318,7 @@ void FCinemafyEditorModule::ShutdownModule()
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyShotBrowser::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyHub::TabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyStoryBoard::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyEditPanel::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyMulticam::TabName);
 	}

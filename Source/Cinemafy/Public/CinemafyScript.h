@@ -151,9 +151,13 @@ struct CINEMAFY_API FCinemafyScriptScene
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production")
 	ECinemafySceneStatus Status = ECinemafySceneStatus::NotStarted;
 
-	/** The Level Sequence that holds this scene. */
+	/** The Level Sequence that holds this scene (the current take). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production")
 	TSoftObjectPtr<ULevelSequence> Sequence;
+
+	/** Earlier takes, kept side by side (New Take copies the current one here first). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production")
+	TArray<TSoftObjectPtr<ULevelSequence>> Takes;
 
 	/** The level it's shot in. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production")
@@ -216,6 +220,10 @@ struct CINEMAFY_API FCinemafyScriptAct
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Act", meta = (TitleProperty = "{Id} {Title}"))
 	TArray<FCinemafyScriptChapter> Chapters;
+
+	/** Every scene of the act cut together (Build Master Sequences). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Act")
+	TSoftObjectPtr<ULevelSequence> MasterSequence;
 };
 
 /** What the editor should do for a script project (the runtime module can't touch levels or Sequencer). */
@@ -259,6 +267,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Script", meta = (TitleProperty = "{Id} {Title}"))
 	TArray<FCinemafyScriptAct> Acts;
+
+	/** The whole story cut together, scene after scene (Build Master Sequences). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Script")
+	TSoftObjectPtr<ULevelSequence> FilmSequence;
 
 	/** Everyone with a line, most lines first. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Script")

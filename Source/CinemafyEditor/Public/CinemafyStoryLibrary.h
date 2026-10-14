@@ -53,6 +53,33 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static ULevelSequence* OpenSceneSequence(UCinemafyScriptProject* Project, const FString& SceneId);
 
+	// --- Story board -----------------------------------------------------------------------------------------------
+
+	/**
+	 * Cuts the story together: a master sequence per act and one for the whole film (/Game/Cinemafy/Masters),
+	 * each scene's sequence placed back to back on a shot track in script order. Returns the film master.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static ULevelSequence* BuildMasterSequences(UCinemafyScriptProject* Project);
+
+	/** Keeps the scene's current take and starts a new one from a copy of it (_T02, _T03...). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static ULevelSequence* NewTake(UCinemafyScriptProject* Project, const FString& SceneId);
+
+	/** Makes an earlier take the scene's current one (the current one joins the takes). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static bool UseTake(UCinemafyScriptProject* Project, const FString& SceneId, int32 TakeIndex);
+
+	/**
+	 * Moves a scene earlier (-1) or later (+1) within its chapter; scene ids are renumbered and Scene Directors in
+	 * the open level that point at moved scenes follow them.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static bool MoveScene(UCinemafyScriptProject* Project, const FString& SceneId, int32 Delta);
+
+	/** Opens the Story Board on a project. */
+	static void OpenStoryBoard(UCinemafyScriptProject* Project);
+
 	/** The actor playing a script character in a world: the cast entry's label, else a matching character label. */
 	static AActor* FindCastActor(const UCinemafyScriptProject* Project, const FString& ScriptName, UWorld* World);
 };

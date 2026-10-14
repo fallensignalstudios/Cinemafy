@@ -7,6 +7,13 @@
 #include "IAssetTools.h"
 #include "LevelSequence.h"
 #include "MovieScene.h"
+#include "SCinemafyStoryBoard.h"
+#include "Sections/MovieSceneSubSection.h"
+#include "Tracks/MovieSceneCinematicShotTrack.h"
+#include "Framework/Docking/TabManager.h"
+#include "Misc/PackageName.h"
+#include "MovieSceneTimeHelpers.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyModule.h"
@@ -499,6 +506,213 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	const FString Text = FString::Join(Report, TEXT("\n"));
 	UE_LOG(LogCinemafy, Log, TEXT("%s"), *Text);
 	return Text;
+}
+
+namespace CinemafyStory
+{
+	ULevelSequence* MakeMaster(const FString& Name)
+	{
+		const FString PackageName = FString::Printf(TEXT("/Game/Cinemafy/Masters/%s"), *Name);
+		ULevelSequence* Sequence = LoadObject<ULevelSequence>(nullptr, *(PackageName + TEXT(".") + Name), nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (!Sequence)
+		{
+			UPackage* Package = CreatePackage(*PackageName);
+			Sequence = NewObject<ULevelSequence>(Package, *Name, RF_Public | RF_Standalone | RF_Transactional);
+			Sequence->Initialize();
+			Sequence->GetMovieScene()->SetDisplayRate(FFrameRate(30, 1));
+			FAssetRegistryModule::AssetCreated(Sequence);
+		}
+		// Rebuilt from scratch: the shot track is Cinemafy's.
+		UMovieScene* MovieScene = Sequence->GetMovieScene();
+		if (UMovieSceneTrack* Old = MovieScene->FindTrack<UMovieSceneCinematicShotTrack>())
+		{
+			MovieScene->RemoveTrack(*Old);
+		}
+		Sequence->MarkPackageDirty();
+		return Sequence;
+	}
+
+	/** Places scenes back to back; returns the end (master ticks). */
+	FFrameNumber LayScenes(ULevelSequence* Master, const TArray<const FCinemafyScriptScene*>& Scenes, int32& OutMissing)
+	{
+		UMovieScene* MovieScene = Master->GetMovieScene();
+		UMovieSceneCinematicShotTrack* Track = MovieScene->AddTrack<UMovieSceneCinematicShotTrack>();
+		const FFrameRate Resolution = MovieScene->GetTickResolution();
+		FFrameNumber Time(0);
+		for (const FCinemafyScriptScene* Scene : Scenes)
+		{
+			ULevelSequence* Sub = Scene->Status == ECinemafySceneStatus::Cut ? nullptr : Scene->Sequence.LoadSynchronous();
+			if (!Sub)
+			{
+				OutMissing += Scene->Status == ECinemafySceneStatus::Cut ? 0 : 1;
+				continue;
+			}
+			const UMovieScene* SubScene = Sub->GetMovieScene();
+			const TRange<FFrameNumber> Range = SubScene->GetPlaybackRange();
+			const double Seconds = SubScene->GetTickResolution().AsSeconds(FFrameTime(UE::MovieScene::DiscreteSize(Range)));
+			const int32 Duration = FMath::Max(1, Resolution.AsFrameNumber(Seconds).Value);
+			if (UMovieSceneSubSection* Section = Track->AddSequence(Sub, Time, Duration))
+			{
+				Section->SetRowIndex(0);
+			}
+			Time += Duration;
+		}
+		MovieScene->SetPlaybackRange(0, FMath::Max(Time.Value, 1));
+		return Time;
+	}
+}
+
+ULevelSequence* UCinemafyStoryLibrary::BuildMasterSequences(UCinemafyScriptProject* Project)
+{
+	if (!Project)
+	{
+		return nullptr;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("BuildMasters", "Cinemafy: Build Master Sequences"));
+	Project->Modify();
+	const FString Title = FPaths::MakeValidFileName(Project->Title.IsEmpty() ? Project->GetName() : Project->Title).Replace(TEXT(" "), TEXT("_"));
+	int32 Missing = 0;
+	TArray<const FCinemafyScriptScene*> Everything;
+	for (FCinemafyScriptAct& Act : Project->Acts)
+	{
+		TArray<const FCinemafyScriptScene*> ActScenes;
+		for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+			{
+				ActScenes.Add(&Scene);
+				Everything.Add(&Scene);
+			}
+		}
+		ULevelSequence* ActMaster = CinemafyStory::MakeMaster(FString::Printf(TEXT("LS_%s_Act%s"), *Title, *Act.Id));
+		int32 ActMissing = 0;
+		CinemafyStory::LayScenes(ActMaster, ActScenes, ActMissing);
+		Act.MasterSequence = ActMaster;
+	}
+	ULevelSequence* Film = CinemafyStory::MakeMaster(FString::Printf(TEXT("LS_%s_Film"), *Title));
+	CinemafyStory::LayScenes(Film, Everything, Missing);
+	Project->FilmSequence = Film;
+	Project->MarkPackageDirty();
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: built master sequences for %s (%d scene(s) have no sequence yet)."), *Title, Missing);
+	return Film;
+}
+
+ULevelSequence* UCinemafyStoryLibrary::NewTake(UCinemafyScriptProject* Project, const FString& SceneId)
+{
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
+	ULevelSequence* Current = Scene ? Scene->Sequence.LoadSynchronous() : nullptr;
+	if (!Current)
+	{
+		return nullptr;
+	}
+	FString Base = Current->GetName();
+	int32 Underscore = INDEX_NONE;
+	if (Base.FindLastChar(TEXT('_'), Underscore) && Base.Mid(Underscore + 1).StartsWith(TEXT("T")) && Base.Mid(Underscore + 2).IsNumeric())
+	{
+		Base = Base.Left(Underscore);
+	}
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+	const FString Folder = FPackageName::GetLongPackagePath(Current->GetOutermost()->GetName());
+	FString PackageName, AssetName;
+	AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("%s/%s_T%02d"), *Folder, *Base, Scene->Takes.Num() + 2), TEXT(""), PackageName, AssetName);
+	ULevelSequence* Copy = Cast<ULevelSequence>(AssetTools.DuplicateAsset(AssetName, Folder, Current));
+	if (!Copy)
+	{
+		return nullptr;
+	}
+	Project->Modify();
+	Scene->Takes.Add(Current);
+	Scene->Sequence = Copy;
+	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Copy);
+	return Copy;
+}
+
+bool UCinemafyStoryLibrary::UseTake(UCinemafyScriptProject* Project, const FString& SceneId, int32 TakeIndex)
+{
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
+	if (!Scene || !Scene->Takes.IsValidIndex(TakeIndex))
+	{
+		return false;
+	}
+	Project->Modify();
+	const TSoftObjectPtr<ULevelSequence> Chosen = Scene->Takes[TakeIndex];
+	Scene->Takes.RemoveAt(TakeIndex);
+	if (!Scene->Sequence.IsNull())
+	{
+		Scene->Takes.Add(Scene->Sequence);
+	}
+	Scene->Sequence = Chosen;
+	return true;
+}
+
+bool UCinemafyStoryLibrary::MoveScene(UCinemafyScriptProject* Project, const FString& SceneId, int32 Delta)
+{
+	if (!Project || Delta == 0)
+	{
+		return false;
+	}
+	for (FCinemafyScriptAct& Act : Project->Acts)
+	{
+		for (FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			const int32 Index = Chapter.Scenes.IndexOfByPredicate([&SceneId](const FCinemafyScriptScene& S) { return S.Id == SceneId; });
+			const int32 To = Index + FMath::Sign(Delta);
+			if (Index == INDEX_NONE || !Chapter.Scenes.IsValidIndex(To))
+			{
+				continue;
+			}
+			const FScopedTransaction Transaction(LOCTEXT("MoveScene", "Cinemafy: Move Scene"));
+			Project->Modify();
+			Chapter.Scenes.Swap(Index, To);
+
+			// Renumber the whole script, and keep directors pointing at the scenes they shoot.
+			TMap<FString, FString> Renamed;
+			int32 Number = 0;
+			for (int32 A = 0; A < Project->Acts.Num(); ++A)
+			{
+				for (int32 C = 0; C < Project->Acts[A].Chapters.Num(); ++C)
+				{
+					TArray<FCinemafyScriptScene>& Scenes = Project->Acts[A].Chapters[C].Scenes;
+					for (int32 S = 0; S < Scenes.Num(); ++S)
+					{
+						const FString NewId = FString::Printf(TEXT("%d.%d.%d"), A + 1, C + 1, S + 1);
+						if (Scenes[S].Id != NewId)
+						{
+							Renamed.Add(Scenes[S].Id, NewId);
+							Scenes[S].Id = NewId;
+						}
+						Scenes[S].Number = ++Number;
+					}
+				}
+			}
+			if (UWorld* World = CinemafyStory::EditorWorld())
+			{
+				for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+				{
+					if (It->ScriptProject == Project)
+					{
+						if (const FString* NewId = Renamed.Find(It->ScriptSceneId))
+						{
+							It->Modify();
+							It->ScriptSceneId = *NewId;
+						}
+					}
+				}
+			}
+			Project->RefreshContinuity();
+			return true;
+		}
+	}
+	return false;
+}
+
+void UCinemafyStoryLibrary::OpenStoryBoard(UCinemafyScriptProject* Project)
+{
+	TSharedPtr<SDockTab> Tab = FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyStoryBoard::TabName);
+	if (Project)
+	{
+		SCinemafyStoryBoard::SetProject(Project);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE
