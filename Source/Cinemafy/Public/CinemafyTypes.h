@@ -12,6 +12,7 @@ namespace Cinemafy
 	inline const FName LeftEyeBone(TEXT("FACIAL_L_Eye"));
 	inline const FName RightEyeBone(TEXT("FACIAL_R_Eye"));
 	inline const FName HeadBone(TEXT("head"));
+	inline const FName RightHandBone(TEXT("hand_r"));
 }
 
 /** A cinema prime lens kit. Real productions shoot on a handful of primes, not arbitrary zoom values. */
@@ -52,7 +53,11 @@ enum class ECinemafyShotType : uint8
 	/** Walk-and-talk: camera backs up in front of the characters as they walk. */
 	TrackingLead    UMETA(DisplayName = "Walk & Talk: Lead"),
 	/** Walk-and-talk: camera follows behind, over the shoulder. */
-	TrackingFollow  UMETA(DisplayName = "Walk & Talk: Follow")
+	TrackingFollow  UMETA(DisplayName = "Walk & Talk: Follow"),
+	/** Through someone's eyes ("KADE'S POV"): the camera at the Counterpart's eyes, looking at the Subject. Only when asked for. */
+	POV             UMETA(DisplayName = "POV"),
+	/** Tight on a thing ("INSERT - THE DATAPAD"): a prop, or a character's hand. Only when asked for. */
+	Insert          UMETA(DisplayName = "Insert")
 };
 
 /** How a camera operator would be holding the camera. */
@@ -813,6 +818,31 @@ struct FCinemafyLine
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bForceShot"))
 	ECinemafyShotType ForcedShot = ECinemafyShotType::CloseUp;
+
+	/**
+	 * Who or what the forced shot is on (empty = the speaker): the listener for a scripted reaction, a prop for an
+	 * Insert. For a POV, whose eyes it is.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bForceShot"))
+	TObjectPtr<AActor> ShotOn = nullptr;
+
+	/** Make the line's first shot move this way ("SLOW PUSH IN", "PULL BACK TO REVEAL", "CRANE UP"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (InlineEditConditionToggle))
+	bool bForceMove = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bForceMove"))
+	ECinemafyCameraMove ForcedMove = ECinemafyCameraMove::PushIn;
+
+	/** Hold the camera this way from this line on ("HANDHELD", "LOCKED OFF"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (InlineEditConditionToggle))
+	bool bForceFeel = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bForceFeel"))
+	ECinemafyCameraFeel ForcedFeel = ECinemafyCameraFeel::Handheld;
+
+	/** The script's own words for the shot ("CLOSE ON THANE"), shown in the plan. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", AdvancedDisplay)
+	FString ShotCall;
 
 	/** Change the speaker's Cinemafy Face emotion as this line starts. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")

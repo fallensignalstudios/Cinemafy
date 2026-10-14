@@ -3418,14 +3418,101 @@ int32 UCinemafyEditorLibrary::MapScriptScenesInLevel(UCinemafyScriptProject* Pro
 
 namespace CinemafyScriptEditor
 {
-	/** The director's lines for a script scene: speakers matched to actor labels, delivery read from the parentheticals. */
+	/** Who or what a camera direction names: one of the scene's characters ("THANE", "KADE'S HAND"), else a prop by label. */
+	AActor* FindShotSubject(UWorld* World, const FCinemafyScriptScene& Scene, const FString& Subject)
+	{
+		FString Clean = Subject.ToUpper().TrimStartAndEnd();
+		if (Clean.StartsWith(TEXT("THE ")))
+		{
+			Clean = Clean.Mid(4);
+		}
+		if (Clean.IsEmpty())
+		{
+			return nullptr;
+		}
+		const int32 Possessive = Clean.Find(TEXT("'S"));
+		const FString Owner = Possessive != INDEX_NONE ? Clean.Left(Possessive).TrimEnd() : Clean;
+		TArray<FString> OwnerWords;
+		Owner.ParseIntoArrayWS(OwnerWords);
+		for (const FString& Character : Scene.Characters)
+		{
+			TArray<FString> Words;
+			Character.ParseIntoArrayWS(Words);
+			if (Character == Owner || (OwnerWords.Num() > 0 && Words.Contains(OwnerWords.Last())))
+			{
+				if (AActor* Actor = FindActorForName(World, Character))
+				{
+					return Actor;
+				}
+			}
+		}
+		// A prop or piece of the set, by its label ("Prop_datapad", "Console").
+		const FString Wanted = Clean.ToLower();
+		const FString LastWord = OwnerWords.Num() > 0 ? OwnerWords.Last().ToLower() : Wanted;
+		AActor* Partial = nullptr;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->IsA<APawn>() || It->IsA<ACinemafySceneDirector>())
+			{
+				continue;
+			}
+			const FString Label = It->GetActorLabel().ToLower().Replace(TEXT("_"), TEXT(" "));
+			if (Label.Contains(Wanted))
+			{
+				return *It;
+			}
+			if (!Partial && LastWord.Len() >= 4 && Label.Contains(LastWord))
+			{
+				Partial = *It;
+			}
+		}
+		return Partial ? Partial : FindActorForName(World, Owner);
+	}
+
+	/** The director's lines for a script scene: speakers matched to actor labels, delivery read from the parentheticals,
+	 * camera directions ("CLOSE ON THANE", "KADE'S POV", "SLOW PUSH IN", "HANDHELD") on the line they come before, and
+	 * the scene's transition in on its first line. */
 	TArray<FCinemafyLine> BuildDirectorLines(UWorld* World, const FCinemafyScriptScene& Scene, TArray<AActor*>& OutPerformers, int32& OutUnmatched)
 	{
 		TArray<FCinemafyLine> Lines;
 		FString PreviousSpeaker;
 		AActor* PreviousActor = nullptr;
+		FCinemafyShotCall PendingShot;
+		FString PendingWords;
+		bool bPendingShot = false;
+		bool bFeel = false;
+		ECinemafyCameraFeel Feel = ECinemafyCameraFeel::Handheld;
 		for (const FCinemafyScriptLine& ScriptLine : Scene.Lines)
 		{
+			if (ScriptLine.Kind == ECinemafyScriptLineKind::Shot)
+			{
+				const FCinemafyShotCall& Call = ScriptLine.Shot;
+				if (Call.bFeel)
+				{
+					bFeel = true;
+					Feel = Call.Feel;
+				}
+				if (Call.bBackToScene && !Call.bFraming)
+				{
+					bPendingShot = false;
+					continue;
+				}
+				if (Call.bFraming || Call.bMove)
+				{
+					// The last framing called before a line wins; a move called on its own rides along with it.
+					const bool bKeepMove = PendingShot.bMove && !Call.bMove;
+					const ECinemafyCameraMove KeptMove = PendingShot.Move;
+					PendingShot = Call;
+					if (bKeepMove)
+					{
+						PendingShot.bMove = true;
+						PendingShot.Move = KeptMove;
+					}
+					PendingWords = bPendingShot && !PendingWords.IsEmpty() ? PendingWords + TEXT(" / ") + ScriptLine.Text : ScriptLine.Text;
+					bPendingShot = true;
+				}
+				continue;
+			}
 			if (ScriptLine.Kind != ECinemafyScriptLineKind::Dialogue)
 			{
 				continue;
@@ -3450,6 +3537,39 @@ namespace CinemafyScriptEditor
 			// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
 			Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
 			Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene.Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));
+
+			// The page's camera.
+			if (Lines.Num() == 1 && Scene.bTransitionIn)
+			{
+				Line.bOverrideTransition = true;
+				Line.Transition = Scene.TransitionIn;
+			}
+			if (bFeel)
+			{
+				Line.bForceFeel = true;
+				Line.ForcedFeel = Feel;
+			}
+			if (bPendingShot)
+			{
+				Line.bForceShot = true;
+				Line.ForcedShot = PendingShot.ShotType;
+				Line.ShotCall = PendingWords;
+				AActor* On = FindShotSubject(World, Scene, PendingShot.Subject);
+				if (PendingShot.bOverShoulderOfSubject && On)
+				{
+					// Over their shoulder: the shot is on whoever they face.
+					On = On == Line.Speaker ? Line.Listener.Get() : Line.Speaker.Get();
+				}
+				Line.ShotOn = On;
+				if (PendingShot.bMove)
+				{
+					Line.bForceMove = true;
+					Line.ForcedMove = PendingShot.Move;
+				}
+				bPendingShot = false;
+				PendingShot = FCinemafyShotCall();
+				PendingWords.Reset();
+			}
 			TArray<FString> Words;
 			ScriptLine.Text.ParseIntoArrayWS(Words);
 			Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
@@ -3558,9 +3678,26 @@ int32 UCinemafyEditorLibrary::RefreshDirectorFromScript(ACinemafySceneDirector* 
 		if (Found != INDEX_NONE)
 		{
 			Used[Found] = true;
-			const FString Note = Line.Note;
+			const FCinemafyLine FromScript = Line;
 			Line = Director->Lines[Found];
-			Line.Note = Note;
+			Line.Note = FromScript.Note;
+			// The page's camera directions are the script's to change: they follow it.
+			if (FromScript.bForceShot || !Line.ShotCall.IsEmpty())
+			{
+				Line.bForceShot = FromScript.bForceShot;
+				Line.ForcedShot = FromScript.ForcedShot;
+				Line.ShotOn = FromScript.ShotOn;
+				Line.ShotCall = FromScript.ShotCall;
+				Line.bForceMove = FromScript.bForceMove;
+				Line.ForcedMove = FromScript.ForcedMove;
+			}
+			Line.bForceFeel = FromScript.bForceFeel || Line.bForceFeel;
+			Line.ForcedFeel = FromScript.bForceFeel ? FromScript.ForcedFeel : Line.ForcedFeel;
+			if (FromScript.bOverrideTransition)
+			{
+				Line.bOverrideTransition = true;
+				Line.Transition = FromScript.Transition;
+			}
 		}
 		else
 		{

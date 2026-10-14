@@ -44,7 +44,47 @@ enum class ECinemafyScriptLineKind : uint8
 {
 	Dialogue    UMETA(DisplayName = "Dialogue"),
 	Action      UMETA(DisplayName = "Action"),
-	Transition  UMETA(DisplayName = "Transition")
+	Transition  UMETA(DisplayName = "Transition"),
+	/** A camera direction: "CLOSE ON THANE", "KADE'S POV", "INSERT - THE DATAPAD", "SLOW PUSH IN". */
+	Shot        UMETA(DisplayName = "Shot")
+};
+
+/** A camera direction read from the page. It applies to the next line spoken. */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyShotCall
+{
+	GENERATED_BODY()
+
+	/** It names a framing (close, wide, POV, insert...). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	bool bFraming = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	ECinemafyShotType ShotType = ECinemafyShotType::CloseUp;
+
+	/** Who or what it's on, as written ("THANE", "THE DATAPAD", "KADE'S HAND"). For a POV, whose eyes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	FString Subject;
+
+	/** "OVER KADE'S SHOULDER": the shot is on whoever Kade faces. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	bool bOverShoulderOfSubject = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	bool bMove = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	ECinemafyCameraMove Move = ECinemafyCameraMove::PushIn;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	bool bFeel = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	ECinemafyCameraFeel Feel = ECinemafyCameraFeel::Handheld;
+
+	/** "BACK TO SCENE": the director takes over again. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Shot")
+	bool bBackToScene = false;
 };
 
 /** One paragraph of a scene: a spoken line, a stretch of action, or a transition. */
@@ -78,6 +118,10 @@ struct CINEMAFY_API FCinemafyScriptLine
 	/** Audio is a generated scratch read, waiting for the real performance. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
 	bool bScratchAudio = false;
+
+	/** A camera direction (Kind = Shot). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	FCinemafyShotCall Shot;
 
 	/** The line was rewritten after its voice-over was recorded: it needs recording again. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")
@@ -336,6 +380,15 @@ struct CINEMAFY_API FCinemafyScriptScene
 	/** Staged (or directed) from an older version of the script. */
 	bool IsOutOfDate() const { return !StagedHash.IsEmpty() && StagedHash != ContentHash; }
 
+	// --- Camera ---------------------------------------------------------------------------------------------------
+
+	/** How the scene comes in, from the transition that ended the one before ("SMASH CUT TO:", "DISSOLVE TO:"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (InlineEditConditionToggle))
+	bool bTransitionIn = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (EditCondition = "bTransitionIn"))
+	ECinemafyTransition TransitionIn = ECinemafyTransition::Cut;
+
 	/** Rendered dailies for the current take (folder). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Production")
 	FString DailiesFolder;
@@ -537,6 +590,22 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static FCinemafyDelivery ReadDelivery(const FString& Direction, const FString& Text);
+
+	/**
+	 * Reads a camera direction: framings ("CLOSE ON THANE", "WIDE", "TWO SHOT", "OVER KADE'S SHOULDER", "LOW ANGLE ON",
+	 * "KADE'S POV", "INSERT - THE DATAPAD", "ANGLE ON"), moves ("SLOW PUSH IN ON", "PULL BACK TO REVEAL", "CRANE UP",
+	 * "ARC AROUND", "CRASH ZOOM"), the camera's feel ("HANDHELD", "LOCKED OFF") and "BACK TO SCENE". False when the
+	 * words aren't a camera direction.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static bool ReadShotCall(const FString& Text, FCinemafyShotCall& OutCall);
+
+	/**
+	 * Reads a transition into the next scene: SMASH CUT (a hard cut, whatever the style), MATCH CUT, DISSOLVE,
+	 * FADE TO BLACK / FADE OUT, FADE TO WHITE, WIPE, WHIP PAN. False for a plain "CUT TO:" (the style decides).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static bool ReadTransition(const FString& Text, ECinemafyTransition& OutTransition);
 
 	/** A fingerprint of a scene's words (what Revision and Out of Date compare). */
 	static FString ComputeContentHash(const FCinemafyScriptScene& Scene);

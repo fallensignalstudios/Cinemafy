@@ -51,6 +51,23 @@ namespace
 		}
 	}
 
+	/** How far a scripted move travels: a push in a close-up is short, a pull back on a wide reveals a lot. */
+	float ScriptedMoveDistance(ECinemafyCameraMove Move, ECinemafyShotType Type)
+	{
+		const float Size = UCinemafyDirectorLibrary::GetShotSize(Type);
+		switch (Move)
+		{
+		case ECinemafyCameraMove::PushIn:
+		case ECinemafyCameraMove::PullOut:     return FMath::Lerp(90.f, 25.f, FMath::Clamp(Size / 5.f, 0.f, 1.f));
+		case ECinemafyCameraMove::CraneUp:
+		case ECinemafyCameraMove::CraneDown:   return 120.f;
+		case ECinemafyCameraMove::OrbitLeft:
+		case ECinemafyCameraMove::OrbitRight:  return 30.f;
+		case ECinemafyCameraMove::SnapZoomIn:  return 100.f;
+		default:                               return 60.f;
+		}
+	}
+
 	ECinemafyShotType PickShotType(const FCinemafyDirectorStyle& Style, FRandomStream& Random, float Intensity,
 		const AActor* Subject, const AActor* Counterpart, bool bReaction, const FCinemafyPlannedShot* Previous, bool bGroupScene)
 	{
@@ -173,6 +190,8 @@ float UCinemafyDirectorLibrary::GetShotSize(ECinemafyShotType ShotType)
 	case ECinemafyShotType::MediumCloseUp:   return 3.f;
 	case ECinemafyShotType::CloseUp:         return 4.f;
 	case ECinemafyShotType::ExtremeCloseUp:  return 5.f;
+	case ECinemafyShotType::POV:             return 2.5f;
+	case ECinemafyShotType::Insert:          return 6.f;
 	}
 	return 3.f;
 }
@@ -549,7 +568,38 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		const bool bNewExchange = bGroupScene && Segment == 0 && bHasLast &&
 			!((Last.Subject == Line.Speaker && Last.Counterpart == Line.Listener) || (Last.Subject == Line.Listener && Last.Counterpart == Line.Speaker));
 
-		if (Line.bMoving && !Line.bForceShot)
+		// The script called this shot ("CLOSE ON THANE", "KADE'S POV", "INSERT - THE DATAPAD"): it wins.
+		const bool bScripted = Line.bForceShot && Segment == 0;
+		if (bScripted)
+		{
+			Shot.ShotType = Line.ForcedShot;
+			Shot.bIsReaction = false;
+			AActor* On = Line.ShotOn ? Line.ShotOn.Get() : Line.Speaker.Get();
+			if (Shot.ShotType == ECinemafyShotType::POV)
+			{
+				// Through On's eyes, at whoever else is in the exchange.
+				Shot.Counterpart = On;
+				Shot.Subject = On == Line.Speaker ? Line.Listener.Get() : Line.Speaker.Get();
+			}
+			else if (On)
+			{
+				Shot.Subject = On;
+				Shot.Counterpart = On == Line.Listener ? Line.Speaker.Get() : Line.Listener.Get();
+				Shot.bIsReaction = On != Line.Speaker && (On == Line.Listener || Line.ShotOn == nullptr);
+			}
+			if (Shot.ShotType == ECinemafyShotType::WideTwoShot && bGroupScene)
+			{
+				Shot.ShotType = ECinemafyShotType::GroupShot;
+			}
+			if (!Shot.Subject || (UCinemafyFramingLibrary::ShotNeedsCounterpart(Shot.ShotType) && (!Shot.Counterpart || Shot.Counterpart == Shot.Subject)))
+			{
+				// Nobody to share the frame with (or look through): the nearest single on the same subject.
+				Shot.Subject = Shot.Subject ? Shot.Subject : On;
+				Shot.ShotType = Shot.ShotType == ECinemafyShotType::POV ? ECinemafyShotType::MediumCloseUp : ECinemafyShotType::MediumShot;
+			}
+			Why = Line.ShotCall.IsEmpty() ? FString(TEXT("forced by the script")) : FString::Printf(TEXT("the script calls \"%s\""), *Line.ShotCall);
+		}
+		else if (Line.bMoving && !Line.bForceShot)
 		{
 			// Walking: lead them (camera backs up in front) or follow behind; alternate within the line so
 			// consecutive shots change.
@@ -578,11 +628,6 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			Shot.ShotType = ECinemafyShotType::GroupShot;
 			Why = TEXT("re-establishing for the new exchange");
 		}
-		else if (Line.bForceShot && Segment == 0)
-		{
-			Shot.ShotType = Line.ForcedShot;
-			Why = TEXT("forced by the script");
-		}
 		else
 		{
 			Shot.ShotType = PickShotType(Style, Random, Intensity, Shot.Subject, Shot.Counterpart, Shot.bIsReaction, bHasLast ? &Last : nullptr, bGroupScene);
@@ -598,7 +643,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		const float ShotStartInLine = Time - StartTime;
 		const bool bHasImpact = Line.bAction && Impacts.ContainsByPredicate([ShotStartInLine, Length](float I) { return I >= ShotStartInLine && I < ShotStartInLine + Length; });
 		const bool bKillShot = LethalImpact >= 0.f && LethalImpact >= ShotStartInLine && LethalImpact < ShotStartInLine + Length;
-		if (bHasImpact && Line.Listener && !(Line.bForceShot && Segment == 0) && Shot.ShotType != ECinemafyShotType::GroupShot)
+		if (bHasImpact && Line.Listener && !bScripted && Shot.ShotType != ECinemafyShotType::GroupShot)
 		{
 			++ImpactShots;
 			if (bKillShot)
@@ -631,7 +676,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		}
 
 		// Singles focus on their subject; shots with both people in them focus on whoever's talking.
-		Shot.FocusOn = IsTwoShot(Shot.ShotType) ? Line.Speaker : Shot.Subject;
+		Shot.FocusOn = IsTwoShot(Shot.ShotType) && !bScripted ? Line.Speaker : Shot.Subject;
 		if (bKillShot)
 		{
 			Shot.FocusOn = Line.Listener; // The one who falls.
@@ -667,7 +712,21 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			}
 			ECinemafyCameraMove Move;
 			float Distance;
-			if (!Line.bMoving && !Line.bAction && Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
+			if (bScripted && Line.bForceMove)
+			{
+				// The script's move, over the whole shot ("SLOW PUSH IN ON KADE").
+				Shot.bMove = true;
+				Shot.Move = Line.ForcedMove;
+				Shot.MoveDistance = ScriptedMoveDistance(Line.ForcedMove, Shot.ShotType);
+				Shot.MoveStart = 0.f;
+				Shot.MoveEnd = Length;
+				Why += TEXT(", the scripted move");
+			}
+			else if (bScripted && Shot.ShotType == ECinemafyShotType::Insert)
+			{
+				// Inserts hold still.
+			}
+			else if (!Line.bMoving && !Line.bAction && Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
 			{
 				Shot.bMove = true;
 				Shot.Move = Move;
@@ -734,6 +793,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		// Calm moments get the calm camera; heated ones get the operator's adrenaline.
 		const float FeelRoll = FMath::Clamp((Intensity - 0.4f) / 0.3f, 0.f, 1.f);
 		Shot.Feel = Random.FRand() < FeelRoll ? Style.IntenseFeel : Style.CalmFeel;
+		if (Line.bForceFeel)
+		{
+			Shot.Feel = Line.ForcedFeel;
+		}
 
 		const FString MomentTag = Line.Moment == ECinemafyMoment::Dialogue ? FString()
 			: FString::Printf(TEXT("[%s] "), *StaticEnum<ECinemafyMoment>()->GetDisplayNameTextByValue(static_cast<int64>(Line.Moment)).ToString());
@@ -839,7 +902,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 		FCinemafyPlannedShot& Held = Plan[Index];
 		const FCinemafyPlannedShot& Next = Plan[Index + 1];
 		if (!Next.bLineStart || Next.TransitionIn != ECinemafyTransition::Cut || !IsTwoShot(Held.ShotType)
-			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex))
+			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex) || Lines[Next.LineIndex].bForceShot)
 		{
 			continue;
 		}

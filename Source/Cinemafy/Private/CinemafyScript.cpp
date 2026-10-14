@@ -493,6 +493,10 @@ FString UCinemafyScriptLibrary::FinalDraftToText(const FString& Xml)
 		{
 			Out += TEXT("\n>") + Text.ToUpper() + TEXT("\n");
 		}
+		else if (Type == TEXT("Shot"))
+		{
+			Out += TEXT("\n") + Text.ToUpper() + TEXT("\n");
+		}
 		else if (Type.Contains(TEXT("Act")) || Type == TEXT("New Act") || Type == TEXT("End of Act"))
 		{
 			Out += TEXT("\n# ") + Text + TEXT("\n");
@@ -820,6 +824,18 @@ namespace CinemafyScriptBreakdown
 				continue;
 			}
 
+			// Camera directions ("CLOSE ON THANE", "KADE'S POV"): before cues, which look the same on the page.
+			FCinemafyShotCall Call;
+			if (IsAllCaps(Trim) && !Trim.StartsWith(TEXT("@")) && !Trim.StartsWith(TEXT("!")) && UCinemafyScriptLibrary::ReadShotCall(Trim, Call))
+			{
+				FCinemafyScriptLine& Line = P.CurrentOrNew().Data.Lines.AddDefaulted_GetRef();
+				Line.Kind = ECinemafyScriptLineKind::Shot;
+				Line.Text = Trim;
+				Line.Shot = Call;
+				OpenAction = nullptr;
+				continue;
+			}
+
 			if (bWasBlank && IsCue(Trim) && !NextNonEmpty(Index + 1).IsEmpty())
 			{
 				FString Extension;
@@ -844,8 +860,25 @@ namespace CinemafyScriptBreakdown
 			}
 
 			// Action: a paragraph runs until the next blank line.
-			const FString ActionText = Trim.StartsWith(TEXT("!")) ? Trim.Mid(1) : Trim;
+			FString ActionText = Trim.StartsWith(TEXT("!")) ? Trim.Mid(1) : Trim;
 			FCinemafyScriptScene& Scene = P.CurrentOrNew().Data;
+
+			// A paragraph that opens on a camera direction in capitals: "CLOSE ON KADE'S HAND. It trembles."
+			const int32 Stop = ActionText.Find(TEXT("."));
+			if (!Trim.StartsWith(TEXT("!")) && !(OpenAction && Scene.Lines.Num() > 0 && OpenAction == &Scene.Lines.Last()) && Stop > 0
+				&& IsAllCaps(ActionText.Left(Stop)) && UCinemafyScriptLibrary::ReadShotCall(ActionText.Left(Stop), Call))
+			{
+				FCinemafyScriptLine& Shot = Scene.Lines.AddDefaulted_GetRef();
+				Shot.Kind = ECinemafyScriptLineKind::Shot;
+				Shot.Text = ActionText.Left(Stop);
+				Shot.Shot = Call;
+				OpenAction = nullptr;
+				ActionText = ActionText.Mid(Stop + 1).TrimStartAndEnd();
+				if (ActionText.IsEmpty())
+				{
+					continue;
+				}
+			}
 			if (OpenAction && Scene.Lines.Num() > 0 && OpenAction == &Scene.Lines.Last())
 			{
 				OpenAction->Text += TEXT(" ") + ActionText;
@@ -895,6 +928,22 @@ namespace CinemafyScriptBreakdown
 				Data.Heading = Data.Location;
 			}
 			Scene.Seconds = Data.EstimatedSeconds;
+		}
+
+		// How each scene comes in: the transition that closed the one before it.
+		for (int32 SceneIndex = 1; SceneIndex < P.Scenes.Num(); ++SceneIndex)
+		{
+			const TArray<FCinemafyScriptLine>& Before = P.Scenes[SceneIndex - 1].Data.Lines;
+			for (int32 LineIndex = Before.Num() - 1; LineIndex >= 0 && Before[LineIndex].Kind == ECinemafyScriptLineKind::Transition; --LineIndex)
+			{
+				ECinemafyTransition Transition;
+				if (UCinemafyScriptLibrary::ReadTransition(Before[LineIndex].Text, Transition))
+				{
+					P.Scenes[SceneIndex].Data.bTransitionIn = true;
+					P.Scenes[SceneIndex].Data.TransitionIn = Transition;
+					break;
+				}
+			}
 		}
 		return P;
 	}
@@ -2091,4 +2140,335 @@ FString UCinemafyScriptLibrary::ComputeContentHash(const FCinemafyScriptScene& S
 			*CinemafyScriptText::Normalize(Line.Direction), *CinemafyScriptText::Normalize(Line.Text));
 	}
 	return FString::Printf(TEXT("%08X"), FCrc::StrCrc32(*Words));
+}
+
+namespace CinemafyShotCalls
+{
+	struct FFraming { const TCHAR* Words; ECinemafyShotType Type; bool bAbbreviation; };
+	struct FMove { const TCHAR* Words; ECinemafyCameraMove Move; ECinemafyShotType Framing; };
+
+	/** Longest first, so "EXTREME CLOSE" wins over "CLOSE". */
+	const TArray<FFraming>& Framings()
+	{
+		static const TArray<FFraming> List = {
+			{ TEXT("EXTREME CLOSEUP"), ECinemafyShotType::ExtremeCloseUp, false }, { TEXT("EXTREME CLOSE"), ECinemafyShotType::ExtremeCloseUp, false },
+			{ TEXT("BIG CLOSEUP"), ECinemafyShotType::ExtremeCloseUp, false }, { TEXT("ECU"), ECinemafyShotType::ExtremeCloseUp, true },
+			{ TEXT("XCU"), ECinemafyShotType::ExtremeCloseUp, true },
+			{ TEXT("MEDIUM CLOSEUP"), ECinemafyShotType::MediumCloseUp, false }, { TEXT("MEDIUM CLOSE"), ECinemafyShotType::MediumCloseUp, false },
+			{ TEXT("MCU"), ECinemafyShotType::MediumCloseUp, true },
+			{ TEXT("CLOSEUP"), ECinemafyShotType::CloseUp, false }, { TEXT("CLOSE SHOT"), ECinemafyShotType::CloseUp, false },
+			{ TEXT("CLOSER ON"), ECinemafyShotType::CloseUp, false }, { TEXT("CLOSE ON"), ECinemafyShotType::CloseUp, false },
+			{ TEXT("TIGHT ON"), ECinemafyShotType::CloseUp, false }, { TEXT("TIGHT SHOT"), ECinemafyShotType::CloseUp, false },
+			{ TEXT("CLOSE"), ECinemafyShotType::CloseUp, false }, { TEXT("CU"), ECinemafyShotType::CloseUp, true },
+			{ TEXT("MEDIUM SHOT"), ECinemafyShotType::MediumShot, false }, { TEXT("MEDIUM ON"), ECinemafyShotType::MediumShot, false },
+			{ TEXT("MID SHOT"), ECinemafyShotType::MediumShot, false }, { TEXT("MS"), ECinemafyShotType::MediumShot, true },
+			{ TEXT("ESTABLISHING SHOT"), ECinemafyShotType::WideTwoShot, false }, { TEXT("ESTABLISHING"), ECinemafyShotType::WideTwoShot, false },
+			{ TEXT("WIDE SHOT"), ECinemafyShotType::WideTwoShot, false }, { TEXT("WIDE ANGLE"), ECinemafyShotType::WideTwoShot, false },
+			{ TEXT("WIDE ON"), ECinemafyShotType::WideTwoShot, false }, { TEXT("WIDER"), ECinemafyShotType::WideTwoShot, false },
+			{ TEXT("WIDE"), ECinemafyShotType::WideTwoShot, false }, { TEXT("LONG SHOT"), ECinemafyShotType::WideTwoShot, false },
+			{ TEXT("FULL SHOT"), ECinemafyShotType::WideTwoShot, false }, { TEXT("MASTER SHOT"), ECinemafyShotType::WideTwoShot, false },
+			{ TEXT("WS"), ECinemafyShotType::WideTwoShot, true }, { TEXT("LS"), ECinemafyShotType::WideTwoShot, true },
+			{ TEXT("TWO SHOT"), ECinemafyShotType::MediumTwoShot, false }, { TEXT("GROUP SHOT"), ECinemafyShotType::GroupShot, false },
+			{ TEXT("OTS"), ECinemafyShotType::OverTheShoulder, true }, { TEXT("REVERSE ANGLE"), ECinemafyShotType::OverTheShoulder, false },
+			{ TEXT("REVERSE ON"), ECinemafyShotType::OverTheShoulder, false },
+			{ TEXT("LOW ANGLE"), ECinemafyShotType::LowHero, false }, { TEXT("HERO ANGLE"), ECinemafyShotType::LowHero, false },
+			{ TEXT("LOW SHOT"), ECinemafyShotType::LowHero, false },
+			{ TEXT("INSERT SHOT"), ECinemafyShotType::Insert, false }, { TEXT("INSERT"), ECinemafyShotType::Insert, false },
+			{ TEXT("ANGLE ON"), ECinemafyShotType::MediumCloseUp, false }, { TEXT("NEW ANGLE"), ECinemafyShotType::MediumShot, false },
+			{ TEXT("TRACKING WITH"), ECinemafyShotType::TrackingLead, false }, { TEXT("MOVING WITH"), ECinemafyShotType::TrackingLead, false },
+			{ TEXT("TRACKING SHOT"), ECinemafyShotType::TrackingLead, false }, { TEXT("FOLLOW SHOT"), ECinemafyShotType::TrackingFollow, false },
+			{ TEXT("FOLLOWING"), ECinemafyShotType::TrackingFollow, false } };
+		return List;
+	}
+
+	const TArray<FMove>& Moves()
+	{
+		static const TArray<FMove> List = {
+			{ TEXT("SLOW PUSH IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("SLOWLY PUSH IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("CAMERA PUSHES IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("PUSH IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("PUSHING IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("DOLLY IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("MOVE IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("MOVING IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("CREEP IN"), ECinemafyCameraMove::PushIn, ECinemafyShotType::MediumCloseUp },
+			{ TEXT("SLOW PULL BACK"), ECinemafyCameraMove::PullOut, ECinemafyShotType::WideTwoShot },
+			{ TEXT("PULL BACK"), ECinemafyCameraMove::PullOut, ECinemafyShotType::WideTwoShot },
+			{ TEXT("PULLING BACK"), ECinemafyCameraMove::PullOut, ECinemafyShotType::WideTwoShot },
+			{ TEXT("PULL OUT"), ECinemafyCameraMove::PullOut, ECinemafyShotType::WideTwoShot },
+			{ TEXT("DOLLY OUT"), ECinemafyCameraMove::PullOut, ECinemafyShotType::WideTwoShot },
+			{ TEXT("CRANE UP"), ECinemafyCameraMove::CraneUp, ECinemafyShotType::WideTwoShot },
+			{ TEXT("BOOM UP"), ECinemafyCameraMove::CraneUp, ECinemafyShotType::WideTwoShot },
+			{ TEXT("CRANE DOWN"), ECinemafyCameraMove::CraneDown, ECinemafyShotType::WideTwoShot },
+			{ TEXT("BOOM DOWN"), ECinemafyCameraMove::CraneDown, ECinemafyShotType::WideTwoShot },
+			{ TEXT("ARC AROUND"), ECinemafyCameraMove::OrbitLeft, ECinemafyShotType::MediumShot },
+			{ TEXT("CIRCLE AROUND"), ECinemafyCameraMove::OrbitLeft, ECinemafyShotType::MediumShot },
+			{ TEXT("CIRCLING"), ECinemafyCameraMove::OrbitLeft, ECinemafyShotType::MediumShot },
+			{ TEXT("ORBIT"), ECinemafyCameraMove::OrbitLeft, ECinemafyShotType::MediumShot },
+			{ TEXT("CRASH ZOOM"), ECinemafyCameraMove::SnapZoomIn, ECinemafyShotType::CloseUp },
+			{ TEXT("SNAP ZOOM"), ECinemafyCameraMove::SnapZoomIn, ECinemafyShotType::CloseUp },
+			{ TEXT("TRUCK LEFT"), ECinemafyCameraMove::TruckLeft, ECinemafyShotType::MediumShot },
+			{ TEXT("TRUCK RIGHT"), ECinemafyCameraMove::TruckRight, ECinemafyShotType::MediumShot } };
+		return List;
+	}
+
+	/** The phrase at the start, ending on a word boundary. Abbreviations ("CU", "MS") need a dash, colon, "ON" or the end after them. */
+	bool StartsWithWords(const FString& Text, const TCHAR* Words, bool bAbbreviation, FString& OutRest)
+	{
+		if (!Text.StartsWith(Words, ESearchCase::CaseSensitive))
+		{
+			return false;
+		}
+		const FString Rest = Text.Mid(FCString::Strlen(Words));
+		if (!Rest.IsEmpty())
+		{
+			const TCHAR Next = Rest[0];
+			if (FChar::IsAlnum(Next) || Next == TEXT('\'') || Next == TEXT('.'))
+			{
+				return false;
+			}
+			const FString After = Rest.TrimStart();
+			if (bAbbreviation && !(After.StartsWith(TEXT("-")) || After.StartsWith(TEXT(":")) || After.StartsWith(TEXT("ON ")) || After == TEXT("ON")))
+			{
+				return false;
+			}
+		}
+		OutRest = Rest;
+		return true;
+	}
+
+	/** What's left once the joining words are gone: "ON THANE" -> "THANE", "- THE DATAPAD" -> "THE DATAPAD". */
+	FString SubjectOf(FString Rest)
+	{
+		bool bStripped = true;
+		while (bStripped)
+		{
+			bStripped = false;
+			Rest.TrimStartAndEndInline();
+			while (Rest.StartsWith(TEXT("-")) || Rest.StartsWith(TEXT(":")) || Rest.StartsWith(TEXT(",")))
+			{
+				Rest = Rest.Mid(1).TrimStart();
+				bStripped = true;
+			}
+			for (const TCHAR* Joiner : { TEXT("TO REVEAL "), TEXT("REVEALING "), TEXT("ON "), TEXT("OF "), TEXT("AT "), TEXT("WITH "), TEXT("TO "),
+				TEXT("INTO "), TEXT("IN "), TEXT("A "), TEXT("AN "), TEXT("SHOT ") })
+			{
+				if (Rest.StartsWith(Joiner, ESearchCase::CaseSensitive) || Rest == FString(Joiner).TrimEnd())
+				{
+					Rest = Rest.Mid(FCString::Strlen(Joiner));
+					bStripped = true;
+					break;
+				}
+			}
+		}
+		while (Rest.EndsWith(TEXT(",")) || Rest.EndsWith(TEXT("-")))
+		{
+			Rest = Rest.LeftChop(1).TrimEnd();
+		}
+		return Rest;
+	}
+
+	/** "KADE'S" -> "KADE". */
+	FString NoPossessive(FString Name)
+	{
+		Name.TrimStartAndEndInline();
+		if (Name.EndsWith(TEXT("'S")))
+		{
+			Name = Name.LeftChop(2);
+		}
+		else if (Name.EndsWith(TEXT("'")))
+		{
+			Name = Name.LeftChop(1);
+		}
+		return Name.TrimEnd();
+	}
+
+	/** A whole word in the text. */
+	int32 FindWord(const FString& Text, const TCHAR* Word)
+	{
+		const int32 Length = FCString::Strlen(Word);
+		for (int32 From = 0; From <= Text.Len() - Length;)
+		{
+			const int32 At = Text.Find(Word, ESearchCase::CaseSensitive, ESearchDir::FromStart, From);
+			if (At == INDEX_NONE)
+			{
+				return INDEX_NONE;
+			}
+			const bool bStart = At == 0 || !FChar::IsAlnum(Text[At - 1]);
+			const bool bEnd = At + Length >= Text.Len() || !FChar::IsAlnum(Text[At + Length]);
+			if (bStart && bEnd)
+			{
+				return At;
+			}
+			From = At + 1;
+		}
+		return INDEX_NONE;
+	}
+}
+
+bool UCinemafyScriptLibrary::ReadShotCall(const FString& Text, FCinemafyShotCall& OutCall)
+{
+	using namespace CinemafyShotCalls;
+	OutCall = FCinemafyShotCall();
+	FString Words = Text.ToUpper().TrimStartAndEnd();
+	Words = Words.Replace(TEXT("–"), TEXT("-")).Replace(TEXT("—"), TEXT("-")).Replace(TEXT("’"), TEXT("'"))
+		.Replace(TEXT("P.O.V."), TEXT("POV")).Replace(TEXT("P.O.V"), TEXT("POV")).Replace(TEXT("CLOSE-UP"), TEXT("CLOSEUP")).Replace(TEXT("CLOSE UP"), TEXT("CLOSEUP"))
+		.Replace(TEXT("TWO-SHOT"), TEXT("TWO SHOT")).Replace(TEXT("HAND-HELD"), TEXT("HANDHELD")).Replace(TEXT("HAND HELD"), TEXT("HANDHELD"))
+		.Replace(TEXT("OVER-THE-SHOULDER"), TEXT("OVER THE SHOULDER")).Replace(TEXT("LOCKED-OFF"), TEXT("LOCKED OFF")).Replace(TEXT("  "), TEXT(" "));
+	while (Words.EndsWith(TEXT(".")) || Words.EndsWith(TEXT(":")) || Words.EndsWith(TEXT("-")) || Words.EndsWith(TEXT("!")))
+	{
+		Words = Words.LeftChop(1).TrimEnd();
+	}
+	if (Words.IsEmpty() || CinemafyScriptText::CountWords(Words) > 12)
+	{
+		return false;
+	}
+	if (Words == TEXT("BACK TO SCENE") || Words == TEXT("BACK TO SHOT") || Words == TEXT("BACK TO WIDE"))
+	{
+		OutCall.bBackToScene = true;
+		if (Words == TEXT("BACK TO WIDE"))
+		{
+			OutCall.bFraming = true;
+			OutCall.ShotType = ECinemafyShotType::WideTwoShot;
+		}
+		return true;
+	}
+
+	// The camera's feel can ride along with anything ("HANDHELD - KADE RUNS").
+	struct FFeel { const TCHAR* Words; ECinemafyCameraFeel Feel; };
+	static const FFeel Feels[] = { { TEXT("HANDHELD"), ECinemafyCameraFeel::Handheld }, { TEXT("STEADICAM"), ECinemafyCameraFeel::Shoulder },
+		{ TEXT("SHOULDER RIG"), ECinemafyCameraFeel::Shoulder }, { TEXT("LOCKED OFF"), ECinemafyCameraFeel::Locked }, { TEXT("STATIC SHOT"), ECinemafyCameraFeel::Locked } };
+	for (const FFeel& Feel : Feels)
+	{
+		const int32 At = FindWord(Words, Feel.Words);
+		if (At != INDEX_NONE)
+		{
+			OutCall.bFeel = true;
+			OutCall.Feel = Feel.Feel;
+			Words = SubjectOf((Words.Left(At) + TEXT(" ") + Words.Mid(At + FCString::Strlen(Feel.Words))).Replace(TEXT("  "), TEXT(" ")));
+			if (Words.StartsWith(TEXT("CAMERA")))
+			{
+				Words = SubjectOf(Words.Mid(6));
+			}
+			break;
+		}
+	}
+	if (Words.IsEmpty())
+	{
+		return OutCall.bFeel;
+	}
+
+	// Through someone's eyes: "KADE'S POV", "POV - KADE", "KADE POV".
+	const int32 Pov = FindWord(Words, TEXT("POV"));
+	if (Pov != INDEX_NONE && CinemafyScriptText::CountWords(Words) <= 6)
+	{
+		const FString Before = NoPossessive(Words.Left(Pov));
+		OutCall.bFraming = true;
+		OutCall.ShotType = ECinemafyShotType::POV;
+		OutCall.Subject = Before.IsEmpty() ? NoPossessive(SubjectOf(Words.Mid(Pov + 3))) : Before;
+		return true;
+	}
+
+	// "OVER KADE'S SHOULDER" (on whoever Kade faces), "OVER THE SHOULDER ON THANE".
+	if (Words.StartsWith(TEXT("OVER ")) && FindWord(Words, TEXT("SHOULDER")) != INDEX_NONE)
+	{
+		const int32 Shoulder = FindWord(Words, TEXT("SHOULDER"));
+		const FString Whose = NoPossessive(Words.Mid(5, Shoulder - 5));
+		const FString On = SubjectOf(Words.Mid(Shoulder + 8));
+		OutCall.bFraming = true;
+		OutCall.ShotType = ECinemafyShotType::OverTheShoulder;
+		if (!On.IsEmpty())
+		{
+			OutCall.Subject = On;
+		}
+		else if (!Whose.IsEmpty() && Whose != TEXT("THE") && Whose != TEXT("HIS") && Whose != TEXT("HER") && Whose != TEXT("THEIR"))
+		{
+			OutCall.Subject = Whose;
+			OutCall.bOverShoulderOfSubject = true;
+		}
+		return true;
+	}
+
+	// A move, maybe with its framing: "SLOW PUSH IN ON KADE", "PULL BACK TO REVEAL THE FLEET", "PUSH IN TO A CLOSE ON THANE".
+	FString Rest;
+	for (const FMove& Move : Moves())
+	{
+		if (StartsWithWords(Words, Move.Words, false, Rest))
+		{
+			OutCall.bMove = true;
+			OutCall.Move = Move.Move;
+			OutCall.bFraming = true;
+			OutCall.ShotType = Move.Framing;
+			FString Subject = SubjectOf(Rest);
+			for (const FFraming& Framing : Framings())
+			{
+				FString After;
+				if (StartsWithWords(Subject, Framing.Words, Framing.bAbbreviation, After))
+				{
+					OutCall.ShotType = Framing.Type;
+					Subject = SubjectOf(After);
+					break;
+				}
+			}
+			OutCall.Subject = Subject;
+			return true;
+		}
+	}
+
+	// A framing: "CLOSE ON THANE", "WIDE", "INSERT - THE DATAPAD", "ANGLE ON THE DOOR".
+	for (const FFraming& Framing : Framings())
+	{
+		if (StartsWithWords(Words, Framing.Words, Framing.bAbbreviation, Rest))
+		{
+			OutCall.bFraming = true;
+			OutCall.ShotType = Framing.Type;
+			OutCall.Subject = SubjectOf(Rest);
+			return true;
+		}
+	}
+	return OutCall.bFeel;
+}
+
+bool UCinemafyScriptLibrary::ReadTransition(const FString& Text, ECinemafyTransition& OutTransition)
+{
+	FString Words = Text.ToUpper().TrimStartAndEnd();
+	if (Words.StartsWith(TEXT(">")))
+	{
+		Words = Words.Mid(1).TrimStart();
+	}
+	using CinemafyScriptText::ContainsAny;
+	if (ContainsAny(Words, { TEXT("SMASH") }))
+	{
+		OutTransition = ECinemafyTransition::Cut;
+	}
+	else if (ContainsAny(Words, { TEXT("MATCH") }))
+	{
+		OutTransition = ECinemafyTransition::MatchCut;
+	}
+	else if (ContainsAny(Words, { TEXT("DISSOLVE"), TEXT("CROSSFADE"), TEXT("MIX TO") }))
+	{
+		OutTransition = ECinemafyTransition::Dissolve;
+	}
+	else if (ContainsAny(Words, { TEXT("TO WHITE"), TEXT("WHITE OUT"), TEXT("WHITEOUT") }))
+	{
+		OutTransition = ECinemafyTransition::DipToWhite;
+	}
+	else if (ContainsAny(Words, { TEXT("FADE"), TEXT("TO BLACK"), TEXT("BLACKOUT") }))
+	{
+		OutTransition = ECinemafyTransition::FadeThroughBlack;
+	}
+	else if (ContainsAny(Words, { TEXT("WHIP") }))
+	{
+		OutTransition = ECinemafyTransition::WhipPan;
+	}
+	else if (ContainsAny(Words, { TEXT("WIPE") }))
+	{
+		OutTransition = ECinemafyTransition::Wipe;
+	}
+	else
+	{
+		return false;
+	}
+	return true;
 }

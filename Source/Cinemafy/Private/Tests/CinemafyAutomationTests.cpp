@@ -1358,4 +1358,89 @@ bool FCinemafyGoldenSampleTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyCameraLanguageTest, "Cinemafy.Script.CameraLanguageFromThePage", CinemafyTests::Flags)
+bool FCinemafyCameraLanguageTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	FCinemafyShotCall Call;
+	TestTrue(TEXT("CLOSE ON THANE"), Script::ReadShotCall(TEXT("CLOSE ON THANE"), Call) && Call.bFraming && Call.ShotType == ECinemafyShotType::CloseUp && Call.Subject == TEXT("THANE"));
+	TestTrue(TEXT("KADE'S POV"), Script::ReadShotCall(TEXT("KADE'S POV"), Call) && Call.ShotType == ECinemafyShotType::POV && Call.Subject == TEXT("KADE"));
+	TestTrue(TEXT("POV - KADE"), Script::ReadShotCall(TEXT("POV - KADE"), Call) && Call.ShotType == ECinemafyShotType::POV && Call.Subject == TEXT("KADE"));
+	TestTrue(TEXT("INSERT - THE DATAPAD"), Script::ReadShotCall(TEXT("INSERT - THE DATAPAD"), Call) && Call.ShotType == ECinemafyShotType::Insert && Call.Subject == TEXT("THE DATAPAD"));
+	TestTrue(TEXT("SLOW PUSH IN ON KADE."), Script::ReadShotCall(TEXT("SLOW PUSH IN ON KADE."), Call) && Call.bMove && Call.Move == ECinemafyCameraMove::PushIn && Call.Subject == TEXT("KADE"));
+	TestTrue(TEXT("PULL BACK TO REVEAL THE FLEET"), Script::ReadShotCall(TEXT("PULL BACK TO REVEAL THE FLEET"), Call) && Call.Move == ECinemafyCameraMove::PullOut
+		&& Call.ShotType == ECinemafyShotType::WideTwoShot && Call.Subject == TEXT("THE FLEET"));
+	TestTrue(TEXT("PUSH IN TO A CLOSE ON THANE"), Script::ReadShotCall(TEXT("PUSH IN TO A CLOSE ON THANE"), Call) && Call.bMove && Call.ShotType == ECinemafyShotType::CloseUp && Call.Subject == TEXT("THANE"));
+	TestTrue(TEXT("OVER KADE'S SHOULDER"), Script::ReadShotCall(TEXT("OVER KADE'S SHOULDER"), Call) && Call.ShotType == ECinemafyShotType::OverTheShoulder && Call.Subject == TEXT("KADE") && Call.bOverShoulderOfSubject);
+	TestTrue(TEXT("EXTREME CLOSE-UP - THANE'S EYES"), Script::ReadShotCall(TEXT("EXTREME CLOSE-UP - THANE'S EYES"), Call) && Call.ShotType == ECinemafyShotType::ExtremeCloseUp && Call.Subject == TEXT("THANE'S EYES"));
+	TestTrue(TEXT("HANDHELD"), Script::ReadShotCall(TEXT("HANDHELD"), Call) && Call.bFeel && Call.Feel == ECinemafyCameraFeel::Handheld && !Call.bFraming);
+	TestTrue(TEXT("BACK TO SCENE"), Script::ReadShotCall(TEXT("BACK TO SCENE"), Call) && Call.bBackToScene);
+	TestFalse(TEXT("A cue is not a shot (MS. VOSS)"), Script::ReadShotCall(TEXT("MS. VOSS"), Call));
+	TestFalse(TEXT("Nor a name"), Script::ReadShotCall(TEXT("KADE"), Call));
+	TestFalse(TEXT("Nor a transition"), Script::ReadShotCall(TEXT("CUT TO:"), Call));
+	TestFalse(TEXT("INSERTS isn't INSERT"), Script::ReadShotCall(TEXT("INSERTS"), Call));
+
+	ECinemafyTransition Transition;
+	TestTrue(TEXT("SMASH CUT is a hard cut"), Script::ReadTransition(TEXT("SMASH CUT TO:"), Transition) && Transition == ECinemafyTransition::Cut);
+	TestTrue(TEXT("DISSOLVE TO"), Script::ReadTransition(TEXT("DISSOLVE TO:"), Transition) && Transition == ECinemafyTransition::Dissolve);
+	TestTrue(TEXT("FADE OUT"), Script::ReadTransition(TEXT("FADE OUT."), Transition) && Transition == ECinemafyTransition::FadeThroughBlack);
+	TestFalse(TEXT("A plain CUT TO is the style's call"), Script::ReadTransition(TEXT("CUT TO:"), Transition));
+
+	// On the page: a shot line before a cue isn't mistaken for the cue, a paragraph can open on one, transitions carry over.
+	const FString Page = TEXT(
+		"INT. BRIDGE - NIGHT\n\n"
+		"KADE\nStand down.\n\n"
+		"CLOSE ON THANE\n\n"
+		"THANE\nMake me.\n\n"
+		"CLOSE ON KADE'S HAND. It trembles on the trigger.\n\n"
+		"SMASH CUT TO:\n\n"
+		"EXT. HANGAR - DAY\n\n"
+		"THANE\nYou'll regret this.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Page, false, 5, Title, Report);
+	if (TestTrue(TEXT("Two scenes"), Acts.Num() == 1 && Acts[0].Chapters.Num() == 1 && Acts[0].Chapters[0].Scenes.Num() == 2))
+	{
+		const FCinemafyScriptScene& Bridge = Acts[0].Chapters[0].Scenes[0];
+		TestEqual(TEXT("Two lines, not three (the shot isn't a cue)"), Bridge.DialogueLines, 2);
+		TestFalse(TEXT("Nobody called CLOSE ON THANE speaks"), Bridge.Characters.Contains(TEXT("CLOSE ON THANE")));
+		const FCinemafyScriptLine* Close = Bridge.Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Shot && L.Shot.Subject == TEXT("THANE"); });
+		TestNotNull(TEXT("The shot line"), Close);
+		const FCinemafyScriptLine* Hand = Bridge.Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Shot && L.Shot.Subject == TEXT("KADE'S HAND"); });
+		TestNotNull(TEXT("A paragraph opening on a shot"), Hand);
+		TestTrue(TEXT("...keeps the rest as action"), Bridge.Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Action && L.Text.StartsWith(TEXT("It trembles")); }));
+		const FCinemafyScriptScene& Hangar = Acts[0].Chapters[0].Scenes[1];
+		TestTrue(TEXT("The hangar comes in on a smash cut"), Hangar.bTransitionIn && Hangar.TransitionIn == ECinemafyTransition::Cut);
+		TestFalse(TEXT("The bridge has no transition in"), Bridge.bTransitionIn);
+	}
+
+	// The director follows the page.
+	CinemafyTests::FTestScene Scene;
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(4);
+	Lines[1].bForceShot = true;
+	Lines[1].ForcedShot = ECinemafyShotType::MediumCloseUp;
+	Lines[1].bForceMove = true;
+	Lines[1].ForcedMove = ECinemafyCameraMove::PushIn;
+	Lines[2].bForceShot = true;
+	Lines[2].ForcedShot = ECinemafyShotType::CloseUp;
+	Lines[2].ShotOn = Lines[2].Listener;
+	Lines[3].bForceShot = true;
+	Lines[3].ForcedShot = ECinemafyShotType::POV;
+	Lines[3].ShotOn = Lines[3].Listener;
+	Lines[3].bForceFeel = true;
+	Lines[3].ForcedFeel = ECinemafyCameraFeel::Handheld;
+	for (const ECinemafyDirectorPreset Preset : { ECinemafyDirectorPreset::ClassicHollywood, ECinemafyDirectorPreset::Epic })
+	{
+		const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, UCinemafyDirectorLibrary::GetPresetStyle(Preset), 3);
+		auto FirstOf = [&Plan](int32 LineIndex) { return Plan.FindByPredicate([LineIndex](const FCinemafyPlannedShot& S) { return S.LineIndex == LineIndex && S.bLineStart; }); };
+		const FCinemafyPlannedShot* Push = FirstOf(1);
+		TestTrue(TEXT("SLOW PUSH IN: the scripted framing and move"), Push && Push->ShotType == ECinemafyShotType::MediumCloseUp && Push->bMove && Push->Move == ECinemafyCameraMove::PushIn);
+		const FCinemafyPlannedShot* Reaction = FirstOf(2);
+		TestTrue(TEXT("CLOSE ON the listener: a close-up on them"), Reaction && Reaction->ShotType == ECinemafyShotType::CloseUp && Reaction->Subject == Lines[2].Listener);
+		const FCinemafyPlannedShot* Pov = FirstOf(3);
+		TestTrue(TEXT("POV: through the listener's eyes, at the speaker"), Pov && Pov->ShotType == ECinemafyShotType::POV && Pov->Counterpart == Lines[3].Listener && Pov->Subject == Lines[3].Speaker);
+		TestTrue(TEXT("HANDHELD: the operator's feel"), Pov && Pov->Feel == ECinemafyCameraFeel::Handheld);
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
