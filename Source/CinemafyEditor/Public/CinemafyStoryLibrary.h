@@ -10,6 +10,41 @@ class ACinemafyMark;
 class ACinemafySceneDirector;
 class ACinemafyChoreography;
 class ULevelSequence;
+class UAnimSequenceBase;
+
+/** One line to give a real face: its audio and the face to solve it for (filled by GetLipSyncJobs, for the lip-sync script). */
+USTRUCT(BlueprintType)
+struct CINEMAFYEDITOR_API FCinemafyLipSyncJob
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString LineId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString SceneId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString Speaker;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString Text;
+
+	/** The line's sound wave (object path). */
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString AudioPath;
+
+	/** The face skeletal mesh to solve for (object path). */
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString FaceMeshPath;
+
+	/** Where the animation goes: package folder and asset name. */
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString PackagePath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString AssetName;
+};
 
 /**
  * The storyteller's tools: casting and sets, staging a scene straight from the script, the story board,
@@ -119,7 +154,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 AssignRecordedVoices(UCinemafyScriptProject* Project, const FString& ContentFolder);
 
-	/** Keys Cinemafy Face's Talk / Talk Narrow on each speaker from their lines' audio, where the director laid it. */
+	/**
+	 * Real lip-sync: MetaHuman's audio-driven animation solves a face performance from each voiced line (scratch or
+	 * recorded) in the background, one line at a time, and the director lays it on the speaker's face instead of
+	 * Cinemafy's Talk curves. Needs the MetaHuman plugin (MetaHuman Animator) and the Python Editor Script Plugin;
+	 * without them, faces keep the Talk curves. SceneId empty = the whole script. Returns what was started.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString GenerateLipSync(UCinemafyScriptProject* Project, const FString& SceneId, bool bReplaceExisting = false);
+
+	/** The voiced lines that need a face performance, each with its audio and the speaker's face mesh. Lines with no face mesh are skipped (logged). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static TArray<FCinemafyLipSyncJob> GetLipSyncJobs(UCinemafyScriptProject* Project, const FString& SceneId, bool bReplaceExisting = false);
+
+	/** Gives a line its face performance (made from its current audio), and the matching lines of directors in the open level. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static bool AssignLipSync(UCinemafyScriptProject* Project, const FString& LineId, UAnimSequenceBase* Animation);
+
+	/** MetaHuman's audio-driven animation is installed and enabled. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
+	static bool IsLipSyncAvailable();
+
+	/** Keys Cinemafy Face's Talk / Talk Narrow on each speaker from their lines' audio, where the director laid it (lines with a face performance are left to it). */
 	static void BakeTalkCurves(ULevelSequence* Sequence, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart);
 
 	// --- Mood and sound -------------------------------------------------------------------------------------------

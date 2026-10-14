@@ -273,6 +273,11 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 					const int32 Voiced = UCinemafyStoryLibrary::GenerateScratchVoices(P, FString(), false);
 					FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("Voiced", "Voiced {0} line(s). Previs or re-Direct scenes to hear them; faces with Cinemafy Face talk along."), Voiced));
 				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("LipSync", "Lip-Sync"), LOCTEXT("LipSyncTip", "Real lip-sync for every voiced line with MetaHuman's audio-driven animation (needs the MetaHuman plugin). Faces without it keep the Talk curves."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::GenerateLipSync(P, FString(), false)));
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("UpdateChanged", "Update Changed"), LOCTEXT("UpdateChangedTip", "After re-importing a revised script: re-stage the scenes whose pages changed (hand-edited choreographies are kept), refill their directors' lines, and list lines to re-record."),
 				WithProject([](UCinemafyScriptProject* P)
 				{
@@ -587,6 +592,10 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 					{
 						UCinemafyStoryLibrary::RenderDailies(P, SceneId);
 					}
+				});
+				Entry(LOCTEXT("LipSyncScene", "Lip-sync (MetaHuman)"), [SceneId](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::GenerateLipSync(P, SceneId, false)));
 				});
 				Entry(LOCTEXT("DressSet", "Dress the set (placeholder props)"), [SceneId](UCinemafyScriptProject* P)
 				{

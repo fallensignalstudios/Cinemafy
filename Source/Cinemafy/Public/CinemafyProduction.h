@@ -8,6 +8,7 @@
 
 class ACharacter;
 class UStaticMesh;
+class USkeletalMesh;
 class UMaterialInterface;
 class USoundBase;
 class UBillboardComponent;
@@ -131,6 +132,10 @@ struct CINEMAFY_API FCinemafyCastMember
 	/** How continuity shows on them (props, materials, tags), matched against each scene's carry-ins. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast", meta = (TitleProperty = "{Category} {FactContains}"))
 	TArray<FCinemafyContinuityLook> Looks;
+
+	/** The face to solve lip-sync for (empty = the face mesh of their actor in the level, the one with eye bones). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast", AdvancedDisplay)
+	TSoftObjectPtr<USkeletalMesh> FaceMesh;
 };
 
 /** What a thing the script mentions is to the production. */

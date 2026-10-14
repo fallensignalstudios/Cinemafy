@@ -10,6 +10,7 @@
 class ULevelSequence;
 class UWorld;
 class USoundBase;
+class UAnimSequenceBase;
 class UCinemafyScriptProject;
 
 /** How far along a scene is in production. */
@@ -122,6 +123,17 @@ struct CINEMAFY_API FCinemafyScriptLine
 	/** A camera direction (Kind = Shot). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
 	FCinemafyShotCall Shot;
+
+	/** The face's performance of this line: MetaHuman's audio-driven lip-sync, or a captured take. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	TSoftObjectPtr<UAnimSequenceBase> FaceAnimation;
+
+	/** The audio the face was made from: a new recording makes it stale. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line", AdvancedDisplay)
+	FSoftObjectPath FaceMadeFrom;
+
+	/** It has a face performance made from its current audio. */
+	bool HasCurrentFace() const { return !FaceAnimation.IsNull() && !Audio.IsNull() && FaceMadeFrom == Audio.ToSoftObjectPath(); }
 
 	/** The line was rewritten after its voice-over was recorded: it needs recording again. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Line")

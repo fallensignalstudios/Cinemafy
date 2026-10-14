@@ -28,7 +28,8 @@ enum class ECinemafyFix : uint8
 	ScratchVoices          UMETA(DisplayName = "Scratch Voices"),
 	UpdateChanged          UMETA(DisplayName = "Update Changed Scenes"),
 	CastTemplateCharacter  UMETA(DisplayName = "Cast a Template Character"),
-	DressSet               UMETA(DisplayName = "Dress the Set")
+	DressSet               UMETA(DisplayName = "Dress the Set"),
+	LipSync                UMETA(DisplayName = "Lip-Sync (MetaHuman)")
 };
 
 /** One thing the pre-flight check found, and how to fix it. */

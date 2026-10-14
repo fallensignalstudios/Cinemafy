@@ -306,6 +306,15 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 	{
 		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Info, FString::Printf(TEXT("%d line(s) were rewritten after recording: they need re-recording (see Paperwork)."), Rerecord)));
 	}
+	if (UCinemafyStoryLibrary::IsLipSyncAvailable())
+	{
+		const int32 Faceless = UCinemafyStoryLibrary::GetLipSyncJobs(Project, Id, false).Num();
+		if (Faceless > 0)
+		{
+			Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Info, FString::Printf(TEXT("%d voiced line(s) could have real MetaHuman lip-sync (they use the Talk curves now)."), Faceless),
+				ECinemafyFix::LipSync, FString(), TEXT("Lip-sync")));
+		}
+	}
 
 	// The pages, and what the script asks for that Previs can't do.
 	if (Scene->IsOutOfDate())
@@ -481,6 +490,9 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 		return HasNavMeshBounds(World) || AddNavMesh(World);
 	case ECinemafyFix::ScratchVoices:
 		return UCinemafyStoryLibrary::GenerateScratchVoices(Project, Check.SceneId, false) > 0;
+	case ECinemafyFix::LipSync:
+		UE_LOG(LogCinemafy, Log, TEXT("%s"), *UCinemafyStoryLibrary::GenerateLipSync(Project, Check.SceneId, false));
+		return true;
 	case ECinemafyFix::DressSet:
 		UCinemafyStoryLibrary::DressSet(Project, Scene ? Scene->Id : Check.FixArg);
 		return true;

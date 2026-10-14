@@ -2,6 +2,7 @@
 #include "CinemafyModule.h"
 #include "LevelSequence.h"
 #include "Sound/SoundBase.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Misc/Crc.h"
 #include "Engine/World.h"
 
@@ -1664,15 +1665,16 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		Kept.Add(FKept{ KeyFor(Copy), CinemafyScriptText::Normalize(Copy.Heading), MoveTemp(Copy) });
 	}
 
-	// Voice-over follows its line (by id), so a re-import keeps recorded and scratch audio.
-	TMap<FString, TPair<TSoftObjectPtr<USoundBase>, bool>> LineAudio;
+	// Voice-over (and the face performance made from it) follows its line by id, so a re-import keeps them.
+	struct FKeptVoice { TSoftObjectPtr<USoundBase> Audio; bool bScratch = false; TSoftObjectPtr<UAnimSequenceBase> Face; FSoftObjectPath FaceFrom; };
+	TMap<FString, FKeptVoice> LineAudio;
 	for (const FKept& Old : Kept)
 	{
 		for (const FCinemafyScriptLine& Line : Old.Scene.Lines)
 		{
 			if (!Line.LineId.IsEmpty() && !Line.Audio.IsNull())
 			{
-				LineAudio.Add(Line.LineId, TPair<TSoftObjectPtr<USoundBase>, bool>(Line.Audio, Line.bScratchAudio));
+				LineAudio.Add(Line.LineId, FKeptVoice{ Line.Audio, Line.bScratchAudio, Line.FaceAnimation, Line.FaceMadeFrom });
 			}
 		}
 	}
@@ -1705,10 +1707,12 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 			}
 			UsedIds.Add(Id);
 			Line.LineId = Id;
-			if (const TPair<TSoftObjectPtr<USoundBase>, bool>* KeptAudio = LineAudio.Find(Id))
+			if (const FKeptVoice* KeptAudio = LineAudio.Find(Id))
 			{
-				Line.Audio = KeptAudio->Key;
-				Line.bScratchAudio = KeptAudio->Value;
+				Line.Audio = KeptAudio->Audio;
+				Line.bScratchAudio = KeptAudio->bScratch;
+				Line.FaceAnimation = KeptAudio->Face;
+				Line.FaceMadeFrom = KeptAudio->FaceFrom;
 			}
 		}
 		Scene->ContentHash = UCinemafyScriptLibrary::ComputeContentHash(*Scene);

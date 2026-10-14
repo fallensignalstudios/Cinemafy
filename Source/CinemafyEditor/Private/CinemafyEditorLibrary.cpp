@@ -3522,6 +3522,8 @@ namespace CinemafyScriptEditor
 			Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
 			Line.Text = FText::FromString(ScriptLine.Text);
 			Line.Audio = ScriptLine.Audio.LoadSynchronous();
+			// A face performance made from this audio (MetaHuman lip-sync) plays instead of the Talk curves.
+			Line.FaceAnimation = ScriptLine.HasCurrentFace() ? ScriptLine.FaceAnimation.LoadSynchronous() : nullptr;
 			// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
 			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
 			if (Delivery.bHasEmotion)
@@ -3690,6 +3692,10 @@ int32 UCinemafyEditorLibrary::RefreshDirectorFromScript(ACinemafySceneDirector* 
 				Line.ShotCall = FromScript.ShotCall;
 				Line.bForceMove = FromScript.bForceMove;
 				Line.ForcedMove = FromScript.ForcedMove;
+			}
+			if (FromScript.FaceAnimation || FromScript.Audio != Line.Audio)
+			{
+				Line.FaceAnimation = FromScript.FaceAnimation;
 			}
 			Line.bForceFeel = FromScript.bForceFeel || Line.bForceFeel;
 			Line.ForcedFeel = FromScript.bForceFeel ? FromScript.ForcedFeel : Line.ForcedFeel;

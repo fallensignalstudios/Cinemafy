@@ -919,6 +919,36 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def generate_lip_sync(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing: bool = False) -> str:
+        """Real lip-sync: MetaHuman's audio-driven animation solves a face performance for every voiced line (scratch or
+        recorded) whose speaker has a MetaHuman face in the level (or a Face Mesh on their cast entry). Solves run one
+        at a time in the background; each finished face is attached to its line and to the directors that speak it,
+        and replaces the Talk curves when the scene is directed again. Needs the MetaHuman plugin.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: One scene ("1.1.1"), or empty for the whole script.
+            replace_existing: Solve lines that already have a face from their current audio again.
+
+        Returns:
+            What was queued, or why nothing was. Check progress with lip_sync_status.
+        """
+        import cinemafy_lipsync  # pylint: disable=import-outside-toplevel
+        return cinemafy_lipsync.generate(project, scene_id, replace_existing)
+
+    @_tool
+    @staticmethod
+    def lip_sync_status() -> str:
+        """How the background lip-sync solves are doing: queued, done, failed (with why).
+
+        Returns:
+            The lip-sync queue's state.
+        """
+        import cinemafy_lipsync  # pylint: disable=import-outside-toplevel
+        return cinemafy_lipsync.status()
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

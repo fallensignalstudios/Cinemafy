@@ -1,6 +1,8 @@
 // Run in the editor: Tools > Session Frontend > Automation, filter "Cinemafy".
 
 #include "Misc/AutomationTest.h"
+#include "Animation/AnimSequenceBase.h"
+#include "Sound/SoundBase.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -1281,6 +1283,23 @@ bool FCinemafyRevisionTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("...and was never staged, so it isn't out of date"), Scenes[1]->IsOutOfDate());
 	TestEqual(TEXT("The brig is new"), static_cast<int32>(Scenes[2]->Revision), static_cast<int32>(ECinemafySceneRevision::New));
 	TestTrue(TEXT("The report counts it all"), Project->RevisionReport.Contains(TEXT("1 rewritten, 1 new, 0 removed, 1 line(s) to re-record")));
+
+	// A face performance follows its line across a revision, and goes stale when the audio changes.
+	FCinemafyScriptScene* Hangar = Project->GetAllScenes()[1];
+	FCinemafyScriptLine* Regret = Hangar->Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Dialogue; });
+	if (TestNotNull(TEXT("The hangar line"), Regret))
+	{
+		Regret->Audio = TSoftObjectPtr<USoundBase>(FSoftObjectPath(TEXT("/Game/VO/Thane_Regret.Thane_Regret")));
+		Regret->FaceAnimation = TSoftObjectPtr<UAnimSequenceBase>(FSoftObjectPath(TEXT("/Game/Cinemafy/LipSync/Face_Thane.Face_Thane")));
+		Regret->FaceMadeFrom = Regret->Audio.ToSoftObjectPath();
+		TestTrue(TEXT("A face made from its audio is current"), Regret->HasCurrentFace());
+		Project->BreakDown(Draft2);
+		const FCinemafyScriptLine* Again = Project->GetAllScenes()[1]->Lines.FindByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Dialogue; });
+		TestTrue(TEXT("...and survives a re-import"), Again && Again->HasCurrentFace());
+		FCinemafyScriptLine Recast = *Again;
+		Recast.Audio = TSoftObjectPtr<USoundBase>(FSoftObjectPath(TEXT("/Game/VO/Thane_Regret_Take2.Thane_Regret_Take2")));
+		TestFalse(TEXT("...but not a new recording"), Recast.HasCurrentFace());
+	}
 	return true;
 }
 

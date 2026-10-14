@@ -970,6 +970,7 @@ namespace CinemafyVoices
 					Line.Audio = Audio;
 					Line.bUseAudioDuration = true;
 					Line.Analysis = FCinemafyAudioAnalysis();
+					Line.FaceAnimation = nullptr; // Made from the old audio.
 				}
 			}
 		}
@@ -1147,7 +1148,8 @@ void UCinemafyStoryLibrary::BakeTalkCurves(ULevelSequence* Sequence, const TArra
 	for (const FCinemafyLine& Line : Lines)
 	{
 		const TArray<float>& Open = Line.Analysis.TalkOpen;
-		UCinemafyFaceComponent* Face = Line.Speaker && Line.Audio ? Line.Speaker->FindComponentByClass<UCinemafyFaceComponent>() : nullptr;
+		// A line with a real face performance (MetaHuman lip-sync) doesn't need the stand-in.
+		UCinemafyFaceComponent* Face = Line.Speaker && Line.Audio && !Line.FaceAnimation ? Line.Speaker->FindComponentByClass<UCinemafyFaceComponent>() : nullptr;
 		if (Face && Open.Num() > 0)
 		{
 			FFaceChannels* Channels = Faces.Find(Face);
