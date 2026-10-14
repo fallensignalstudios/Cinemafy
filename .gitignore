@@ -1,0 +1,12 @@
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+*.sln
+*.suo
+*.VC.db
+*.opensdf
+.vs/
+.idea/
+__pycache__/
+*.pyc

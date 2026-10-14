@@ -1,0 +1,437 @@
+#include "CinemafyFramingLibrary.h"
+#include "CinemafyCameraLibrary.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/World.h"
+#include "Engine/Engine.h"
+#include "CollisionQueryParams.h"
+#include "GameFramework/Actor.h"
+
+namespace
+{
+	struct FShotSpec
+	{
+		/** How much of the world (cm, vertically) the frame should cover at the subject. */
+		float FrameHeight;
+		/** How far off the line of action the camera swings for singles, in degrees. */
+		float SideAngleDeg;
+		/** Camera height relative to the subject's eyes, in cm. */
+		float HeightOffset;
+		/** Extra horizontal room around both characters for two-shots, in cm. */
+		float TwoShotPadding;
+	};
+
+	FShotSpec GetShotSpec(ECinemafyShotType ShotType)
+	{
+		switch (ShotType)
+		{
+		case ECinemafyShotType::WideTwoShot:     return { 230.f, 0.f, 0.f, 160.f };
+		case ECinemafyShotType::MediumTwoShot:   return { 110.f, 0.f, 0.f, 80.f };
+		case ECinemafyShotType::OverTheShoulder: return { 75.f, 0.f, -4.f, 0.f };
+		case ECinemafyShotType::MediumShot:      return { 100.f, 20.f, -5.f, 0.f };
+		case ECinemafyShotType::MediumCloseUp:   return { 60.f, 18.f, -2.f, 0.f };
+		case ECinemafyShotType::CloseUp:         return { 38.f, 15.f, 0.f, 0.f };
+		case ECinemafyShotType::ExtremeCloseUp:  return { 20.f, 12.f, 0.f, 0.f };
+		case ECinemafyShotType::LowHero:         return { 110.f, 25.f, -75.f, 0.f };
+		case ECinemafyShotType::GroupShot:       return { 230.f, 0.f, 10.f, 200.f };
+		case ECinemafyShotType::TrackingLead:    return { 120.f, 10.f, -5.f, 80.f };
+		case ECinemafyShotType::TrackingFollow:  return { 100.f, 0.f, 5.f, 0.f };
+		}
+		return { 60.f, 18.f, 0.f, 0.f };
+	}
+
+	/** Pinhole camera: frame height / distance == sensor height / focal length. Returns cm. */
+	float DistanceForFrame(float FrameHeightCm, float FocalMM, float SensorHeightMM)
+	{
+		return FrameHeightCm * FocalMM / FMath::Max(SensorHeightMM, KINDA_SMALL_NUMBER);
+	}
+
+	/** Shifts the aim point so the subject sits on the opposite third, leaving room in the direction they look. */
+	FVector AddLeadRoom(const FVector& CamPos, const FVector& AimPoint, const FVector& LookDir, float FrameWidth)
+	{
+		const FVector ViewDir = (AimPoint - CamPos).GetSafeNormal();
+		const FVector Lateral = (LookDir - ViewDir * FVector::DotProduct(LookDir, ViewDir)).GetSafeNormal();
+		return AimPoint + Lateral * (FrameWidth / 6.f);
+	}
+}
+
+ECinemafyPrime UCinemafyFramingLibrary::GetRecommendedPrime(ECinemafyShotType ShotType)
+{
+	switch (ShotType)
+	{
+	case ECinemafyShotType::WideTwoShot:     return ECinemafyPrime::Prime24;
+	case ECinemafyShotType::MediumTwoShot:   return ECinemafyPrime::Prime35;
+	case ECinemafyShotType::OverTheShoulder: return ECinemafyPrime::Prime50;
+	case ECinemafyShotType::MediumShot:      return ECinemafyPrime::Prime50;
+	case ECinemafyShotType::MediumCloseUp:   return ECinemafyPrime::Prime50;
+	case ECinemafyShotType::CloseUp:         return ECinemafyPrime::Prime85;
+	case ECinemafyShotType::ExtremeCloseUp:  return ECinemafyPrime::Prime135;
+	case ECinemafyShotType::LowHero:         return ECinemafyPrime::Prime24;
+	case ECinemafyShotType::GroupShot:       return ECinemafyPrime::Prime24;
+	case ECinemafyShotType::TrackingLead:    return ECinemafyPrime::Prime35;
+	case ECinemafyShotType::TrackingFollow:  return ECinemafyPrime::Prime35;
+	}
+	return ECinemafyPrime::Prime50;
+}
+
+bool UCinemafyFramingLibrary::ShotNeedsCounterpart(ECinemafyShotType ShotType)
+{
+	return ShotType == ECinemafyShotType::WideTwoShot
+		|| ShotType == ECinemafyShotType::MediumTwoShot
+		|| ShotType == ECinemafyShotType::OverTheShoulder;
+}
+
+FVector UCinemafyFramingLibrary::GetEyePoint(const AActor* Actor)
+{
+	if (!Actor)
+	{
+		return FVector::ZeroVector;
+	}
+
+	TInlineComponentArray<USkeletalMeshComponent*> Meshes(Actor);
+
+	// Real eye bones (MetaHuman face mesh) are the gold standard.
+	for (const USkeletalMeshComponent* Mesh : Meshes)
+	{
+		if (Mesh->GetBoneIndex(Cinemafy::LeftEyeBone) != INDEX_NONE && Mesh->GetBoneIndex(Cinemafy::RightEyeBone) != INDEX_NONE)
+		{
+			return 0.5f * (Mesh->GetSocketLocation(Cinemafy::LeftEyeBone) + Mesh->GetSocketLocation(Cinemafy::RightEyeBone));
+		}
+	}
+
+	// The head bone sits at the base of the skull, so nudge up and forward to roughly eye level. "Forward" is the way the
+	// mesh faces: skeletal meshes are authored facing +Y, which is the component's right vector. (A Character rotates its
+	// mesh so that matches the actor's forward; a placed Skeletal Mesh Actor doesn't, so the actor's forward points out
+	// the side of the head and focus landed behind the face.)
+	for (const USkeletalMeshComponent* Mesh : Meshes)
+	{
+		if (Mesh->GetBoneIndex(Cinemafy::HeadBone) != INDEX_NONE)
+		{
+			return Mesh->GetSocketLocation(Cinemafy::HeadBone) + FVector::UpVector * 9.f + Mesh->GetRightVector() * 8.f;
+		}
+	}
+
+	FVector Origin, Extent;
+	Actor->GetActorBounds(true, Origin, Extent);
+	return FVector(Origin.X, Origin.Y, Origin.Z + Extent.Z - 12.f);
+}
+
+FVector UCinemafyFramingLibrary::GetCanonicalLineDirection(const AActor* CharacterA, const AActor* CharacterB)
+{
+	if (!CharacterA || !CharacterB)
+	{
+		return FVector::ForwardVector;
+	}
+
+	// Order the pair by name so the line (and therefore "camera side") is stable.
+	const bool bSwap = CharacterB->GetName() < CharacterA->GetName();
+	const AActor* First = bSwap ? CharacterB : CharacterA;
+	const AActor* Second = bSwap ? CharacterA : CharacterB;
+
+	const FVector Dir = (GetEyePoint(Second) - GetEyePoint(First)).GetSafeNormal2D();
+	return Dir.IsNearlyZero() ? FVector::ForwardVector : Dir;
+}
+
+float UCinemafyFramingLibrary::GetSideOfLine(const FVector& Point, const AActor* CharacterA, const AActor* CharacterB)
+{
+	if (!CharacterA || !CharacterB)
+	{
+		return 0.f;
+	}
+
+	const FVector SideDir = FVector::CrossProduct(FVector::UpVector, GetCanonicalLineDirection(CharacterA, CharacterB));
+	const FVector Mid = 0.5f * (GetEyePoint(CharacterA) + GetEyePoint(CharacterB));
+	return FVector::DotProduct(Point - Mid, SideDir);
+}
+
+bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution)
+{
+	const AActor* Subject = Request.Subject;
+	const AActor* Counterpart = (Request.Counterpart != Request.Subject) ? Request.Counterpart.Get() : nullptr;
+	if (!Subject || (ShotNeedsCounterpart(Request.ShotType) && !Counterpart))
+	{
+		return false;
+	}
+
+	const FVector Up = FVector::UpVector;
+	const FShotSpec Spec = GetShotSpec(Request.ShotType);
+	const FVector2D Sensor = UCinemafyCameraLibrary::GetSensorSize(Request.Sensor);
+	const float SensorH = Sensor.Y;
+	const float Aspect = Sensor.X / Sensor.Y;
+
+	const FVector SubjectEye = GetEyePoint(Subject);
+	const FVector OtherEye = Counterpart ? GetEyePoint(Counterpart) : SubjectEye + Subject->GetActorForwardVector() * 200.f;
+
+	// Direction the subject is looking (toward the counterpart), flattened.
+	FVector LookDir = (OtherEye - SubjectEye).GetSafeNormal2D();
+	if (LookDir.IsNearlyZero())
+	{
+		LookDir = Subject->GetActorForwardVector().GetSafeNormal2D();
+	}
+	if (LookDir.IsNearlyZero())
+	{
+		LookDir = FVector::ForwardVector;
+	}
+
+	// The line of action must be the same no matter which character the shot is on, or the
+	// "camera side" would flip between the A and B shots.
+	const FVector LineDir = Counterpart ? GetCanonicalLineDirection(Subject, Counterpart) : LookDir;
+	const FVector SideDir = FVector::CrossProduct(Up, LineDir) * (Request.bFlipSide ? -1.f : 1.f);
+
+	ECinemafyPrime Lens = Request.bUseRecommendedLens ? GetRecommendedPrime(Request.ShotType) : Request.Lens;
+	float Focal = UCinemafyCameraLibrary::GetPrimeFocalLength(Lens);
+
+	FVector CamPos;
+	FVector AimPoint;
+	FVector FocusPoint = SubjectEye;
+
+	switch (Request.ShotType)
+	{
+	case ECinemafyShotType::WideTwoShot:
+	case ECinemafyShotType::MediumTwoShot:
+	{
+		const FVector Mid = 0.5f * (SubjectEye + OtherEye);
+		const float NeededWidth = FVector::Dist2D(SubjectEye, OtherEye) + Spec.TwoShotPadding;
+		const float FrameH = FMath::Max(Spec.FrameHeight, NeededWidth / Aspect);
+		const FVector Dir = SideDir.RotateAngleAxis(Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
+		CamPos = Mid + Dir * DistanceForFrame(FrameH, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = Mid - Up * (FrameH / 6.f);
+		FocusPoint = Mid;
+		break;
+	}
+
+	case ECinemafyShotType::GroupShot:
+	{
+		// Everyone in: center on the group, wide enough for its spread, from the camera side of the main pair.
+		TArray<FVector, TInlineAllocator<8>> Eyes;
+		Eyes.Add(SubjectEye);
+		if (Counterpart)
+		{
+			Eyes.Add(OtherEye);
+		}
+		for (const AActor* Member : Request.Group)
+		{
+			if (Member && Member != Subject && Member != Counterpart)
+			{
+				Eyes.Add(GetEyePoint(Member));
+			}
+		}
+
+		FVector Center = FVector::ZeroVector;
+		for (const FVector& Eye : Eyes)
+		{
+			Center += Eye / Eyes.Num();
+		}
+		float Spread = 0.f;
+		for (const FVector& Eye : Eyes)
+		{
+			Spread = FMath::Max(Spread, static_cast<float>(FVector::Dist2D(Eye, Center)));
+		}
+
+		const float FrameH = FMath::Max(Spec.FrameHeight, (2.f * Spread + Spec.TwoShotPadding) / Aspect);
+		const FVector Dir = SideDir.RotateAngleAxis(Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
+		// A touch above eye level helps separate people standing in depth.
+		CamPos = Center + Dir * (DistanceForFrame(FrameH, Focal, SensorH) + Spread) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = Center - Up * (FrameH / 6.f);
+		FocusPoint = Center;
+		break;
+	}
+
+	case ECinemafyShotType::TrackingLead:
+	{
+		// In front of the walkers, backing up with them: the pair (or the subject) framed medium-wide.
+		FVector Walk = Subject->GetActorForwardVector().GetSafeNormal2D();
+		if (Counterpart)
+		{
+			Walk = (Walk + Counterpart->GetActorForwardVector().GetSafeNormal2D()).GetSafeNormal2D();
+		}
+		if (Walk.IsNearlyZero())
+		{
+			Walk = LookDir;
+		}
+		const FVector Center = Counterpart ? 0.5f * (SubjectEye + OtherEye) : SubjectEye;
+		const float Width = Counterpart ? FVector::Dist2D(SubjectEye, OtherEye) + Spec.TwoShotPadding : 0.f;
+		const float FrameH = FMath::Max(Spec.FrameHeight, Width / Aspect);
+		const FVector Dir = Walk.RotateAngleAxis((Spec.SideAngleDeg + Request.AngleOffset) * (Request.bFlipSide ? -1.f : 1.f), Up);
+		CamPos = Center + Dir * DistanceForFrame(FrameH, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = Center - Up * (FrameH / 6.f);
+		FocusPoint = Center;
+		break;
+	}
+
+	case ECinemafyShotType::TrackingFollow:
+	{
+		// Behind and just off the subject's shoulder, looking where they're headed.
+		FVector Walk = Subject->GetActorForwardVector().GetSafeNormal2D();
+		if (Walk.IsNearlyZero())
+		{
+			Walk = LookDir;
+		}
+		const FVector Side = FVector::CrossProduct(Up, Walk) * (Request.bFlipSide ? -1.f : 1.f);
+		CamPos = SubjectEye - Walk * 170.f + Side * (40.f + Request.AngleOffset * 1.5f) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = SubjectEye + Walk * 250.f - Up * 20.f;
+		FocusPoint = SubjectEye;
+		Lens = UCinemafyCameraLibrary::SnapToPrime(Focal);
+		break;
+	}
+
+	case ECinemafyShotType::OverTheShoulder:
+	{
+		// Sit just behind the counterpart's shoulder (camera side of the line) and look back at the subject.
+		CamPos = OtherEye + LookDir * 45.f + SideDir * (35.f + Request.AngleOffset * 1.5f) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		const float Dist = FVector::Dist(CamPos, SubjectEye);
+
+		// Distance is fixed by the blocking, so pick the lens that gives the right frame size.
+		Lens = UCinemafyCameraLibrary::SnapToPrime(SensorH * Dist / Spec.FrameHeight);
+		Focal = UCinemafyCameraLibrary::GetPrimeFocalLength(Lens);
+		const float FrameH = Dist * SensorH / Focal;
+
+		AimPoint = SubjectEye - Up * (FrameH / 6.f);
+		// Push the subject away from the foreground shoulder.
+		AimPoint = AddLeadRoom(CamPos, AimPoint, -SideDir, FrameH * Aspect);
+		break;
+	}
+
+	default:
+	{
+		const float Angle = FMath::DegreesToRadians(FMath::Clamp(Spec.SideAngleDeg + Request.AngleOffset, 2.f, 70.f));
+		const FVector Dir = (LookDir * FMath::Cos(Angle) + SideDir * FMath::Sin(Angle)).GetSafeNormal();
+		CamPos = SubjectEye + Dir * DistanceForFrame(Spec.FrameHeight, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
+		AimPoint = SubjectEye - Up * (Spec.FrameHeight / 6.f);
+		if (Counterpart)
+		{
+			AimPoint = AddLeadRoom(CamPos, AimPoint, LookDir, Spec.FrameHeight * Aspect);
+		}
+		break;
+	}
+	}
+
+	const FRotator CamRot = (AimPoint - CamPos).Rotation();
+
+	OutSolution.CameraTransform = FTransform(CamRot, CamPos);
+	OutSolution.Lens = Lens;
+	OutSolution.FocalLength = Focal;
+	OutSolution.FocusDistance = FMath::Max(FVector::DotProduct(FocusPoint - CamPos, CamRot.Vector()), 15.f);
+	return true;
+}
+
+bool UCinemafyFramingLibrary::IsShotClear(const UWorld* World, const FCinemafyShotRequest& Request, const FCinemafyShotSolution& Solution)
+{
+	if (!World)
+	{
+		return true;
+	}
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(CinemafyShotClear), false);
+	if (Request.Subject)
+	{
+		Params.AddIgnoredActor(Request.Subject);
+	}
+	if (Request.Counterpart)
+	{
+		// The counterpart is *meant* to be in the way for OTS shots.
+		Params.AddIgnoredActor(Request.Counterpart);
+	}
+
+	const FVector Camera = Solution.CameraTransform.GetLocation();
+
+	// Room for the lens: not inside a wall or a prop.
+	if (World->OverlapAnyTestByChannel(Camera, FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(12.f), Params))
+	{
+		return false;
+	}
+
+	// A clear view of everyone the shot is about.
+	TArray<FVector, TInlineAllocator<2>> Targets;
+	Targets.Add(GetEyePoint(Request.Subject));
+	if (Request.Counterpart && Request.ShotType != ECinemafyShotType::OverTheShoulder && ShotNeedsCounterpart(Request.ShotType))
+	{
+		Targets.Add(GetEyePoint(Request.Counterpart));
+	}
+	if (Request.ShotType == ECinemafyShotType::GroupShot)
+	{
+		for (const AActor* Member : Request.Group)
+		{
+			if (Member)
+			{
+				Params.AddIgnoredActor(Member);
+				Targets.Add(GetEyePoint(Member));
+			}
+		}
+	}
+	for (const FVector& Target : Targets)
+	{
+		FHitResult Hit;
+		if (World->LineTraceSingleByChannel(Hit, Camera, Target, ECC_Visibility, Params))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldContextObject, const FCinemafyShotRequest& Request,
+	FCinemafyShotSolution& OutSolution, bool& bOutClearView)
+{
+	bOutClearView = false;
+	if (!SolveShot(Request, OutSolution))
+	{
+		return false;
+	}
+
+	const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+	if (!World || IsShotClear(World, Request, OutSolution))
+	{
+		bOutClearView = true;
+		return true;
+	}
+
+	// Alternatives that keep the shot's intent, roughly in order of how little they change it.
+	struct FVariant { float Angle; float Height; int32 LensStep; };
+	static const FVariant Variants[] = {
+		{  8.f,   0.f,  0 }, { -8.f,   0.f,  0 }, { 16.f,   0.f,  0 },
+		{  0.f,   0.f, -1 }, { 10.f,   0.f, -1 }, {  0.f,  25.f,  0 },
+		{  0.f, -20.f,  0 }, { 24.f,   0.f, -1 }, {  0.f,   0.f, -2 },
+		{ 40.f,   0.f, -1 }, {-40.f,   0.f, -1 }, { 60.f,   0.f, -2 }, {-60.f,   0.f, -2 },
+	};
+
+	const ECinemafyPrime BaseLens = OutSolution.Lens;
+	for (const FVariant& Variant : Variants)
+	{
+		FCinemafyShotRequest Attempt = Request;
+		Attempt.AngleOffset += Variant.Angle;
+		Attempt.HeightOffset += Variant.Height;
+		if (Variant.LensStep != 0)
+		{
+			// A wider lens brings the camera closer for the same framing: in front of whatever was blocking.
+			Attempt.bUseRecommendedLens = false;
+			Attempt.Lens = static_cast<ECinemafyPrime>(FMath::Clamp(static_cast<int32>(BaseLens) + Variant.LensStep, 0, static_cast<int32>(ECinemafyPrime::Prime135)));
+		}
+
+		FCinemafyShotSolution Candidate;
+		if (SolveShot(Attempt, Candidate) && IsShotClear(World, Attempt, Candidate))
+		{
+			OutSolution = Candidate;
+			bOutClearView = true;
+			return true;
+		}
+	}
+
+	// Last resort, like a spring arm: keep the angle but bring the camera in front of whatever is between it
+	// and the subject, instead of leaving it behind a wall. (Still reported as not clear, so it gets flagged.)
+	if (Request.Subject)
+	{
+		const FVector Eye = GetEyePoint(Request.Subject);
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(CinemafyShotPullIn), false, Request.Subject);
+		if (Request.Counterpart)
+		{
+			Params.AddIgnoredActor(Request.Counterpart);
+		}
+		FHitResult Hit;
+		if (World->SweepSingleByChannel(Hit, Eye, OutSolution.CameraTransform.GetLocation(), FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(15.f), Params)
+			&& FVector::Dist(Eye, Hit.Location) > 60.f)
+		{
+			OutSolution.CameraTransform.SetLocation(Hit.Location);
+		}
+	}
+	return true;
+}
