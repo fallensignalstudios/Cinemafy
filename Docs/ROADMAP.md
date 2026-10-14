@@ -41,6 +41,7 @@
 
 ## 🚀 Stretch
 - [x] Scene Director: style presets, intensity-driven coverage planner, Sequencer bake, re-roll, live directing
-- [ ] Director v2: camera moves per shot (keyed Progress), emotion events per line, style learning from an existing edit
+- [x] Director v2: camera moves per shot (keyed Progress), emotion per line (keyed), learn a style from an existing edit, stronger reverse-shot size matching
+- [ ] Director v3: intensity curves from dialogue audio, multi-character (3+) blocking, cutting on action
 - [ ] Anamorphic mode (squeeze, oval bokeh, streak flares)
 - [ ] Movie Render Graph presets for trailer captures

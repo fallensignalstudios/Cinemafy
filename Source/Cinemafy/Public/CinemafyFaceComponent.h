@@ -39,8 +39,8 @@ public:
 
 	// --- Emotion ---------------------------------------------------------------
 
-	/** Emotion layered on top of the performance. Crossfades over EmotionBlendTime when changed. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Face|Emotion")
+	/** Emotion layered on top of the performance. Crossfades over EmotionBlendTime when changed. Keyable. */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Face|Emotion")
 	ECinemafyEmotion Emotion = ECinemafyEmotion::Neutral;
 
 	/** How strongly the emotion shows. Keyable: build it up over a line. */

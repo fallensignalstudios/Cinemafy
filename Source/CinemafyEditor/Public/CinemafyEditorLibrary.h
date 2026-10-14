@@ -113,6 +113,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 ClearDirectedShots(ACinemafySceneDirector* Director);
 
+	/**
+	 * Watches every cut in the open Level Sequence, classifies each shot from its actual framing,
+	 * and writes the result into the director's Custom style. Returns the number of shots analyzed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 LearnDirectorStyleFromSequence(ACinemafySceneDirector* Director);
+
 	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static ACinemafySceneDirector* CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style);

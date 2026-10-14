@@ -34,6 +34,21 @@ namespace
 		return AllPrimes[Index];
 	}
 
+	/** The move that suits each shot, and how far it travels (smaller for tighter shots). */
+	bool GetMoveForShot(ECinemafyShotType Type, ECinemafyCameraMove& OutMove, float& OutDistance)
+	{
+		switch (Type)
+		{
+		case ECinemafyShotType::WideTwoShot:   OutMove = ECinemafyCameraMove::PushIn;  OutDistance = 45.f; return true;
+		case ECinemafyShotType::MediumTwoShot: OutMove = ECinemafyCameraMove::PushIn;  OutDistance = 35.f; return true;
+		case ECinemafyShotType::MediumShot:    OutMove = ECinemafyCameraMove::PushIn;  OutDistance = 30.f; return true;
+		case ECinemafyShotType::MediumCloseUp: OutMove = ECinemafyCameraMove::PushIn;  OutDistance = 20.f; return true;
+		case ECinemafyShotType::CloseUp:       OutMove = ECinemafyCameraMove::PushIn;  OutDistance = 12.f; return true;
+		case ECinemafyShotType::LowHero:       OutMove = ECinemafyCameraMove::CraneUp; OutDistance = 45.f; return true;
+		default:                               return false; // OTS and ECU look best locked off.
+		}
+	}
+
 	ECinemafyShotType PickShotType(const FCinemafyDirectorStyle& Style, FRandomStream& Random, float Intensity,
 		const AActor* Subject, const AActor* Counterpart, bool bReaction, const FCinemafyPlannedShot* Previous)
 	{
@@ -83,10 +98,17 @@ namespace
 						Weight *= 0.2f;
 					}
 				}
-				else if (Previous->ShotType == Type && !IsTwoShot(Type))
+				else if (!IsTwoShot(Previous->ShotType) && !IsTwoShot(Type))
 				{
-					// Shot-reverse-shot: match the other person's framing.
-					Weight *= 1.6f;
+					// Shot-reverse-shot: match the other person's framing, so the cut reads as one conversation.
+					if (Previous->ShotType == Type)
+					{
+						Weight *= 2.5f;
+					}
+					else if (FMath::Abs(Size - PreviousSize) > 1.f)
+					{
+						Weight *= 0.5f;
+					}
 				}
 			}
 
@@ -165,6 +187,7 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.ReactionShotChance = 0.5f;
 		S.LowAngleBias = 0.05f;
 		S.LensBias = 1;
+		S.MoveChance = 0.5f;
 		break;
 
 	case ECinemafyDirectorPreset::KineticAction:
@@ -178,6 +201,7 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.bEstablishingShot = false;
 		S.CalmFeel = ECinemafyCameraFeel::Handheld;
 		S.IntenseFeel = ECinemafyCameraFeel::RunAndGun;
+		S.MoveChance = 0.6f;
 		break;
 
 	case ECinemafyDirectorPreset::SlowBurn:
@@ -188,6 +212,7 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.ReactionShotChance = 0.2f;
 		S.LowAngleBias = 0.1f;
 		S.IntenseFeel = ECinemafyCameraFeel::Tripod;
+		S.MoveChance = 0.7f;
 		break;
 
 	case ECinemafyDirectorPreset::NoirThriller:
@@ -197,6 +222,7 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.IntenseShotLength = FVector2D(1.5, 3.0);
 		S.ReactionShotChance = 0.4f;
 		S.LowAngleBias = 0.6f;
+		S.MoveChance = 0.4f;
 		break;
 
 	case ECinemafyDirectorPreset::Epic:
@@ -207,6 +233,7 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.ReactionShotChance = 0.25f;
 		S.LowAngleBias = 0.7f;
 		S.LensBias = -1;
+		S.MoveChance = 0.6f;
 		break;
 
 	case ECinemafyDirectorPreset::ClassicHollywood:
@@ -277,6 +304,27 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		}
 
 		Shot.Lens = BiasLens(UCinemafyFramingLibrary::GetRecommendedPrime(Shot.ShotType), Style.LensBias);
+
+		// Moves: a creep-in on the establishing shot, push-ins as drama builds.
+		{
+			const bool bEstablishing = Why == TEXT("establishing the space");
+			const float MoveChance = Style.MoveChance * (bEstablishing ? 1.5f : FMath::Lerp(0.6f, 1.4f, Intensity));
+			ECinemafyCameraMove Move;
+			float Distance;
+			if (Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
+			{
+				Shot.bMove = true;
+				Shot.Move = Move;
+				Shot.MoveDistance = Distance;
+				Why += TEXT(", moving");
+			}
+		}
+
+		if (Segment == 0 && Line.bSetEmotion)
+		{
+			Shot.bSetEmotion = true;
+			Shot.Emotion = Line.Emotion;
+		}
 
 		// Calm moments get the calm camera; heated ones get the operator's adrenaline.
 		const float FeelRoll = FMath::Clamp((Intensity - 0.4f) / 0.3f, 0.f, 1.f);

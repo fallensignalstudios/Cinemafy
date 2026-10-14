@@ -113,13 +113,11 @@ void FCinemafyEditorModule::StartupModule()
 	// The Scene Director lives in the runtime module; its Direct / Clear buttons are answered here.
 	DirectorRequestHandle = ACinemafySceneDirector::OnEditorRequest.AddLambda([](ACinemafySceneDirector* Director, ECinemafyDirectorRequest Request)
 	{
-		if (Request == ECinemafyDirectorRequest::Direct)
+		switch (Request)
 		{
-			UCinemafyEditorLibrary::DirectSceneInSequencer(Director);
-		}
-		else
-		{
-			UCinemafyEditorLibrary::ClearDirectedShots(Director);
+		case ECinemafyDirectorRequest::Direct:     UCinemafyEditorLibrary::DirectSceneInSequencer(Director); break;
+		case ECinemafyDirectorRequest::Clear:      UCinemafyEditorLibrary::ClearDirectedShots(Director); break;
+		case ECinemafyDirectorRequest::LearnStyle: UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(Director); break;
 		}
 	});
 

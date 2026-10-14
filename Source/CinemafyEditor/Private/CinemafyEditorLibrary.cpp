@@ -15,6 +15,16 @@
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
 #include "Sections/MovieSceneCameraCutSection.h"
+#include "Sections/MovieSceneEnumSection.h"
+#include "Sections/MovieSceneFloatSection.h"
+#include "Tracks/MovieSceneEnumTrack.h"
+#include "Tracks/MovieSceneFloatTrack.h"
+#include "Channels/MovieSceneByteChannel.h"
+#include "Channels/MovieSceneFloatChannel.h"
+#include "ISequencer.h"
+#include "MovieSceneSequenceID.h"
+#include "Camera/CameraComponent.h"
+#include "CinemafyCameraMoveComponent.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -665,6 +675,136 @@ namespace
 		return ToRemove.Num();
 	}
 
+	/** Removes any existing track for Property on a binding, then adds a fresh one. */
+	template <typename TTrack>
+	TTrack* ReplacePropertyTrack(UMovieScene* MovieScene, const FGuid& Binding, FName Property)
+	{
+		const UMovieScene* ConstMovieScene = MovieScene;
+		if (const FMovieSceneBinding* Existing = ConstMovieScene->FindBinding(Binding))
+		{
+			TArray<UMovieSceneTrack*> ToRemove;
+			for (UMovieSceneTrack* Track : Existing->GetTracks())
+			{
+				const UMovieScenePropertyTrack* PropertyTrack = Cast<UMovieScenePropertyTrack>(Track);
+				if (PropertyTrack && PropertyTrack->GetPropertyName() == Property)
+				{
+					ToRemove.Add(Track);
+				}
+			}
+			for (UMovieSceneTrack* Track : ToRemove)
+			{
+				MovieScene->RemoveTrack(*Track);
+			}
+		}
+
+		TTrack* Track = MovieScene->AddTrack<TTrack>(Binding);
+		Track->SetPropertyNameAndPath(Property, Property.ToString());
+		return Track;
+	}
+
+	/** One section covering all time, ready for keys. */
+	template <typename TSection>
+	TSection* AddInfiniteSection(UMovieSceneTrack* Track)
+	{
+		TSection* Section = Cast<TSection>(Track->CreateNewSection());
+		if (Section)
+		{
+			Section->SetRange(TRange<FFrameNumber>::All());
+			Track->AddSection(*Section);
+		}
+		return Section;
+	}
+
+	struct FCameraShotWindow
+	{
+		FFrameNumber Start;
+		FFrameNumber End;
+		const FCinemafyPlannedShot* Shot = nullptr;
+	};
+
+	/** Keys a camera's Move Progress: 0 -> 1 across each moving shot, held at 0 on the others. */
+	void BakeCameraMoves(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera, const TArray<FCameraShotWindow>& Windows)
+	{
+		const FCameraShotWindow* FirstMoving = Windows.FindByPredicate([](const FCameraShotWindow& W) { return W.Shot->bMove; });
+		UCinemafyCameraMoveComponent* Move = Camera->FindComponentByClass<UCinemafyCameraMoveComponent>();
+		if (!FirstMoving && !Move)
+		{
+			return;
+		}
+
+		if (!Move)
+		{
+			Move = FindOrAddComponent<UCinemafyCameraMoveComponent>(Camera, TEXT("CinemafyMove"));
+		}
+		Move->Modify();
+		Move->Progress = 0.f;
+		if (FirstMoving)
+		{
+			Move->Move = FirstMoving->Shot->Move;
+			Move->Distance = FirstMoving->Shot->MoveDistance;
+		}
+
+		const FGuid Binding = CinemafySequencer::BindObject(Sequence, Move);
+		if (!Binding.IsValid())
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: open the sequence in Sequencer to bake camera moves."));
+			return;
+		}
+
+		UMovieSceneFloatTrack* Track = ReplacePropertyTrack<UMovieSceneFloatTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(UCinemafyCameraMoveComponent, Progress));
+		UMovieSceneFloatSection* Section = AddInfiniteSection<UMovieSceneFloatSection>(Track);
+		FMovieSceneFloatChannel* Channel = Section ? Section->GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0) : nullptr;
+		if (!Channel)
+		{
+			return;
+		}
+
+		// Linear keys: the component's own easing (operator settle) shapes the move.
+		for (const FCameraShotWindow& Window : Windows)
+		{
+			Channel->AddLinearKey(Window.Start, 0.f);
+			Channel->AddLinearKey(Window.End, Window.Shot->bMove ? 1.f : 0.f);
+		}
+	}
+
+	/** Keys each speaker's Face emotion at the start of lines that set one. */
+	void BakeEmotions(ULevelSequence* Sequence, UMovieScene* MovieScene, const TArray<FCinemafyPlannedShot>& Plan, FFrameNumber SceneStart)
+	{
+		TMap<AActor*, TArray<const FCinemafyPlannedShot*>> ByCharacter;
+		for (const FCinemafyPlannedShot& Shot : Plan)
+		{
+			if (Shot.bSetEmotion && Shot.Subject)
+			{
+				ByCharacter.FindOrAdd(Shot.Subject).Add(&Shot);
+			}
+		}
+
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		for (const TPair<AActor*, TArray<const FCinemafyPlannedShot*>>& Pair : ByCharacter)
+		{
+			UCinemafyFaceComponent* Face = FindOrAddComponent<UCinemafyFaceComponent>(Pair.Key, TEXT("CinemafyFace"));
+			const FGuid Binding = CinemafySequencer::BindObject(Sequence, Face);
+			if (!Binding.IsValid())
+			{
+				continue;
+			}
+
+			UMovieSceneEnumTrack* Track = ReplacePropertyTrack<UMovieSceneEnumTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(UCinemafyFaceComponent, Emotion));
+			Track->SetEnum(StaticEnum<ECinemafyEmotion>());
+			UMovieSceneEnumSection* Section = AddInfiniteSection<UMovieSceneEnumSection>(Track);
+			FMovieSceneByteChannel* Channel = Section ? Section->GetChannelProxy().GetChannel<FMovieSceneByteChannel>(0) : nullptr;
+			if (!Channel)
+			{
+				continue;
+			}
+
+			for (const FCinemafyPlannedShot* Shot : Pair.Value)
+			{
+				Channel->GetData().AddKey(SceneStart + TickResolution.AsFrameNumber(Shot->StartTime), static_cast<uint8>(Shot->Emotion));
+			}
+		}
+	}
+
 	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
 	{
 		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
@@ -725,6 +865,7 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
 	const FFrameNumber SceneStart = CinemafySequencer::GetPlayheadTick(MovieScene);
 	FFrameNumber SceneEnd = SceneStart;
+	TMap<ACineCameraActor*, TArray<FCameraShotWindow>> CameraWindows;
 
 	for (const FCinemafyPlannedShot& Shot : Plan)
 	{
@@ -763,9 +904,16 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 			Cut->SetRange(TRange<FFrameNumber>(Start, End));
 		}
 		SceneEnd = FMath::Max(SceneEnd, End);
+		CameraWindows.FindOrAdd(Camera).Add({ Start, End, &Shot });
 
 		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Shot.Reason);
 	}
+
+	for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
+	{
+		BakeCameraMoves(Sequence, MovieScene, Pair.Key, Pair.Value);
+	}
+	BakeEmotions(Sequence, MovieScene, Plan, SceneStart);
 
 	// Make sure the whole scene fits in the playback range.
 	const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
@@ -798,6 +946,285 @@ int32 UCinemafyEditorLibrary::ClearDirectedShots(ACinemafySceneDirector* Directo
 	CinemafySequencer::NotifyChanged();
 	SCinemafyShotBrowser::RefreshActive();
 	return Removed;
+}
+
+namespace
+{
+	struct FObservedShot
+	{
+		ECinemafyShotType Type = ECinemafyShotType::MediumShot;
+		float Duration = 0.f;
+		float FocalLength = 0.f;
+		bool bLowAngle = false;
+		bool bMoving = false;
+		ECinemafyCameraFeel Feel = ECinemafyCameraFeel::Locked;
+	};
+
+	/**
+	 * Works out what kind of shot a camera is from what it actually sees: who's in frame, how much of
+	 * them (frame height at the subject), whether a foreground shoulder is in the way, and the angle.
+	 */
+	bool ClassifyShot(const UCameraComponent* Camera, const TArray<AActor*>& Characters, FObservedShot& Out)
+	{
+		FMinimalViewInfo View;
+		const_cast<UCameraComponent*>(Camera)->GetCameraView(0.f, View);
+
+		const float Aspect = View.AspectRatio > 0.f ? View.AspectRatio : 16.f / 9.f;
+		const float TanHalfH = FMath::Tan(FMath::DegreesToRadians(View.FOV * 0.5f));
+		const float TanHalfV = TanHalfH / Aspect;
+		const FRotationMatrix Basis(View.Rotation);
+		const FVector Forward = Basis.GetUnitAxis(EAxis::X);
+		const FVector Right = Basis.GetUnitAxis(EAxis::Y);
+		const FVector Up = Basis.GetUnitAxis(EAxis::Z);
+
+		struct FSeen { FVector Eye; float Depth; float X; };
+		TArray<FSeen> InFrame;
+		TArray<FSeen> Foreground;
+		for (const AActor* Character : Characters)
+		{
+			const FVector Eye = UCinemafyFramingLibrary::GetEyePoint(Character);
+			const FVector Dir = Eye - View.Location;
+			const float Depth = FVector::DotProduct(Dir, Forward);
+			if (Depth <= 10.f)
+			{
+				continue;
+			}
+			const float X = FVector::DotProduct(Dir, Right) / (Depth * TanHalfH);
+			const float Y = FVector::DotProduct(Dir, Up) / (Depth * TanHalfV);
+			if (FMath::Abs(X) < 1.1f && FMath::Abs(Y) < 1.3f)
+			{
+				InFrame.Add({ Eye, Depth, X });
+			}
+			else if (FMath::Abs(X) < 1.6f && Depth < 150.f)
+			{
+				// Just off the edge and very close: a foreground shoulder.
+				Foreground.Add({ Eye, Depth, X });
+			}
+		}
+
+		if (InFrame.Num() == 0)
+		{
+			return false;
+		}
+
+		// The subject is whoever's nearest the center of frame (ignoring anything right on top of the lens).
+		InFrame.Sort([](const FSeen& A, const FSeen& B) { return FMath::Abs(A.X) < FMath::Abs(B.X); });
+		const FSeen* Subject = InFrame.FindByPredicate([](const FSeen& S) { return S.Depth > 80.f; });
+		if (!Subject)
+		{
+			Subject = &InFrame[0];
+		}
+		const float FrameHeight = 2.f * Subject->Depth * TanHalfV;
+
+		bool bOverShoulder = false;
+		int32 PeersInFrame = 0;
+		for (const FSeen& Other : InFrame)
+		{
+			if (&Other == Subject)
+			{
+				continue;
+			}
+			if (Other.Depth < Subject->Depth * 0.6f && Other.Depth < 150.f)
+			{
+				bOverShoulder = true;
+			}
+			else if (Other.Depth > Subject->Depth * 0.6f && Other.Depth < Subject->Depth * 1.6f)
+			{
+				++PeersInFrame;
+			}
+		}
+		bOverShoulder |= Foreground.Num() > 0;
+
+		Out.bLowAngle = View.Location.Z < Subject->Eye.Z - 50.f && FrameHeight > 70.f && FrameHeight < 220.f;
+
+		if (PeersInFrame > 0)                    { Out.Type = FrameHeight > 180.f ? ECinemafyShotType::WideTwoShot : ECinemafyShotType::MediumTwoShot; }
+		else if (bOverShoulder)                  { Out.Type = ECinemafyShotType::OverTheShoulder; }
+		else if (Out.bLowAngle)                  { Out.Type = ECinemafyShotType::LowHero; }
+		else if (FrameHeight > 80.f)             { Out.Type = ECinemafyShotType::MediumShot; }
+		else if (FrameHeight > 49.f)             { Out.Type = ECinemafyShotType::MediumCloseUp; }
+		else if (FrameHeight > 29.f)             { Out.Type = ECinemafyShotType::CloseUp; }
+		else                                     { Out.Type = ECinemafyShotType::ExtremeCloseUp; }
+		return true;
+	}
+
+	float Percentile(TArray<float> Values, float P)
+	{
+		if (Values.Num() == 0)
+		{
+			return 0.f;
+		}
+		Values.Sort();
+		const int32 Index = FMath::Clamp(FMath::RoundToInt(P * (Values.Num() - 1)), 0, Values.Num() - 1);
+		return Values[Index];
+	}
+}
+
+int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirector* Director)
+{
+	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
+	const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer();
+	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+	const UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
+	if (!Director || !Sequencer.IsValid() || !CutTrack)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnNoSequence", "Open a Level Sequence with camera cuts in Sequencer: the director will study its edit."));
+		return 0;
+	}
+
+	// The cast: the director's characters, or every skeletal character in the level.
+	TArray<AActor*> Characters;
+	for (const FCinemafyLine& Line : Director->Lines)
+	{
+		if (Line.Speaker) { Characters.AddUnique(Line.Speaker); }
+		if (Line.Listener) { Characters.AddUnique(Line.Listener); }
+	}
+	if (Characters.Num() == 0)
+	{
+		for (TActorIterator<AActor> It(Director->GetWorld()); It; ++It)
+		{
+			if (It->FindComponentByClass<USkeletalMeshComponent>() && !It->FindComponentByClass<UCameraComponent>())
+			{
+				Characters.Add(*It);
+			}
+		}
+	}
+
+	TArray<const UMovieSceneCameraCutSection*> Cuts;
+	for (const UMovieSceneSection* Section : CutTrack->GetAllSections())
+	{
+		const UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+		if (Cut && Cut->HasStartFrame() && Cut->HasEndFrame())
+		{
+			Cuts.Add(Cut);
+		}
+	}
+	Cuts.Sort([](const UMovieSceneCameraCutSection& A, const UMovieSceneCameraCutSection& B) { return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame(); });
+
+	const FFrameRate TickResolution = MovieScene->GetTickResolution();
+	const FQualifiedFrameTime OriginalTime = Sequencer->GetLocalTime();
+	TArray<FObservedShot> Observed;
+
+	for (const UMovieSceneCameraCutSection* Cut : Cuts)
+	{
+		// Look at each shot as it actually plays (animated cameras and characters included).
+		const FFrameNumber Start = Cut->GetInclusiveStartFrame();
+		Sequencer->SetLocalTimeDirectly(FFrameTime(Start));
+		Sequencer->ForceEvaluate();
+
+		const AActor* CameraActor = nullptr;
+		for (const TWeakObjectPtr<UObject>& Bound : Sequencer->FindBoundObjects(Cut->GetCameraBindingID().GetGuid(), MovieSceneSequenceID::Root))
+		{
+			CameraActor = Cast<AActor>(Bound.Get());
+			if (CameraActor)
+			{
+				break;
+			}
+		}
+		const UCameraComponent* Camera = CameraActor ? CameraActor->FindComponentByClass<UCameraComponent>() : nullptr;
+
+		FObservedShot Shot;
+		if (!Camera || !ClassifyShot(Camera, Characters, Shot))
+		{
+			continue;
+		}
+
+		Shot.Duration = static_cast<float>(TickResolution.AsSeconds(FFrameTime(Cut->GetExclusiveEndFrame() - Start)));
+		if (const UCineCameraComponent* Cine = Cast<UCineCameraComponent>(Camera))
+		{
+			Shot.FocalLength = Cine->CurrentFocalLength;
+		}
+		if (const UCinemafyCameraFeelComponent* Feel = CameraActor->FindComponentByClass<UCinemafyCameraFeelComponent>())
+		{
+			Shot.Feel = Feel->Feel;
+		}
+		Shot.bMoving = CameraActor->FindComponentByClass<UCinemafyCameraMoveComponent>() != nullptr;
+		Observed.Add(Shot);
+	}
+
+	Sequencer->SetLocalTimeDirectly(ConvertFrameTime(OriginalTime.Time, OriginalTime.Rate, TickResolution));
+	Sequencer->ForceEvaluate();
+
+	if (Observed.Num() < 3)
+	{
+		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnTooFew", "Not enough recognizable shots to learn from (need at least 3 cuts with characters in frame)."));
+		return Observed.Num();
+	}
+
+	FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood);
+
+	// Shot preferences: how much more (or less) often each type appears than an even spread would.
+	TMap<ECinemafyShotType, int32> Counts;
+	TArray<float> Durations;
+	int32 LowAngle = 0;
+	int32 Moving = 0;
+	float LensLogSum = 0.f;
+	int32 LensSamples = 0;
+	TMap<ECinemafyCameraFeel, int32> Feels;
+	for (const FObservedShot& Shot : Observed)
+	{
+		Counts.FindOrAdd(Shot.Type)++;
+		Durations.Add(Shot.Duration);
+		LowAngle += Shot.bLowAngle ? 1 : 0;
+		Moving += Shot.bMoving ? 1 : 0;
+		Feels.FindOrAdd(Shot.Feel)++;
+		if (Shot.FocalLength > 0.f)
+		{
+			const float Recommended = UCinemafyCameraLibrary::GetPrimeFocalLength(UCinemafyFramingLibrary::GetRecommendedPrime(Shot.Type));
+			LensLogSum += FMath::Log2(Shot.FocalLength / Recommended);
+			++LensSamples;
+		}
+	}
+
+	const float EvenShare = 1.f / Style.ShotPreference.Num();
+	for (TPair<ECinemafyShotType, float>& Pref : Style.ShotPreference)
+	{
+		const float Share = static_cast<float>(Counts.FindRef(Pref.Key)) / Observed.Num();
+		Pref.Value = FMath::Clamp(Share / EvenShare, 0.1f, 2.5f);
+	}
+
+	// Pacing: the slower half of shots defines "calm", the quicker half "intense".
+	const float P10 = Percentile(Durations, 0.1f);
+	const float P50 = Percentile(Durations, 0.5f);
+	const float P90 = Percentile(Durations, 0.9f);
+	Style.CalmShotLength = FVector2D(FMath::Max(P50, 0.6f), FMath::Max(P90, P50 + 0.5f));
+	Style.IntenseShotLength = FVector2D(FMath::Max(P10, 0.6f), FMath::Max(P50, P10 + 0.3f));
+
+	// Quick cutaways are mostly reactions.
+	const int32 QuickCuts = Durations.FilterByPredicate([P50](float D) { return D < P50 * 0.6f; }).Num();
+	Style.ReactionShotChance = FMath::Clamp(0.15f + 0.6f * QuickCuts / Observed.Num(), 0.f, 1.f);
+
+	Style.LowAngleBias = FMath::Clamp(4.f * LowAngle / Observed.Num(), 0.05f, 1.f);
+	Style.MoveChance = FMath::Clamp(static_cast<float>(Moving) / Observed.Num(), 0.f, 1.f);
+	Style.LensBias = LensSamples > 0 ? FMath::Clamp(FMath::RoundToInt((LensLogSum / LensSamples) / 0.5f), -2, 2) : 0;
+	Style.bEstablishingShot = Observed[0].Type == ECinemafyShotType::WideTwoShot || Observed[0].Type == ECinemafyShotType::MediumTwoShot;
+
+	// Feel: the most common one is "calm"; the wildest one seen is "intense".
+	ECinemafyCameraFeel MostCommon = ECinemafyCameraFeel::Tripod;
+	int32 MostCount = 0;
+	ECinemafyCameraFeel Wildest = ECinemafyCameraFeel::Locked;
+	for (const TPair<ECinemafyCameraFeel, int32>& Pair : Feels)
+	{
+		if (Pair.Value > MostCount) { MostCount = Pair.Value; MostCommon = Pair.Key; }
+		if (Pair.Key != ECinemafyCameraFeel::Custom && Pair.Key > Wildest) { Wildest = Pair.Key; }
+	}
+	Style.CalmFeel = MostCommon;
+	Style.IntenseFeel = FMath::Max(Wildest, MostCommon);
+
+	const FScopedTransaction Transaction(LOCTEXT("LearnStyle", "Cinemafy: Learn Director Style"));
+	Director->Modify();
+	Director->CustomStyle = Style;
+	Director->Style = ECinemafyDirectorPreset::Custom;
+
+	// Show what it learned, in plain words.
+	FString Summary = FString::Printf(TEXT("Learned from %d shots in %s:\n\n"), Observed.Num(), *Sequence->GetName());
+	for (const TPair<ECinemafyShotType, int32>& Pair : Counts)
+	{
+		Summary += FString::Printf(TEXT("  %s: %d\n"), *StaticEnum<ECinemafyShotType>()->GetDisplayNameTextByValue(static_cast<int64>(Pair.Key)).ToString(), Pair.Value);
+	}
+	Summary += FString::Printf(TEXT("\nShot length: median %.1fs (quick %.1fs, long %.1fs)\nLens bias: %+d  |  Low angles: %d  |  Moving shots: %d\nOpens wide: %s\n\nThe director's style is now Custom. Hit Direct to cut a scene your way."),
+		P50, P10, P90, Style.LensBias, LowAngle, Moving, Style.bEstablishingShot ? TEXT("yes") : TEXT("no"));
+	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
+	return Observed.Num();
 }
 
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style)

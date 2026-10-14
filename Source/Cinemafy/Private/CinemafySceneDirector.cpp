@@ -1,6 +1,8 @@
 #include "CinemafySceneDirector.h"
 #include "CinemafyCameraFeelComponent.h"
 #include "CinemafyCameraLibrary.h"
+#include "CinemafyCameraMoveComponent.h"
+#include "CinemafyFaceComponent.h"
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyFramingLibrary.h"
@@ -73,6 +75,13 @@ void ACinemafySceneDirector::ClearShots()
 {
 #if WITH_EDITOR
 	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::Clear);
+#endif
+}
+
+void ACinemafySceneDirector::LearnStyleFromSequence()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::LearnStyle);
 #endif
 }
 
@@ -231,6 +240,27 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 
 	FindOrAddRuntimeComponent<UCinemafyCameraFeelComponent>(Camera)->Feel = Shot.Feel;
 	FindOrAddRuntimeComponent<UCinemafyFocusComponent>(Camera)->FocusTarget = Shot.Subject;
+
+	UCinemafyCameraMoveComponent* Move = FindOrAddRuntimeComponent<UCinemafyCameraMoveComponent>(Camera);
+	if (Shot.bMove)
+	{
+		Move->Move = Shot.Move;
+		Move->Distance = Shot.MoveDistance;
+		Move->Play(Shot.Duration);
+	}
+	else
+	{
+		Move->Stop();
+		Move->Progress = 0.f;
+	}
+
+	if (Shot.bSetEmotion && !Shot.bIsReaction && Shot.Subject)
+	{
+		if (UCinemafyFaceComponent* Face = Shot.Subject->FindComponentByClass<UCinemafyFaceComponent>())
+		{
+			Face->SetEmotion(Shot.Emotion, 0.6f);
+		}
+	}
 
 	if (bUpdateListeners && !Shot.bIsReaction && Shot.Counterpart)
 	{

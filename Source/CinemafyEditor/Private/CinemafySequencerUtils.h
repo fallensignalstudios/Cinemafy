@@ -23,6 +23,9 @@ namespace CinemafySequencer
 	/** Finds or creates a possessable binding for an actor in the open sequence. */
 	FGuid BindActor(ULevelSequence* Sequence, AActor* Actor);
 
+	/** Finds or creates a binding for any object Sequencer can possess (e.g. a component). Needs Sequencer open on the sequence. */
+	FGuid BindObject(ULevelSequence* Sequence, UObject* Object);
+
 	/** The actor's existing binding in the open sequence, or an invalid guid (never creates one). */
 	FGuid FindBinding(ULevelSequence* Sequence, AActor* Actor);
 

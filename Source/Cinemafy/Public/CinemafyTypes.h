@@ -516,6 +516,10 @@ struct FCinemafyDirectorStyle
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
 	ECinemafyCameraFeel IntenseFeel = ECinemafyCameraFeel::Shoulder;
+
+	/** Appetite for camera moves (push-ins, crane-ups). Rises with intensity. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0", ClampMax = "1"))
+	float MoveChance = 0.3f;
 };
 
 /** One line of dialogue in a scene script. */
@@ -549,6 +553,13 @@ struct FCinemafyLine
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bForceShot"))
 	ECinemafyShotType ForcedShot = ECinemafyShotType::CloseUp;
+
+	/** Change the speaker's Cinemafy Face emotion as this line starts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	bool bSetEmotion = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bSetEmotion"))
+	ECinemafyEmotion Emotion = ECinemafyEmotion::Neutral;
 
 	/** The line itself, or a note. Shown in the list and the plan. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
@@ -585,6 +596,23 @@ struct FCinemafyPlannedShot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	bool bIsReaction = false;
+
+	/** Does the camera move during this shot? */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool bMove = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyCameraMove Move = ECinemafyCameraMove::PushIn;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float MoveDistance = 0.f;
+
+	/** Set the speaker's emotion as this shot starts (first shot of a line). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool bSetEmotion = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyEmotion Emotion = ECinemafyEmotion::Neutral;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	int32 LineIndex = 0;

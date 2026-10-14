@@ -12,7 +12,8 @@ class ACinemafySceneDirector;
 enum class ECinemafyDirectorRequest : uint8
 {
 	Direct,
-	Clear
+	Clear,
+	LearnStyle
 };
 
 #if WITH_EDITOR
@@ -81,6 +82,13 @@ public:
 	/** Remove this director's camera cuts from the open sequence. */
 	UFUNCTION(CallInEditor, Category = "Director")
 	void ClearShots();
+
+	/**
+	 * Watch the edit in the open Level Sequence (one you cut by hand, or any you like) and turn it
+	 * into this director's Custom style: shot preferences, pacing, lenses, angles, movement and feel.
+	 */
+	UFUNCTION(CallInEditor, Category = "Director")
+	void LearnStyleFromSequence();
 
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Director")
 	FCinemafyDirectorStyle GetStyle() const;

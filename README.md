@@ -87,8 +87,19 @@ How it decides, per shot:
 - **Establishing shot:** the scene opens on a wide two-shot (style dependent).
 - **Pacing:** each style has calm vs. intense shot-length ranges, a lens bias, an appetite for low angles and calm vs. intense camera feel.
 
+- **Camera moves:** a creep-in on the establishing wide, push-ins on singles as drama builds, a crane-up on low hero shots. They're baked as keyed `Progress` on each camera's Camera Move, and each style has its own appetite for movement (`MoveChance`).
+- **Emotion per line:** tick *Set Emotion* on a line and the speaker's Cinemafy Face emotion is keyed in Sequencer at the start of that line. It crossfades, and the same thing happens live.
+
 Every decision is logged with a reason ("Line 4: Close-Up on Voss (tightening for drama, intensity 0.8)")
 and kept in the director's **Last Plan**.
+
+**Learn a style from your own edit 🧠:** cut a scene by hand (or open one you love), select the
+director and click **Learn Style From Sequence**. It plays through every cut and classifies each shot
+from what the camera actually sees: frame size at the subject, two characters in frame, a foreground
+shoulder for OTS, camera below the eyes for low angles. From that it measures shot-type preferences,
+pacing (median, quick and long shot lengths), lens bias, low angles, movement, camera feel and whether
+you open wide. It writes the result into the director's **Custom** style and shows a summary.
+Hit **Direct** and new scenes get cut your way.
 
 **Live, in gameplay:** call `DirectLine(Speaker, Listener, Duration, Intensity)` from your dialogue
 system as each line starts, then `EndConversation()` when it's over. The director blends in from the

@@ -54,6 +54,16 @@ namespace CinemafySequencer
 		return Binding;
 	}
 
+	FGuid BindObject(ULevelSequence* Sequence, UObject* Object)
+	{
+		const TSharedPtr<ISequencer> Sequencer = GetOpenSequencer();
+		if (Sequencer.IsValid() && Sequencer->GetFocusedMovieSceneSequence() == Sequence)
+		{
+			return Sequencer->GetHandleToObject(Object, true);
+		}
+		return FGuid();
+	}
+
 	FGuid FindBinding(ULevelSequence* Sequence, AActor* Actor)
 	{
 		const TSharedPtr<ISequencer> Sequencer = GetOpenSequencer();
