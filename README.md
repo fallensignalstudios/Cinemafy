@@ -111,6 +111,12 @@ The analysis also finds each line's **pauses** and **stressed words**. Cuts insi
 nearest breath, like an editor would make them, and push-ins are timed to **land on the emphasis**,
 starting about a second before the stressed word.
 
+**Performance clips per line 🎭:** give a line a **Body Animation** and/or **Face Animation**
+(MetaHuman Animator takes, mocap clips) and Direct lays them onto the speaker at the line's start.
+Each clip goes on whichever mesh matches its skeleton (body or face), on a *Cinemafy Performance*
+track that re-takes replace without touching your other animation tracks. Script in, full scene out:
+cameras, audio and performance.
+
 **Learn a style from your own edit 🧠:** cut a scene by hand (or open one you love), select the
 director and click **Learn Style From Sequence**. It plays through every cut and classifies each shot
 from what the camera actually sees: frame size at the subject, two characters in frame, a foreground

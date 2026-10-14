@@ -4,6 +4,7 @@
 #include "CinemafyTypes.generated.h"
 
 class USoundBase;
+class UAnimSequenceBase;
 
 /** Bone names Cinemafy uses to find a character's eyes and head. Defaults match the MetaHuman skeletons. */
 namespace Cinemafy
@@ -597,6 +598,14 @@ struct FCinemafyLine
 	/** The recorded line. Drives intensity and timing, and is laid into the sequence when directing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
 	TObjectPtr<USoundBase> Audio = nullptr;
+
+	/** The speaker's body performance for this line (any clip on the body skeleton). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Performance")
+	TObjectPtr<UAnimSequenceBase> BodyAnimation = nullptr;
+
+	/** The speaker's face performance for this line (e.g. a MetaHuman Animator take on the face skeleton). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Performance")
+	TObjectPtr<UAnimSequenceBase> FaceAnimation = nullptr;
 
 	/** Let the delivery decide how intense the line is (blended by the director's Audio Intensity Weight). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")

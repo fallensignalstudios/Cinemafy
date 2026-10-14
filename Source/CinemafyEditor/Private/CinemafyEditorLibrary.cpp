@@ -7,6 +7,8 @@
 #include "CinemafyCameraMoveComponent.h"
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
+#include "Animation/AnimSequenceBase.h"
+#include "Engine/SkeletalMesh.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
 #include "CinemafyLightRig.h"
@@ -29,6 +31,8 @@
 #include "CinemafyCameraMoveComponent.h"
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
+#include "Animation/AnimSequenceBase.h"
+#include "Engine/SkeletalMesh.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -868,6 +872,98 @@ namespace
 		}
 	}
 
+	const FText PerformanceTrackName = NSLOCTEXT("CinemafyEditor", "PerformanceTrack", "Cinemafy Performance");
+
+	/** The speaker's skeletal mesh that can play this clip (matching skeleton): body or face. */
+	USkeletalMeshComponent* FindMeshForClip(AActor* Actor, const UAnimSequenceBase* Clip)
+	{
+		if (!Actor || !Clip)
+		{
+			return nullptr;
+		}
+		TInlineComponentArray<USkeletalMeshComponent*> Meshes(Actor);
+		for (USkeletalMeshComponent* Mesh : Meshes)
+		{
+			const USkeletalMesh* Asset = Mesh->GetSkeletalMeshAsset();
+			if (Asset && Asset->GetSkeleton() == Clip->GetSkeleton())
+			{
+				return Mesh;
+			}
+		}
+		return nullptr;
+	}
+
+	/**
+	 * Lays each line's body / face clips onto the speaker, on a "Cinemafy Performance" animation track
+	 * per mesh (replacing the last take's).
+	 */
+	void PlacePerformances(ULevelSequence* Sequence, UMovieScene* MovieScene, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart)
+	{
+		struct FPlacement { USkeletalMeshComponent* Mesh; UAnimSequenceBase* Clip; FFrameNumber Start; };
+		TArray<FPlacement> Placements;
+
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		float Time = 0.f;
+		for (const FCinemafyLine& Line : Lines)
+		{
+			const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Time);
+			for (UAnimSequenceBase* Clip : { Line.BodyAnimation.Get(), Line.FaceAnimation.Get() })
+			{
+				if (!Clip)
+				{
+					continue;
+				}
+				if (USkeletalMeshComponent* Mesh = FindMeshForClip(Line.Speaker, Clip))
+				{
+					Placements.Add({ Mesh, Clip, Start });
+				}
+				else
+				{
+					UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: %s doesn't match any mesh on %s (skeleton mismatch)."),
+						*Clip->GetName(), *GetNameSafe(Line.Speaker));
+				}
+			}
+			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+		}
+
+		TMap<USkeletalMeshComponent*, UMovieSceneSkeletalAnimationTrack*> Tracks;
+		for (const FPlacement& Placement : Placements)
+		{
+			UMovieSceneSkeletalAnimationTrack** Found = Tracks.Find(Placement.Mesh);
+			if (!Found)
+			{
+				const FGuid Binding = CinemafySequencer::BindObject(Sequence, Placement.Mesh);
+				if (!Binding.IsValid())
+				{
+					continue;
+				}
+
+				// Replace the previous take's performance track on this mesh, leave any others alone.
+				const UMovieScene* ConstMovieScene = MovieScene;
+				if (const FMovieSceneBinding* Existing = ConstMovieScene->FindBinding(Binding))
+				{
+					TArray<UMovieSceneTrack*> Old;
+					for (UMovieSceneTrack* Track : Existing->GetTracks())
+					{
+						if (Track && Track->IsA<UMovieSceneSkeletalAnimationTrack>() && Track->GetDisplayName().EqualTo(PerformanceTrackName))
+						{
+							Old.Add(Track);
+						}
+					}
+					for (UMovieSceneTrack* Track : Old)
+					{
+						MovieScene->RemoveTrack(*Track);
+					}
+				}
+
+				UMovieSceneSkeletalAnimationTrack* Track = MovieScene->AddTrack<UMovieSceneSkeletalAnimationTrack>(Binding);
+				Track->SetDisplayName(PerformanceTrackName);
+				Found = &Tracks.Add(Placement.Mesh, Track);
+			}
+			(*Found)->AddNewAnimation(Placement.Start, Placement.Clip);
+		}
+	}
+
 	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
 	{
 		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
@@ -989,6 +1085,10 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	if (Director->bPlaceDialogueAudio)
 	{
 		PlaceDialogueAudio(MovieScene, EffectiveLines, SceneStart);
+	}
+	if (Director->bPlacePerformances)
+	{
+		PlacePerformances(Sequence, MovieScene, EffectiveLines, SceneStart);
 	}
 
 	// Make sure the whole scene fits in the playback range.

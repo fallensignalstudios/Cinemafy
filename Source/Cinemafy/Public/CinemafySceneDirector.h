@@ -55,6 +55,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio", meta = (ClampMin = "0", ClampMax = "1"))
 	float AudioIntensityWeight = 0.8f;
 
+	/** Lay each line's body / face animation clips onto the speaker when directing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
+	bool bPlacePerformances = true;
+
 	/** Lay each line's audio into the sequence when directing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
 	bool bPlaceDialogueAudio = true;

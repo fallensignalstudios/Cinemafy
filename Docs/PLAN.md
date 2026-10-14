@@ -9,7 +9,7 @@ test or revert one at a time. Status is updated as work lands.
 | 2 | **Automation tests** for the shot solver, director planner and lens math | Something you can run in *Session Frontend → Automation* to prove the logic, not just the build | ✅ |
 | 3 | **Smart camera placement:** occlusion and wall avoidance | Solved cameras can land inside walls or behind pillars. Try alternatives automatically | ✅ |
 | 4 | **Cut on the breath:** snap cuts to pauses in the dialogue audio, and time push-ins to emphasis | Editors cut in breaths and land moves on stressed words | ✅ |
-| 5 | **Performance clips per line:** body / face animation per line, baked into the sequence | Your script becomes a full scene: cameras, audio *and* performance | ⏳ |
+| 5 | **Performance clips per line:** body / face animation per line, baked into the sequence | Your script becomes a full scene: cameras, audio *and* performance | ✅ |
 | 6 | **Subtitles:** runtime overlay driven by the Director (live and in sequences) | Accessibility, and great for reviewing cuts | ⏳ |
 | 7 | **Group scenes (3+ characters):** group shot, addressee-aware coverage | Real scenes aren't always two-handers | ⏳ |
 | 8 | **Styles drive look and light:** each director preset brings a grade, letterbox and light rigs | One click from "script" to "lit, graded, cut" | ⏳ |
