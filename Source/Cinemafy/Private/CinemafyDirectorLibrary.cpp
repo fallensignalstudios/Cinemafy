@@ -736,10 +736,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 		{
 			return Style.WipeDirection;
 		}
-		// Vary it, like the serials did: across, back, down, up.
+		// Vary it, like the serials did: across, back, a clock sweep, down, an iris, up.
 		const ECinemafyWipeDirection Cycle[] = { ECinemafyWipeDirection::LeftToRight, ECinemafyWipeDirection::RightToLeft,
-			ECinemafyWipeDirection::TopToBottom, ECinemafyWipeDirection::BottomToTop };
-		return Cycle[WipeCount++ % 4];
+			ECinemafyWipeDirection::Clock, ECinemafyWipeDirection::TopToBottom, ECinemafyWipeDirection::IrisOut, ECinemafyWipeDirection::BottomToTop };
+		return Cycle[WipeCount++ % UE_ARRAY_COUNT(Cycle)];
 	};
 
 	for (int32 Index = 0; Index < Lines.Num(); ++Index)

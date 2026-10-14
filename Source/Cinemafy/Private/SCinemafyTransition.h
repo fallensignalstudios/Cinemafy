@@ -7,7 +7,7 @@
 
 /**
  * Full-screen transition overlay. Draws the outgoing shot (a live capture) over the incoming one and
- * reveals the new shot with a wipe, a dissolve or a fade through black.
+ * reveals the new shot with a wipe (straight, iris or clock), a dissolve, a dip, or a whip pan.
  */
 class SCinemafyTransition : public SLeafWidget
 {
@@ -30,10 +30,14 @@ public:
 	virtual FVector2D ComputeDesiredSize(float LayoutScaleMultiplier) const override { return FVector2D::ZeroVector; }
 
 private:
+	/** Iris and clock wipes: the outgoing shot drawn through a fan of stencil-clipped quads. */
+	void PaintShapedWipe(const FGeometry& Geometry, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FSlateBrush* Outgoing) const;
+
 	bool bActive = false;
 	float Progress = 0.f;
 	ECinemafyTransition Type = ECinemafyTransition::Cut;
 	ECinemafyWipeDirection Direction = ECinemafyWipeDirection::LeftToRight;
 	const FSlateBrush* OutgoingImage = nullptr;
 	FSlateColorBrush BlackBrush = FSlateColorBrush(FLinearColor::Black);
+	FSlateColorBrush WhiteBrush = FSlateColorBrush(FLinearColor::White);
 };

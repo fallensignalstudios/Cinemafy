@@ -291,7 +291,8 @@ void ACinemafySceneDirector::UpdateSequencedTransition()
 	AActor* Outgoing = LastPlanCameras.IsValidIndex(OutgoingIndex) ? LastPlanCameras[OutgoingIndex].Get() : nullptr;
 
 	// Fades through black are baked as a Sequencer Fade track; only wipes and dissolves need the overlay.
-	if (Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve)
+	if (Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve
+		|| Type == ECinemafyTransition::DipToWhite || Type == ECinemafyTransition::WhipPan)
 	{
 		Transitions->PlayTransition(Type, Shot.TransitionDuration, Shot.WipeDirection, Outgoing);
 	}

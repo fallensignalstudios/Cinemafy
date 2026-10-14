@@ -531,6 +531,98 @@ class CinemafyTools(unreal.ToolsetDefinition):
         director = choreography.get_editor_property('scene_director')
         return list(director.last_plan) if director else []
 
+    # --- Edit (video-editor tools on the open sequence) ------------------------------------
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def edit_at_playhead(operation: str) -> bool:
+        """Runs a Premiere-style edit on the open Level Sequence at the playhead. Ripple edits move every
+        track after the edit.
+
+        Args:
+            operation: One of razor, razor_all, ripple_delete, trim_start, trim_end, roll_earlier,
+                roll_later, roll_to_playhead, swap_next, next_cut, previous_cut.
+
+        Returns:
+            True if the edit was made.
+        """
+        CinemafyTools._require_open_sequence()
+        edit = unreal.CinemafyEditLibrary
+        operations = {
+            'razor': lambda: edit.razor_at_playhead(False),
+            'razor_all': lambda: edit.razor_at_playhead(True),
+            'ripple_delete': edit.ripple_delete_shot_at_playhead,
+            'trim_start': edit.ripple_trim_start_to_playhead,
+            'trim_end': edit.ripple_trim_end_to_playhead,
+            'roll_earlier': lambda: edit.roll_nearest_cut(-1),
+            'roll_later': lambda: edit.roll_nearest_cut(1),
+            'roll_to_playhead': edit.roll_nearest_cut_to_playhead,
+            'swap_next': edit.swap_shot_with_next,
+            'next_cut': lambda: edit.go_to_cut(True),
+            'previous_cut': lambda: edit.go_to_cut(False),
+        }
+        if operation not in operations:
+            raise ValueError('Unknown edit: ' + operation + '. Use one of ' + ', '.join(operations))
+        return bool(operations[operation]())
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def add_transition_at_nearest_cut(transition: unreal.CinemafyTransition, seconds: float = 0.7,
+                                      wipe_direction: unreal.CinemafyWipeDirection = unreal.CinemafyWipeDirection.ALTERNATE) -> bool:
+        """Puts a transition on the cut nearest the playhead: wipe (straight, iris, clock), dissolve,
+        fade through black, dip to white or whip pan.
+
+        Args:
+            transition: The transition type.
+            seconds: Its length.
+            wipe_direction: For wipes and whips. Alternate cycles like the classic serials.
+
+        Returns:
+            True if it was added.
+        """
+        CinemafyTools._require_open_sequence()
+        return unreal.CinemafyEditLibrary.add_transition_at_nearest_cut(transition, seconds, wipe_direction)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def add_title_at_playhead(style: unreal.CinemafyTitleStyle, title: str, subtitle: str = '', body: str = '',
+                              seconds: float = 4.0) -> bool:
+        """Adds a title card at the playhead: lower third, location card, chapter card, centered title or
+        opening crawl (subtitle = intro line, body = the crawl's paragraphs).
+
+        Args:
+            style: The card style.
+            title: Name / place / title.
+            subtitle: Role / time of day / crawl intro line.
+            body: Crawl text.
+            seconds: How long it's up.
+
+        Returns:
+            True if it was added.
+        """
+        CinemafyTools._require_open_sequence()
+        card = unreal.CinemafyTitleCard()
+        card.set_editor_property('style', style)
+        card.set_editor_property('title', title)
+        card.set_editor_property('subtitle', subtitle)
+        card.set_editor_property('body', body)
+        card.set_editor_property('duration', seconds)
+        return unreal.CinemafyEditLibrary.add_title_at_playhead(card)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def duck_music_under_dialogue(duck_decibels: float = -10.0) -> int:
+        """Dips the sequence's music under every other sound (dialogue), with smooth ramps.
+
+        Args:
+            duck_decibels: How far to dip (negative dB).
+
+        Returns:
+            How many dips were keyed.
+        """
+        CinemafyTools._require_open_sequence()
+        return unreal.CinemafyEditLibrary.duck_music_under_dialogue(duck_decibels, 0.3)
+
     @staticmethod
     def _eye_focus_distance(camera: unreal.CineCameraActor):
         """The focal-plane distance the camera's Eye Focus wants right now (it only updates on ticks,

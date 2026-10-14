@@ -1084,7 +1084,8 @@ namespace
 
 	bool IsOverlayTransition(ECinemafyTransition Type)
 	{
-		return Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve;
+		return Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve
+			|| Type == ECinemafyTransition::DipToWhite || Type == ECinemafyTransition::WhipPan;
 	}
 
 	/**

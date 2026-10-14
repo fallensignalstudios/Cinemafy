@@ -505,7 +505,10 @@ enum class ECinemafyTransition : uint8
 	Wipe             UMETA(DisplayName = "Wipe (new shot pushes the old one off)"),
 	Dissolve         UMETA(DisplayName = "Dissolve"),
 	FadeThroughBlack UMETA(DisplayName = "Fade Through Black"),
-	MatchCut         UMETA(DisplayName = "Match Cut (same framing across the break)")
+	MatchCut         UMETA(DisplayName = "Match Cut (same framing across the break)"),
+	DipToWhite       UMETA(DisplayName = "Dip to White"),
+	/** The old shot whips off-screen with motion smear, landing on the new one. */
+	WhipPan          UMETA(DisplayName = "Whip Pan")
 };
 
 /** Which way wipes travel. */
@@ -517,7 +520,13 @@ enum class ECinemafyWipeDirection : uint8
 	TopToBottom,
 	BottomToTop,
 	/** Vary it every time, like the classic serials did. */
-	Alternate
+	Alternate,
+	/** A circle opens from the center to reveal the new shot. */
+	IrisOut,
+	/** A circle closes on the old shot. */
+	IrisIn,
+	/** A clock hand sweeps the new shot in. */
+	Clock
 };
 
 /**

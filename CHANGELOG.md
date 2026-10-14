@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0: "Cinemafy Edit"
+- **Premiere-style editing in Sequencer:**
+  - Razor (shot or all tracks), sync-locked **ripple delete**, ripple trim start/end (Q/W).
+  - **Roll** edits for J/L cuts, swap with next, jump between cuts.
+  - Ripples carry keys inside long sections, markers and the playback range.
+- **Transitions on any cut:** iris and clock wipes (stencil-clipped, no materials), dip to white, whip
+  pan, plus wipes, dissolves and native fades. The Space Opera style's alternating wipes now include
+  clock and iris.
+- **Titles:**
+  - Lower thirds, typed-on location cards, chapter cards and centered titles.
+  - A perspective **opening crawl** with an intro line and a falling title.
+  - Keyed progress, so titles scrub and pause with the sequence.
+- **Audio:** duck music under dialogue; J-cut and L-cut buttons.
+- **Markers:** marker at playhead, beat markers from the music, snap cuts to markers.
+- **Grade:** copy, paste, and apply to all shots (depth of field stays per shot).
+- **Multicam switcher:** live preview grid of the sequence's cameras. Arm, play, tap 1-9; stopping
+  commits the switched edit over the range you played.
+- Keyboard shortcuts bound into Sequencer (rebindable), a Cinemafy Edit dropdown on Sequencer's
+  toolbar, and Edit and Multicam buttons in the Hub.
+- MCP toolset: `edit_at_playhead`, `add_transition_at_nearest_cut`, `add_title_at_playhead`,
+  `duck_music_under_dialogue`.
+
 ## 0.8.0: "Choreographer"
 - **Click-to-choreograph:** pick a character, click points in the level, type one or two words per
   point (`walk`, `vault`, `sprint`, `climb`, `sword attack`, `taunt`...). A popup with quick chips

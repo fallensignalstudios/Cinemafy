@@ -6,6 +6,11 @@
 #include "CinemafySceneDirector.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreoTools.h"
+#include "CinemafyEditCommands.h"
+#include "CinemafyEditLibrary.h"
+#include "SCinemafyEditPanel.h"
+#include "SCinemafyMulticam.h"
+#include "ISequencerModule.h"
 #include "Misc/MessageDialog.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
@@ -179,6 +184,40 @@ void FCinemafyEditorModule::StartupModule()
 		.SetTooltipText(LOCTEXT("HubTabTip", "Every Cinemafy tool in one panel."))
 		.SetMenuType(ETabSpawnerMenuType::Hidden);
 
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyEditPanel::TabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				[
+					SNew(SCinemafyEditPanel)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("EditTab", "Cinemafy Edit"))
+		.SetTooltipText(LOCTEXT("EditTabTip", "Video-editor tools for the open Level Sequence."))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(SCinemafyMulticam::TabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs&)
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				[
+					SNew(SCinemafyMulticam)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("MulticamTab", "Cinemafy Multicam"))
+		.SetTooltipText(LOCTEXT("MulticamTabTip", "Live camera grid: play and tap 1-9 to cut."))
+		.SetMenuType(ETabSpawnerMenuType::Hidden);
+
+	// Premiere-style shortcuts while Sequencer has focus.
+	FCinemafyEditCommands::Register();
+	ISequencerModule& SequencerModule = FModuleManager::LoadModuleChecked<ISequencerModule>(TEXT("Sequencer"));
+	if (TSharedPtr<FUICommandList> SequencerCommands = SequencerModule.GetCommandBindings(ESequencerCommandBindings::Sequencer))
+	{
+		FCinemafyEditCommands::BindTo(SequencerCommands.ToSharedRef());
+	}
+
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FCinemafyEditorModule::RegisterMenus));
 }
 
@@ -193,7 +232,10 @@ void FCinemafyEditorModule::ShutdownModule()
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyShotBrowser::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyHub::TabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyEditPanel::TabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyMulticam::TabName);
 	}
+	FCinemafyEditCommands::Unregister();
 	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(this);
 }
@@ -209,6 +251,61 @@ void FCinemafyEditorModule::RegisterMenus()
 		LOCTEXT("HubMenuTip", "Open one panel with every Cinemafy tool."),
 		FSlateIcon(),
 		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyHub::TabName); })));
+
+	Section.AddMenuEntry("CinemafyEdit", LOCTEXT("EditMenu", "Cinemafy Edit"),
+		LOCTEXT("EditMenuTip", "Video-editor tools for the open sequence: razor, ripple, roll, transitions, titles, ducking, markers, grade."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyEditPanel::TabName); })));
+
+	Section.AddMenuEntry("CinemafyMulticam", LOCTEXT("MulticamMenu", "Multicam Switcher"),
+		LOCTEXT("MulticamMenuTip", "A live grid of your cameras: play the sequence and tap 1-9 to cut."),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyMulticam::TabName); })));
+
+	// A Cinemafy Edit dropdown on Sequencer's own toolbar.
+	if (UToolMenu* SequencerToolbar = UToolMenus::Get()->ExtendMenu("Sequencer.MainToolBar"))
+	{
+		FToolMenuSection& EditSection = SequencerToolbar->FindOrAddSection("CinemafyEdit");
+		EditSection.AddEntry(FToolMenuEntry::InitComboButton("CinemafyEditCombo", FUIAction(),
+			FNewToolMenuDelegate::CreateLambda([](UToolMenu* Menu)
+			{
+				using Lib = UCinemafyEditLibrary;
+				FToolMenuSection& Edit = Menu->AddSection("Edit", LOCTEXT("ComboEdit", "Edit at Playhead"));
+				// Explicit actions (the toolbar has no command list of ours), labeled with the shortcut.
+				auto AddCommand = [&Edit](const TSharedPtr<FUICommandInfo>& Info, TFunction<void()> Run)
+				{
+					const FText Chord = Info->GetFirstValidChord()->GetInputText();
+					Edit.AddMenuEntry(Info->GetCommandName(), FText::Format(LOCTEXT("ComboEntry", "{0}  ({1})"), Info->GetLabel(), Chord),
+						Info->GetDescription(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([Run]() { Run(); })));
+				};
+				const FCinemafyEditCommands& Commands = FCinemafyEditCommands::Get();
+				AddCommand(Commands.Razor, []() { Lib::RazorAtPlayhead(false); });
+				AddCommand(Commands.RazorAllTracks, []() { Lib::RazorAtPlayhead(true); });
+				AddCommand(Commands.RippleDelete, []() { Lib::RippleDeleteShotAtPlayhead(); });
+				AddCommand(Commands.RippleTrimStart, []() { Lib::RippleTrimStartToPlayhead(); });
+				AddCommand(Commands.RippleTrimEnd, []() { Lib::RippleTrimEndToPlayhead(); });
+				AddCommand(Commands.RollEarlier, []() { Lib::RollNearestCut(-1); });
+				AddCommand(Commands.RollLater, []() { Lib::RollNearestCut(1); });
+				AddCommand(Commands.PreviousCut, []() { Lib::GoToCut(false); });
+				AddCommand(Commands.NextCut, []() { Lib::GoToCut(true); });
+				FToolMenuSection& More = Menu->AddSection("More", LOCTEXT("ComboMore", "More"));
+				More.AddMenuEntry("Wipe", LOCTEXT("ComboWipe", "Wipe Nearest Cut"), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([]() { Lib::AddTransitionAtNearestCut(ECinemafyTransition::Wipe, 0.7f, ECinemafyWipeDirection::Alternate); })));
+				More.AddMenuEntry("Dissolve", LOCTEXT("ComboDissolve", "Dissolve Nearest Cut"), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([]() { Lib::AddTransitionAtNearestCut(ECinemafyTransition::Dissolve, 0.8f, ECinemafyWipeDirection::LeftToRight); })));
+				More.AddMenuEntry("Fade", LOCTEXT("ComboFade", "Fade Through Black"), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([]() { Lib::AddTransitionAtNearestCut(ECinemafyTransition::FadeThroughBlack, 1.f, ECinemafyWipeDirection::LeftToRight); })));
+				More.AddMenuEntry("Duck", LOCTEXT("ComboDuck", "Duck Music Under Dialogue"), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([]() { Lib::DuckMusicUnderDialogue(-10.f, 0.3f); })));
+				More.AddMenuEntry("OpenEdit", LOCTEXT("ComboOpen", "Open Cinemafy Edit..."), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyEditPanel::TabName); })));
+				More.AddMenuEntry("OpenMulticam", LOCTEXT("ComboMulticam", "Multicam Switcher..."), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyMulticam::TabName); })));
+			}),
+			LOCTEXT("EditCombo", "Cinemafy Edit"),
+			LOCTEXT("EditComboTip", "Premiere-style edits, transitions and audio tools."),
+			FSlateIcon()));
+	}
 
 	Section.AddMenuEntry("CinemafyShotBrowser", LOCTEXT("ShotBrowserMenu", "Shot Browser"),
 		LOCTEXT("ShotBrowserMenuTip", "Open a film strip of every camera cut in the open Level Sequence."),

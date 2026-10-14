@@ -259,6 +259,36 @@ guessed wrong, set the function names under *Wiring*.
 
 ---
 
+## Cinemafy Edit: a video editor inside Sequencer
+
+**Tools > Cinemafy > Cinemafy Edit** (or the **Cinemafy Edit** dropdown on Sequencer's toolbar). Everything
+works at the playhead or the cut nearest it, and everything is undoable.
+
+| Tool | What it does | Shortcut (in Sequencer) |
+|---|---|---|
+| Razor / Razor All Tracks | Split the shot (or every section) at the playhead | Ctrl+K / Ctrl+Shift+K |
+| Ripple Delete Shot | Remove the shot and close the gap on **every** track (sync-locked) | Shift+Delete |
+| Ripple Trim Start / End | Premiere's Q / W | Alt+Q / Alt+W |
+| Roll | Move a cut, picture only (J-cuts and L-cuts) | Alt+, / Alt+. |
+| Swap With Next | Shots trade places | |
+| Prev / Next Cut | Jump between edit points | Alt+Up / Alt+Down |
+| Transitions | Wipes (straight, **iris**, **clock**, alternating like the serials), dissolve, **dip to white**, **whip pan**, fade through black | Ctrl+Alt+D (wipe) |
+| Titles | Lower thirds, typed-on location cards, chapter cards, centered titles, and an **opening crawl** (intro line, falling title, receding crawl) | |
+| Duck Music | Dips the music under every line with smooth ramps | |
+| Markers | Add markers, drop **beat markers** from the music, **snap cuts to markers** | |
+| Grade | Copy a camera's grade, paste to selected, or apply to every shot (focus stays per shot) | |
+| **Multicam** | A live grid of every camera. Arm it, press play, tap 1-9 to cut; stop and your switching becomes the edit | |
+
+Ripples move keys inside long sections too (the director's cue tracks, music volume), plus markers
+and the playback range, so nothing drifts out of sync. Shortcuts are rebindable under *Editor
+Preferences > Keyboard Shortcuts > Cinemafy Edit*.
+
+Fades through black are native Fade keys, so they show in the editor, in play and in Movie Render
+Queue. Wipes, dissolves, dips, whips and titles draw over the game view, so they show in PIE and in
+game. A **Cinemafy Edit Decisions** actor holds them, keyed in the sequence.
+
+---
+
 ## Gameplay ↔ cutscene handoff
 
 1. Open the cutscene's Level Sequence and click *Tools → Cinemafy → Set Up Gameplay Blend*. This:

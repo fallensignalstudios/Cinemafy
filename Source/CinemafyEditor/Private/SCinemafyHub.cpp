@@ -2,6 +2,8 @@
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
+#include "SCinemafyEditPanel.h"
+#include "SCinemafyMulticam.h"
 #include "Framework/Docking/TabManager.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Styling/AppStyle.h"
@@ -107,6 +109,10 @@ void SCinemafyHub::Construct(const FArguments& InArgs)
 						[](ECinemafyDirectorPreset Style) { Lib::CreateSceneDirectorFromSelection(Style); }),
 					MakeButton(LOCTEXT("ShotBrowser", "Shot Browser"), LOCTEXT("ShotBrowserTip", "Film strip, pacing and director controls."),
 						[]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyShotBrowser::TabName); }),
+					MakeButton(LOCTEXT("EditPanel", "Cinemafy Edit"), LOCTEXT("EditPanelTip", "Razor, ripple, roll, transitions, titles, ducking, markers and grade."),
+						[]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyEditPanel::TabName); }),
+					MakeButton(LOCTEXT("Multicam", "Multicam"), LOCTEXT("MulticamTip", "Live camera grid: play and tap 1-9 to cut."),
+						[]() { FGlobalTabmanager::Get()->TryInvokeTab(SCinemafyMulticam::TabName); }),
 					MakeButton(LOCTEXT("Blend", "Gameplay Blend"), LOCTEXT("BlendTip", "Make the open sequence blend in from and out to gameplay."),
 						[]() { Lib::SetUpGameplayBlendForOpenSequence(1.f, 1.f, true); }),
 					MakeButton(LOCTEXT("AddToSeq", "Add Cameras to Sequence"), LOCTEXT("AddToSeqTip", "Cut to the selected cameras at the playhead."),

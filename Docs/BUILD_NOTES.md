@@ -17,11 +17,22 @@ was written without a compiler. These are the calls most likely to need a small 
 | `CinemafyChoreoTools.cpp` | `FMovieSceneDoubleChannel::AddLinearKey` | Use `GetData().AddKey(Time, FMovieSceneDoubleValue(Value))`. |
 | `CinemafyChoreoTools.cpp` | `FViewportCursorLocation`, `Viewport->GetHitProxy`, `IInputProcessor` | Stable since 4.x. If the click lands in the wrong spot, check DPI scaling in `HandleMouseButtonDownEvent`. |
 | `CinemafyChoreography.cpp` | `UAnimMontage::GetDefaultBlendOutTime()` | Older: `Montage->BlendOut.GetBlendTime()`. |
+| `CinemafyEditorModule.cpp` | `ISequencerModule::GetCommandBindings(ESequencerCommandBindings::Sequencer)` | If missing, delete the binding block; the panel and toolbar dropdown still work. |
+| `CinemafyEditorModule.cpp` | ToolMenus `"Sequencer.MainToolBar"` | If the dropdown doesn't appear, the toolbar has another menu name. It's harmless; use the panel. |
+| `CinemafyEditLibrary.cpp` | `UMovieSceneSection::SplitSection` / `TrimSection(FQualifiedFrameTime, bool, bool)` | Older signatures take `FFrameNumber`. |
+| `CinemafyEditLibrary.cpp` | `FMovieSceneChannel::GetKeys` / `SetKeyTimes` / `DeleteKeys` (generic key shifting) | Stable since 4.22. |
+| `CinemafyEditLibrary.cpp` | `UMovieSceneAudioSection::GetSoundVolumeChannel()` | Fallback: `GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0)`. |
+| `CinemafyEditLibrary.cpp` | `UMovieScene::SetMarkedFrame` / `DeleteMarkedFrame` / `AddMarkedFrame` | 4.26+. |
+| `SCinemafyTransition.cpp` | `FSlateClippingZone(TopLeft, TopRight, BottomLeft, BottomRight)` with `FVector2f` | Older engines take `FVector2D`. |
 | `SCinemafyShotBrowser.cpp` / Learn Style | `ISequencer::FindBoundObjects` | Compiled fine in 5.8 (Shot Browser). If removed later, resolve through the sequence's shared playback state. |
 
 Behavioral things to check in-engine (not compile issues):
 - **Face emotion and pupil curve names:** `eyePupilNarrow`, `jawClench` and `mouthLowerLipBite` are the least
   certain MetaHuman control names. Fix them in the Face Profile (lip-sync curves) or as custom emotions.
+- **Shortcut conflicts:** if a Cinemafy Edit shortcut clashes with one of yours, rebind it under Editor
+  Preferences > Keyboard Shortcuts > Cinemafy Edit.
+- **Overlay transitions and titles in Movie Render Queue:** these draw as Slate over the game view, so
+  enable MRQ's UI renderer (or use native fades) for final renders.
 - **Choreography traversal:** GASP's `TryTraversalAction` reads movement input and speed. If vaults don't
   trigger, raise `TraversalRange` or set `TraversalFunction` explicitly. The Wiring Report in the
   Details panel lists what was found.
