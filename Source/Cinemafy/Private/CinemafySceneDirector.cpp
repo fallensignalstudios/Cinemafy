@@ -311,6 +311,13 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	UCinemafyCameraLibrary::ApplySensor(Cine, Request.Sensor);
 	UCinemafyCameraLibrary::ApplyPrime(Cine, Solution.Lens, 2.8f);
 
+	const FCinemafyDirectorStyle Style = GetStyle();
+	if (Style.bApplyLook)
+	{
+		UCinemafyCameraLibrary::ApplyLook(Cine, Style.Look, Style.LookStrength);
+		UCinemafyCameraLibrary::SetLetterbox(Cine, Style.LetterboxAspect);
+	}
+
 	FindOrAddRuntimeComponent<UCinemafyCameraFeelComponent>(Camera)->Feel = Shot.Feel;
 	FindOrAddRuntimeComponent<UCinemafyFocusComponent>(Camera)->FocusTarget = Shot.Subject;
 

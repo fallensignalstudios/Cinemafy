@@ -537,6 +537,27 @@ struct FCinemafyDirectorStyle
 	/** Appetite for camera moves (push-ins, crane-ups). Rises with intensity. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera", meta = (ClampMin = "0", ClampMax = "1"))
 	float MoveChance = 0.3f;
+
+	/** Grade every camera with this style's look when directing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Look")
+	bool bApplyLook = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Look", meta = (EditCondition = "bApplyLook"))
+	ECinemafyLook Look = ECinemafyLook::CleanCinema;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Look", meta = (EditCondition = "bApplyLook", ClampMin = "0", ClampMax = "1.5"))
+	float LookStrength = 0.8f;
+
+	/** Frame shape for this style (0 = full 16:9). Applied to the cameras. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Look", meta = (EditCondition = "bApplyLook", ClampMin = "0", UIMax = "2.76"))
+	float LetterboxAspect = 2.39f;
+
+	/** Give every character a Light Rig in this style when directing (existing rigs are restyled). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting")
+	bool bLightCharacters = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting", meta = (EditCondition = "bLightCharacters"))
+	ECinemafyLightingStyle LightingStyle = ECinemafyLightingStyle::ThreePoint;
 };
 
 /** What Cinemafy heard in a line's dialogue audio. */

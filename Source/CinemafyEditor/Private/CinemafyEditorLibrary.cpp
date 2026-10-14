@@ -1032,7 +1032,8 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	}
 
 	const TArray<FCinemafyLine> EffectiveLines = Director->GetEffectiveLines();
-	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(EffectiveLines, Director->GetStyle(), Director->Seed);
+	const FCinemafyDirectorStyle DirectorStyle = Director->GetStyle();
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(EffectiveLines, DirectorStyle, Director->Seed);
 	if (Plan.Num() == 0)
 	{
 		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
@@ -1099,6 +1100,15 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 			ExistingCameras.Add(ShotTag, Camera);
 		}
 
+		const FCinemafyDirectorStyle& Style = DirectorStyle;
+		if (Style.bApplyLook)
+		{
+			UCineCameraComponent* Cine = Camera->GetCineCameraComponent();
+			Cine->Modify();
+			UCinemafyCameraLibrary::ApplyLook(Cine, Style.Look, Style.LookStrength);
+			UCinemafyCameraLibrary::SetLetterbox(Cine, Style.LetterboxAspect);
+		}
+
 		UCinemafyCameraFeelComponent* Feel = FindOrAddComponent<UCinemafyCameraFeelComponent>(Camera, TEXT("CinemafyFeel"));
 		Feel->Feel = Shot.Feel;
 		Feel->Seed = static_cast<int32>(GetTypeHash(Camera->GetFName()) % 1000);
@@ -1133,6 +1143,33 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	if (Director->bShowSubtitles)
 	{
 		BakeSubtitles(Sequence, MovieScene, Director, EffectiveLines, SceneStart);
+	}
+
+	// Light the cast in the style's look: restyle their rigs, or give them one.
+	if (DirectorStyle.bLightCharacters)
+	{
+		for (AActor* Member : UCinemafyDirectorLibrary::GetCast(EffectiveLines))
+		{
+			ACinemafyLightRig* Rig = nullptr;
+			for (TActorIterator<ACinemafyLightRig> It(Director->GetWorld()); It; ++It)
+			{
+				if (It->Subject == Member)
+				{
+					Rig = *It;
+					break;
+				}
+			}
+			if (Rig)
+			{
+				Rig->Modify();
+				Rig->Style = DirectorStyle.LightingStyle;
+				Rig->SolveRig();
+			}
+			else
+			{
+				CreateLightRig(Member, nullptr, DirectorStyle.LightingStyle);
+			}
+		}
 	}
 
 	// Make sure the whole scene fits in the playback range.
@@ -1372,6 +1409,17 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 	}
 
 	FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood);
+
+	// An edit tells us about cutting, not grading or lighting: keep the director's current look and light.
+	{
+		const FCinemafyDirectorStyle Current = Director->GetStyle();
+		Style.bApplyLook = Current.bApplyLook;
+		Style.Look = Current.Look;
+		Style.LookStrength = Current.LookStrength;
+		Style.LetterboxAspect = Current.LetterboxAspect;
+		Style.bLightCharacters = Current.bLightCharacters;
+		Style.LightingStyle = Current.LightingStyle;
+	}
 
 	// Shot preferences: how much more (or less) often each type appears than an even spread would.
 	TMap<ECinemafyShotType, int32> Counts;

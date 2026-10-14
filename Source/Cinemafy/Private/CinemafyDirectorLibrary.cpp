@@ -195,6 +195,9 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.LowAngleBias = 0.05f;
 		S.LensBias = 1;
 		S.MoveChance = 0.5f;
+		S.Look = ECinemafyLook::WarmEpic;
+		S.LookStrength = 0.6f;
+		S.LightingStyle = ECinemafyLightingStyle::Loop;
 		break;
 
 	case ECinemafyDirectorPreset::KineticAction:
@@ -209,6 +212,8 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.CalmFeel = ECinemafyCameraFeel::Handheld;
 		S.IntenseFeel = ECinemafyCameraFeel::RunAndGun;
 		S.MoveChance = 0.6f;
+		S.Look = ECinemafyLook::TealOrange;
+		S.LightingStyle = ECinemafyLightingStyle::ThreePoint;
 		break;
 
 	case ECinemafyDirectorPreset::SlowBurn:
@@ -220,6 +225,9 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.LowAngleBias = 0.1f;
 		S.IntenseFeel = ECinemafyCameraFeel::Tripod;
 		S.MoveChance = 0.7f;
+		S.Look = ECinemafyLook::CleanCinema;
+		S.LookStrength = 1.f;
+		S.LightingStyle = ECinemafyLightingStyle::Rembrandt;
 		break;
 
 	case ECinemafyDirectorPreset::NoirThriller:
@@ -230,6 +238,10 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.ReactionShotChance = 0.4f;
 		S.LowAngleBias = 0.6f;
 		S.MoveChance = 0.4f;
+		S.Look = ECinemafyLook::Noir;
+		S.LookStrength = 1.f;
+		S.LetterboxAspect = 1.85f;
+		S.LightingStyle = ECinemafyLightingStyle::Noir;
 		break;
 
 	case ECinemafyDirectorPreset::Epic:
@@ -241,11 +253,16 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.LowAngleBias = 0.7f;
 		S.LensBias = -1;
 		S.MoveChance = 0.6f;
+		S.Look = ECinemafyLook::WarmEpic;
+		S.LightingStyle = ECinemafyLightingStyle::Rembrandt;
 		break;
 
 	case ECinemafyDirectorPreset::ClassicHollywood:
 	default:
 		Prefs(1.0f, 1.0f, 1.4f, 0.8f, 1.2f, 1.0f, 0.3f, 0.3f);
+		S.Look = ECinemafyLook::CleanCinema;
+		S.LetterboxAspect = 1.85f;
+		S.LightingStyle = ECinemafyLightingStyle::ThreePoint;
 		break;
 	}
 	return S;

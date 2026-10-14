@@ -90,6 +90,12 @@ How it decides, per shot:
 - **Camera moves:** a creep-in on the establishing wide, push-ins on singles as drama builds, a crane-up on low hero shots. They're baked as keyed `Progress` on each camera's Camera Move, and each style has its own appetite for movement (`MoveChance`).
 - **Emotion per line:** tick *Set Emotion* on a line and the speaker's Cinemafy Face emotion is keyed in Sequencer at the start of that line. It crossfades, and the same thing happens live.
 
+- **Look and light:** each style also brings a grade, a frame shape and a lighting style. Classic
+  Hollywood is clean, 1.85:1 and three-point. Intimate Drama is warm, 2.39:1 and Loop. Kinetic Action is
+  teal & orange. Slow Burn uses Rembrandt. Noir Thriller uses the Noir grade and hard Noir light. Epic is
+  warm and Rembrandt. Direct grades every camera and gives every character a Light Rig (or restyles
+  theirs). Turn either off, or change them, in a Custom style.
+
 Every decision is logged with a reason ("Line 4: Close-Up on Voss (tightening for drama, intensity 0.8)")
 and kept in the director's **Last Plan**.
 
