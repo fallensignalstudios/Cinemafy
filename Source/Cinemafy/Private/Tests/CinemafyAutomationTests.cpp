@@ -285,8 +285,9 @@ bool FCinemafyBeatTest::RunTest(const FString& Parameters)
 {
 	CinemafyTests::FTestScene Scene;
 	const TArray<FCinemafyLine> Lines = Scene.MakeConversation(6);
+	// Classic pacing: shots comfortably longer than a beat, so every cut can reach one.
 	TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines,
-		UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::KineticAction), 4);
+		UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood), 4);
 
 	TArray<float> Beats;
 	for (float Beat = 0.f; Beat < 60.f; Beat += 0.5f) // 120 BPM
