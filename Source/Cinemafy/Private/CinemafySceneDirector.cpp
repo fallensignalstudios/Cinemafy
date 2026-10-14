@@ -4,6 +4,7 @@
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyFaceComponent.h"
 #include "CinemafyDirectorLibrary.h"
+#include "CinemafyDirectorStyleAsset.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyListenerComponent.h"
@@ -48,8 +49,19 @@ ACinemafySceneDirector::ACinemafySceneDirector()
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 }
 
+void ACinemafySceneDirector::SaveStyleAsAsset()
+{
+#if WITH_EDITOR
+	OnEditorRequest.Broadcast(this, ECinemafyDirectorRequest::SaveStyleAsset);
+#endif
+}
+
 FCinemafyDirectorStyle ACinemafySceneDirector::GetStyle() const
 {
+	if (StyleAsset)
+	{
+		return StyleAsset->Style;
+	}
 	return Style == ECinemafyDirectorPreset::Custom ? CustomStyle : UCinemafyDirectorLibrary::GetPresetStyle(Style);
 }
 

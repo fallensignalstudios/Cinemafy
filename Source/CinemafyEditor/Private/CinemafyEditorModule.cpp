@@ -120,6 +120,7 @@ void FCinemafyEditorModule::StartupModule()
 		case ECinemafyDirectorRequest::Direct:     UCinemafyEditorLibrary::DirectSceneInSequencer(Director); break;
 		case ECinemafyDirectorRequest::Clear:      UCinemafyEditorLibrary::ClearDirectedShots(Director); break;
 		case ECinemafyDirectorRequest::LearnStyle: UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(Director); break;
+		case ECinemafyDirectorRequest::SaveStyleAsset: UCinemafyEditorLibrary::SaveDirectorStyleAsAsset(Director); break;
 		case ECinemafyDirectorRequest::AnalyzeAudio:
 		{
 			const int32 Count = UCinemafyEditorLibrary::AnalyzeDirectorAudio(Director);

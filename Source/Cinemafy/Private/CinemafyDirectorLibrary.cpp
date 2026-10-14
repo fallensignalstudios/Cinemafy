@@ -257,6 +257,139 @@ FCinemafyDirectorStyle UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirecto
 		S.LightingStyle = ECinemafyLightingStyle::Rembrandt;
 		break;
 
+	case ECinemafyDirectorPreset::SpaceOpera:
+		// Modeled on classic-trilogy space opera craft: classical, mostly locked-off coverage that
+		// favors medium shots and two-shots held through exchanges over tight close-ups; brisk cutting
+		// that gets much faster in action; wipes between scenes; almost no slow motion; anamorphic frame.
+		//    Wide MedTwo OTS  Med  MCU  CU   ECU   Low
+		Prefs(1.3f, 1.5f, 0.9f, 1.4f, 1.0f, 0.6f, 0.15f, 0.3f);
+		S.ShotPreference.Add(ECinemafyShotType::GroupShot, 1.3f);
+		S.TightenWithIntensity = 0.4f;
+		S.CalmShotLength = FVector2D(3.0, 5.5);
+		S.IntenseShotLength = FVector2D(1.2, 2.5);
+		S.ReactionShotChance = 0.4f;
+		S.LowAngleBias = 0.3f;
+		S.CalmFeel = ECinemafyCameraFeel::Locked;
+		S.IntenseFeel = ECinemafyCameraFeel::Tripod;
+		S.MoveChance = 0.12f;
+		S.HoldThroughChance = 0.45f;
+		S.Look = ECinemafyLook::WarmEpic;
+		S.LookStrength = 0.45f;
+		S.LetterboxAspect = 2.39f;
+		S.LightingStyle = ECinemafyLightingStyle::ThreePoint;
+		S.OpeningTransition = ECinemafyTransition::Wipe;
+		S.SceneBreakTransition = ECinemafyTransition::Wipe;
+		S.ClosingTransition = ECinemafyTransition::Wipe;
+		S.TransitionDuration = 0.8f;
+		S.WipeDirection = ECinemafyWipeDirection::Alternate;
+		S.CrashZoomChance = 0.f;
+		S.SlowMoChance = 0.02f;
+		S.TrackingLeadPreference = 0.4f;
+		break;
+
+	case ECinemafyDirectorPreset::MindBender:
+		// Large-format blockbuster craft: enormous establishing wides against tight, intense singles;
+		// slow push-ins; cold grade; relentless cross-cutting that accelerates toward the climax.
+		Prefs(1.5f, 0.5f, 0.9f, 0.6f, 1.3f, 1.4f, 0.4f, 0.6f);
+		S.TightenWithIntensity = 0.7f;
+		S.CalmShotLength = FVector2D(3.0, 5.0);
+		S.IntenseShotLength = FVector2D(1.2, 2.5);
+		S.ReactionShotChance = 0.3f;
+		S.LowAngleBias = 0.5f;
+		S.LensBias = 0;
+		S.IntenseFeel = ECinemafyCameraFeel::Shoulder;
+		S.MoveChance = 0.6f;
+		S.HoldThroughChance = 0.1f;
+		S.Look = ECinemafyLook::ColdSteel;
+		S.LightingStyle = ECinemafyLightingStyle::Rembrandt;
+		S.SceneBreakTransition = ECinemafyTransition::MatchCut;
+		S.ClosingTransition = ECinemafyTransition::FadeThroughBlack;
+		S.CrashZoomChance = 0.f;
+		S.SlowMoChance = 0.25f;
+		S.CrossCutLinesPerBlock = 2;
+		break;
+
+	case ECinemafyDirectorPreset::SymmetryStorybook:
+		// Storybook craft: centered, front-on, symmetrical framing; locked-off camera; deadpan holds.
+		Prefs(1.3f, 1.2f, 0.3f, 1.4f, 1.0f, 0.7f, 0.2f, 0.1f);
+		S.TightenWithIntensity = 0.3f;
+		S.CalmShotLength = FVector2D(4.0, 7.0);
+		S.IntenseShotLength = FVector2D(2.5, 4.0);
+		S.ReactionShotChance = 0.45f;
+		S.LowAngleBias = 0.05f;
+		S.CalmFeel = ECinemafyCameraFeel::Locked;
+		S.IntenseFeel = ECinemafyCameraFeel::Locked;
+		S.MoveChance = 0.15f;
+		S.FrontalFraming = 1.f;
+		S.HoldThroughChance = 0.3f;
+		S.Look = ECinemafyLook::WarmEpic;
+		S.LookStrength = 0.35f;
+		S.LetterboxAspect = 1.85f;
+		S.LightingStyle = ECinemafyLightingStyle::Butterfly;
+		S.SceneBreakTransition = ECinemafyTransition::Cut;
+		S.TrackingLeadPreference = 0.f;
+		break;
+
+	case ECinemafyDirectorPreset::LongTakeTension:
+		// Prestige-thriller craft: few cuts, slow creeping moves, cold light, cuts held until they hurt.
+		Prefs(1.1f, 1.3f, 1.0f, 1.2f, 1.0f, 0.8f, 0.3f, 0.2f);
+		S.TightenWithIntensity = 0.5f;
+		S.CalmShotLength = FVector2D(8.0, 14.0);
+		S.IntenseShotLength = FVector2D(4.0, 7.0);
+		S.ReactionShotChance = 0.15f;
+		S.LowAngleBias = 0.1f;
+		S.CalmFeel = ECinemafyCameraFeel::Tripod;
+		S.IntenseFeel = ECinemafyCameraFeel::Tripod;
+		S.MoveChance = 0.8f;
+		S.HoldThroughChance = 0.6f;
+		S.Look = ECinemafyLook::ColdSteel;
+		S.LightingStyle = ECinemafyLightingStyle::Rembrandt;
+		S.OpeningTransition = ECinemafyTransition::FadeThroughBlack;
+		S.ClosingTransition = ECinemafyTransition::FadeThroughBlack;
+		S.TransitionDuration = 1.2f;
+		S.SlowMoChance = 0.f;
+		break;
+
+	case ECinemafyDirectorPreset::SnapZoomGrindhouse:
+		// 70s exploitation homage: crash zooms, extreme close-ups on eyes, punchy short shots.
+		Prefs(0.6f, 0.5f, 0.6f, 0.8f, 1.0f, 1.4f, 1.2f, 0.6f);
+		S.TightenWithIntensity = 0.8f;
+		S.CalmShotLength = FVector2D(2.0, 3.5);
+		S.IntenseShotLength = FVector2D(0.8, 1.6);
+		S.ReactionShotChance = 0.45f;
+		S.LowAngleBias = 0.6f;
+		S.CalmFeel = ECinemafyCameraFeel::Shoulder;
+		S.IntenseFeel = ECinemafyCameraFeel::Handheld;
+		S.MoveChance = 0.3f;
+		S.Look = ECinemafyLook::BleachBypass;
+		S.LightingStyle = ECinemafyLightingStyle::Split;
+		S.SceneBreakTransition = ECinemafyTransition::Cut;
+		S.CrashZoomChance = 0.7f;
+		S.SlowMoChance = 0.3f;
+		break;
+
+	case ECinemafyDirectorPreset::GoldenHourLyrical:
+		// Naturalistic poetic craft: drifting handheld, magic-hour warmth, lingering reactions.
+		Prefs(1.2f, 0.9f, 0.8f, 1.0f, 1.1f, 1.2f, 0.4f, 0.2f);
+		S.TightenWithIntensity = 0.5f;
+		S.CalmShotLength = FVector2D(5.0, 9.0);
+		S.IntenseShotLength = FVector2D(3.0, 5.0);
+		S.ReactionShotChance = 0.6f;
+		S.LowAngleBias = 0.2f;
+		S.LensBias = 1;
+		S.CalmFeel = ECinemafyCameraFeel::Shoulder;
+		S.IntenseFeel = ECinemafyCameraFeel::Handheld;
+		S.MoveChance = 0.4f;
+		S.Look = ECinemafyLook::WarmEpic;
+		S.LookStrength = 1.f;
+		S.LightingStyle = ECinemafyLightingStyle::Loop;
+		S.OpeningTransition = ECinemafyTransition::Dissolve;
+		S.SceneBreakTransition = ECinemafyTransition::Dissolve;
+		S.ClosingTransition = ECinemafyTransition::FadeThroughBlack;
+		S.TransitionDuration = 1.5f;
+		S.TrackingLeadPreference = 0.3f;
+		break;
+
 	case ECinemafyDirectorPreset::ClassicHollywood:
 	default:
 		Prefs(1.0f, 1.0f, 1.4f, 0.8f, 1.2f, 1.0f, 0.3f, 0.3f);

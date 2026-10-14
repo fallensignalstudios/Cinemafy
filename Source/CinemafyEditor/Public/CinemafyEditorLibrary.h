@@ -9,6 +9,7 @@ class ACineCameraActor;
 class ACinemafyLightRig;
 class ACinemafySceneDirector;
 class USoundWave;
+class UCinemafyDirectorStyleAsset;
 
 /**
  * Editor-time Cinemafy actions. Everything here is undoable and callable from
@@ -138,6 +139,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 CheckSequenceContinuity();
+
+	/** Saves the style a director is using as a reusable Director Style asset (/Game/Cinemafy/Styles) and assigns it. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static UCinemafyDirectorStyleAsset* SaveDirectorStyleAsAsset(ACinemafySceneDirector* Director);
 
 	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")

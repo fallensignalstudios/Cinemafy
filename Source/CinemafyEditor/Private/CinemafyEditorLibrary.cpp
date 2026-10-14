@@ -19,6 +19,9 @@
 #include "CinemafyFaceComponent.h"
 #include "CinemafyDirectorLibrary.h"
 #include "CinemafySceneDirector.h"
+#include "CinemafyDirectorStyleAsset.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
 #include "Sections/MovieSceneCameraCutSection.h"
@@ -1871,6 +1874,42 @@ int32 UCinemafyEditorLibrary::CheckSequenceContinuity()
 	}
 	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
 	return Issues.Num();
+}
+
+UCinemafyDirectorStyleAsset* UCinemafyEditorLibrary::SaveDirectorStyleAsAsset(ACinemafySceneDirector* Director)
+{
+	if (!Director)
+	{
+		return nullptr;
+	}
+
+	const FString StyleName = Director->StyleAsset ? Director->StyleAsset->GetName()
+		: StaticEnum<ECinemafyDirectorPreset>()->GetNameStringByValue(static_cast<int64>(Director->Style));
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	FString PackageName;
+	FString AssetName;
+	AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("/Game/Cinemafy/Styles/DS_%s"), *StyleName), TEXT(""), PackageName, AssetName);
+
+	UCinemafyDirectorStyleAsset* Asset = Cast<UCinemafyDirectorStyleAsset>(
+		AssetTools.CreateAsset(AssetName, FPackageName::GetLongPackagePath(PackageName), UCinemafyDirectorStyleAsset::StaticClass(), nullptr));
+	if (!Asset)
+	{
+		return nullptr;
+	}
+
+	Asset->Style = Director->GetStyle();
+	Asset->Description = FText::Format(LOCTEXT("StyleAssetDescription", "Saved from {0} ({1})."),
+		FText::FromString(Director->GetActorLabel()), FText::FromString(StyleName));
+	Asset->MarkPackageDirty();
+
+	const FScopedTransaction Transaction(LOCTEXT("SaveStyle", "Cinemafy: Save Director Style"));
+	Director->Modify();
+	Director->StyleAsset = Asset;
+
+	TArray<UObject*> ToSync = { Asset };
+	GEditor->SyncBrowserToObjects(ToSync);
+	return Asset;
 }
 
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style)

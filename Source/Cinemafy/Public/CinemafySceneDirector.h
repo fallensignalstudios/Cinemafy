@@ -6,6 +6,7 @@
 #include "CinemafySceneDirector.generated.h"
 
 class ACineCameraActor;
+class UCinemafyDirectorStyleAsset;
 class ACinemafySceneDirector;
 
 /** What the editor should do for a director (the runtime module can't talk to Sequencer itself). */
@@ -14,7 +15,8 @@ enum class ECinemafyDirectorRequest : uint8
 	Direct,
 	Clear,
 	LearnStyle,
-	AnalyzeAudio
+	AnalyzeAudio,
+	SaveStyleAsset
 };
 
 #if WITH_EDITOR
@@ -42,6 +44,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director", meta = (EditCondition = "Style == ECinemafyDirectorPreset::Custom"))
 	FCinemafyDirectorStyle CustomStyle;
+
+	/** A saved style. When set, it's used instead of Style / Custom Style. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
+	TObjectPtr<UCinemafyDirectorStyleAsset> StyleAsset = nullptr;
 
 	/** The scene, line by line. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Script", meta = (TitleProperty = "Note"))
@@ -114,6 +120,10 @@ public:
 	 */
 	UFUNCTION(CallInEditor, Category = "Director")
 	void LearnStyleFromSequence();
+
+	/** Save the style this director is using (preset, custom or learned) as a reusable asset. */
+	UFUNCTION(CallInEditor, Category = "Director")
+	void SaveStyleAsAsset();
 
 	/** Listen to every line's audio: measure the delivery, set durations and audio intensity. */
 	UFUNCTION(CallInEditor, Category = "Director")

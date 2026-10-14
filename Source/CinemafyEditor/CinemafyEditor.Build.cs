@@ -22,6 +22,7 @@ public class CinemafyEditor : ModuleRules
 			"LevelSequence",
 			"LevelSequenceEditor",
 			"Sequencer",
+			"AssetTools",
 			"MovieScene",
 			"MovieSceneTracks",
 			"Slate",

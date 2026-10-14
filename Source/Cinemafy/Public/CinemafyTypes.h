@@ -482,7 +482,36 @@ enum class ECinemafyDirectorPreset : uint8
 	SlowBurn         UMETA(DisplayName = "Slow Burn (wide, patient)"),
 	NoirThriller     UMETA(DisplayName = "Noir Thriller (low angles, tight)"),
 	Epic             UMETA(DisplayName = "Epic (wide, heroic)"),
+	SpaceOpera       UMETA(DisplayName = "Space Opera Classic (wipes, locked-off, two-shots)"),
+	MindBender       UMETA(DisplayName = "Mind-Bender Epic (huge wides, tight singles, cross-cutting)"),
+	SymmetryStorybook UMETA(DisplayName = "Symmetry Storybook (centered, front-on, deadpan)"),
+	LongTakeTension  UMETA(DisplayName = "Long-Take Tension (few cuts, creeping moves)"),
+	SnapZoomGrindhouse UMETA(DisplayName = "Snap Zoom Grindhouse (crash zooms, extreme close-ups)"),
+	GoldenHourLyrical UMETA(DisplayName = "Golden Hour Lyrical (drifting, warm, lingering)"),
 	Custom           UMETA(DisplayName = "Custom")
+};
+
+/** How one shot hands over to the next at a scene break. */
+UENUM(BlueprintType)
+enum class ECinemafyTransition : uint8
+{
+	Cut              UMETA(DisplayName = "Cut"),
+	Wipe             UMETA(DisplayName = "Wipe (new shot pushes the old one off)"),
+	Dissolve         UMETA(DisplayName = "Dissolve"),
+	FadeThroughBlack UMETA(DisplayName = "Fade Through Black"),
+	MatchCut         UMETA(DisplayName = "Match Cut (same framing across the break)")
+};
+
+/** Which way wipes travel. */
+UENUM(BlueprintType)
+enum class ECinemafyWipeDirection : uint8
+{
+	LeftToRight,
+	RightToLeft,
+	TopToBottom,
+	BottomToTop,
+	/** Vary it every time, like the classic serials did. */
+	Alternate
 };
 
 /**
@@ -558,6 +587,54 @@ struct FCinemafyDirectorStyle
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lighting", meta = (EditCondition = "bLightCharacters"))
 	ECinemafyLightingStyle LightingStyle = ECinemafyLightingStyle::ThreePoint;
+
+	// --- Transitions ---------------------------------------------------------------
+
+	/** How the scene opens (Fade Through Black = fade in from black). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transitions")
+	ECinemafyTransition OpeningTransition = ECinemafyTransition::Cut;
+
+	/** Used on lines marked as a Scene Break (new place, jump in time, cross-cut). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transitions")
+	ECinemafyTransition SceneBreakTransition = ECinemafyTransition::Cut;
+
+	/** How the scene ends (Fade Through Black = fade out to black). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transitions")
+	ECinemafyTransition ClosingTransition = ECinemafyTransition::Cut;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transitions", meta = (ClampMin = "0.1", UIMax = "3"))
+	float TransitionDuration = 0.7f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transitions")
+	ECinemafyWipeDirection WipeDirection = ECinemafyWipeDirection::Alternate;
+
+	// --- Coverage habits -------------------------------------------------------------
+
+	/** Chance a two-shot or group shot holds across a change of speaker (focus racks instead of cutting). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "0", ClampMax = "1"))
+	float HoldThroughChance = 0.2f;
+
+	/** 0 = classic angled coverage with lead room, 1 = centered, front-on, symmetrical framing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "0", ClampMax = "1"))
+	float FrontalFraming = 0.f;
+
+	/** Walk-and-talk: 1 = lead the characters (camera backs up in front), 0 = follow behind them. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Style", meta = (ClampMin = "0", ClampMax = "1"))
+	float TrackingLeadPreference = 0.7f;
+
+	// --- Action ------------------------------------------------------------------------
+
+	/** Appetite for crash zooms on impacts and big emphasis. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Action", meta = (ClampMin = "0", ClampMax = "1"))
+	float CrashZoomChance = 0.1f;
+
+	/** Appetite for speed ramps (slow motion) on the biggest impacts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Action", meta = (ClampMin = "0", ClampMax = "1"))
+	float SlowMoChance = 0.15f;
+
+	/** Interleave with the director's Parallel Director by default (cross-cutting). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cross-Cutting", meta = (ClampMin = "1", UIMax = "6"))
+	int32 CrossCutLinesPerBlock = 3;
 };
 
 /** What Cinemafy heard in a line's dialogue audio. */
