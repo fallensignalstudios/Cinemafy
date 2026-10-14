@@ -6,7 +6,11 @@
 #include "Animation/AnimNotifies/AnimNotify.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "Animation/AnimSequenceBase.h"
+#include "CinemafySubtitleSubsystem.h"
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "DrawDebugHelpers.h"
@@ -1031,12 +1035,19 @@ void ACinemafyChoreography::Perform()
 		Beat.EndTime = -1.f;
 		Beat.ImpactTimes.Reset();
 		Beat.Events.Reset();
+		Beat.LineStartTime = -1.f;
+		Beat.LineDuration = 0.f;
 		Beat.Outcome = ECinemafyBeatOutcome::NotRun;
 		Beat.OutcomeReason.Reset();
 	}
 	PendingContacts.Reset();
 	PendingReactions.Reset();
 	ReactionMontages.Reset();
+	LineBeat = INDEX_NONE;
+	LineEndTime = -1.f;
+	LineAudio.Reset();
+	LastAddressed.Reset();
+	bWaitingForCue = false;
 	HeldPoses.Reset();
 
 	// Characters we act on who have no choreography of their own in this take: we drive their reactions and they're
@@ -1265,6 +1276,7 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 	}
 	UpdatePendingContacts();
 	UpdateReactions(DeltaSeconds);
+	UpdateLine();
 
 	if (LeadInLeft > 0.f)
 	{
@@ -1279,7 +1291,7 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 			TailLeft = TailSeconds;
 		}
 		TailLeft -= DeltaSeconds;
-		if (TailLeft <= 0.f && !IsAnimationBusy() && PendingContacts.Num() == 0 && PendingReactions.Num() == 0)
+		if (TailLeft <= 0.f && !IsAnimationBusy() && PendingContacts.Num() == 0 && PendingReactions.Num() == 0 && LineEndTime < 0.f)
 		{
 			FinishPerformance();
 		}
@@ -1287,6 +1299,163 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 	}
 
 	TickBeat(DeltaSeconds);
+}
+
+float ACinemafyChoreography::GetLineSeconds(const FCinemafyChoreoBeat& Beat) const
+{
+	if (Beat.DialogueAudio)
+	{
+		const float AudioSeconds = Beat.DialogueAudio->GetDuration();
+		if (AudioSeconds > 0.f && AudioSeconds < INDEFINITELY_LOOPING_DURATION)
+		{
+			return AudioSeconds;
+		}
+	}
+	TArray<FString> Words;
+	Beat.GetLineText().ToString().ParseIntoArrayWS(Words);
+	// Words at the speaking pace, plus a beat for the breath and the punctuation.
+	return FMath::Max(1.f, Words.Num() / FMath::Max(WordsPerSecond, 0.5f) + 0.4f);
+}
+
+AActor* ACinemafyChoreography::GetLineListener(int32 BeatIndex) const
+{
+	if (!Beats.IsValidIndex(BeatIndex))
+	{
+		return nullptr;
+	}
+	const FCinemafyChoreoBeat& Beat = Beats[BeatIndex];
+	if (Beat.Listener && Beat.Listener != Performer)
+	{
+		return Beat.Listener;
+	}
+	if (Cast<APawn>(Beat.Target) && Beat.Target != Performer)
+	{
+		return Beat.Target;
+	}
+	if (AActor* Last = LastAddressed.Get())
+	{
+		return Last;
+	}
+	// Before the take (or with nobody addressed yet): the nearest earlier beat that names someone.
+	for (int32 Index = BeatIndex - 1; Index >= 0; --Index)
+	{
+		const FCinemafyChoreoBeat& Earlier = Beats[Index];
+		if (Earlier.Listener && Earlier.Listener != Performer)
+		{
+			return Earlier.Listener;
+		}
+		if (Cast<APawn>(Earlier.Target) && Earlier.Target != Performer)
+		{
+			return Earlier.Target;
+		}
+	}
+	return nullptr;
+}
+
+AActor* ACinemafyChoreography::GetCueActor(int32 BeatIndex) const
+{
+	if (!Beats.IsValidIndex(BeatIndex))
+	{
+		return nullptr;
+	}
+	const FCinemafyChoreoBeat& Beat = Beats[BeatIndex];
+	if (Beat.WaitForLineFrom && Beat.WaitForLineFrom != Performer)
+	{
+		return Beat.WaitForLineFrom;
+	}
+	return Beat.Reading.bAfterLine ? GetLineListener(BeatIndex) : nullptr;
+}
+
+namespace CinemafyLines
+{
+	/** When each character's latest line ends (world seconds). Shared by every choreography in the take. */
+	TMap<TWeakObjectPtr<const AActor>, double>& SpokenLineEnds()
+	{
+		static TMap<TWeakObjectPtr<const AActor>, double> Ends;
+		return Ends;
+	}
+}
+
+bool ACinemafyChoreography::IsCueReady() const
+{
+	const AActor* Cue = GetCueActor(CurrentBeat);
+	const UWorld* World = GetWorld();
+	if (!Cue || !World)
+	{
+		return true;
+	}
+	const double* End = CinemafyLines::SpokenLineEnds().Find(TWeakObjectPtr<const AActor>(Cue));
+	// A line that was still running when we started waiting counts: wait for its last word.
+	return End && *End > CueAfterWorldTime - 0.25 && World->GetTimeSeconds() >= *End;
+}
+
+void ACinemafyChoreography::StartLine()
+{
+	if (!Beats.IsValidIndex(CurrentBeat) || !Performer)
+	{
+		return;
+	}
+	// A new line cuts off whatever this performer was still saying.
+	if (LineEndTime >= 0.f)
+	{
+		if (UAudioComponent* Previous = LineAudio.Get())
+		{
+			Previous->Stop();
+		}
+		LineEndTime = PerformTime;
+		UpdateLine();
+	}
+
+	FCinemafyChoreoBeat& Beat = Beats[CurrentBeat];
+	const float Seconds = GetLineSeconds(Beat);
+	const FText Text = Beat.GetLineText();
+	Beat.LineStartTime = PerformTime;
+	Beat.LineDuration = Seconds;
+	LineBeat = CurrentBeat;
+	LineEndTime = PerformTime + Seconds;
+	if (AActor* Listener = GetLineListener(CurrentBeat))
+	{
+		LastAddressed = Listener;
+	}
+
+	if (Beat.DialogueAudio)
+	{
+		LineAudio = UGameplayStatics::SpawnSoundAttached(Beat.DialogueAudio, Performer->GetRootComponent());
+	}
+	UWorld* World = GetWorld();
+	if (bShowSubtitlesWhilePerforming && !Text.IsEmpty() && World)
+	{
+		if (UCinemafySubtitleSubsystem* Subtitles = World->GetSubsystem<UCinemafySubtitleSubsystem>())
+		{
+			Subtitles->ShowSubtitle(FText::FromString(Performer->GetActorNameOrLabel()), Text, Seconds);
+		}
+	}
+	if (World)
+	{
+		CinemafyLines::SpokenLineEnds().Add(TWeakObjectPtr<const AActor>(Performer.Get()), World->GetTimeSeconds() + Seconds);
+	}
+	AddEvent(ECinemafyPerformanceEventKind::LineStart, Beat.DialogueAudio == nullptr, Text.ToString());
+}
+
+void ACinemafyChoreography::UpdateLine()
+{
+	if (LineEndTime < 0.f || PerformTime < LineEndTime)
+	{
+		return;
+	}
+	if (Beats.IsValidIndex(LineBeat) && Performer)
+	{
+		// Logged on the beat that spoke it, even if the performer has moved on.
+		FCinemafyPerformanceEvent& Event = Beats[LineBeat].Events.AddDefaulted_GetRef();
+		Event.Kind = ECinemafyPerformanceEventKind::LineEnd;
+		Event.Time = PerformTime;
+		Event.Location = Performer->GetActorLocation();
+		Event.bEstimated = Beats[LineBeat].DialogueAudio == nullptr;
+		Beats[LineBeat].LineDuration = PerformTime - Beats[LineBeat].LineStartTime;
+	}
+	LineAudio.Reset();
+	LineBeat = INDEX_NONE;
+	LineEndTime = -1.f;
 }
 
 FVector ACinemafyChoreography::GetTargetPoint(const FCinemafyChoreoBeat& Beat, int32 BeatIndex) const
@@ -1318,6 +1487,15 @@ void ACinemafyChoreography::StartBeat()
 	FallbackReason.Reset();
 	CurrentArrival = UCinemafyChoreographyLibrary::ResolveArrival(Beats, CurrentBeat);
 	AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, Beat.Prompt);
+
+	// Dialogue: wait for the other character's line if asked, then speak (the line runs alongside the beat).
+	bWaitingForCue = GetCueActor(CurrentBeat) != nullptr;
+	CueAfterWorldTime = GetWorld()->GetTimeSeconds();
+	CueWaitTime = 0.f;
+	if (!bWaitingForCue && Beat.HasLine())
+	{
+		StartLine();
+	}
 
 	const FVector Here = Performer->GetActorLocation();
 	const FVector Point = GetBeatWorldLocation(CurrentBeat);
@@ -1390,6 +1568,10 @@ void ACinemafyChoreography::StartBeat()
 	case ECinemafyActionKind::Look:
 		bApproach = false;
 		break;
+	case ECinemafyActionKind::Say:
+		// Clicked on the listener = say it from here; clicked on the floor = walk there first.
+		bApproach = !Cast<APawn>(Beat.Target) && FVector::Dist2D(Here, Point) > 150.f;
+		break;
 	default:
 		bApproach = FVector::Dist2D(Here, Point) > 150.f;
 		break;
@@ -1450,6 +1632,31 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 
 	FCinemafyChoreoBeat& Beat = Beats[CurrentBeat];
 	const FCinemafyPromptReading& Reading = Beat.Reading;
+
+	if (bWaitingForCue)
+	{
+		CueWaitTime += DeltaSeconds;
+		if (AActor* Listener = GetLineListener(CurrentBeat))
+		{
+			FaceToward(Listener->GetActorLocation(), DeltaSeconds);
+		}
+		if (!IsCueReady())
+		{
+			if (CueWaitTime > CueTimeout)
+			{
+				FinishBeat(ECinemafyBeatOutcome::TimedOut, FString::Printf(TEXT("Waited %.0fs for %s's line, which never came (are they in the take, and do they have a line?)"),
+					CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat))));
+			}
+			return;
+		}
+		bWaitingForCue = false;
+		AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("cue from %s"), *GetNameSafe(GetCueActor(CurrentBeat))));
+		if (Beat.HasLine())
+		{
+			StartLine();
+		}
+	}
+
 	BeatTime += DeltaSeconds;
 	PhaseTime += DeltaSeconds;
 
@@ -1603,7 +1810,12 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 	case EPhase::Face:
 	{
 		bool bFaced = true;
-		if (Beat.Target || Reading.Kind == ECinemafyActionKind::Look || Reading.Kind == ECinemafyActionKind::Attack)
+		if (Reading.Kind == ECinemafyActionKind::Say)
+		{
+			AActor* Listener = GetLineListener(CurrentBeat);
+			bFaced = !Listener || FaceToward(Listener->GetActorLocation(), DeltaSeconds);
+		}
+		else if (Beat.Target || Reading.Kind == ECinemafyActionKind::Look || Reading.Kind == ECinemafyActionKind::Attack)
 		{
 			bFaced = FaceToward(GetTargetPoint(Beat, CurrentBeat), DeltaSeconds);
 		}
@@ -1615,6 +1827,10 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 			{
 			case ECinemafyActionKind::Look:
 				ActDoneDelay = Reading.Seconds > 0.f ? Reading.Seconds : 1.f;
+				break;
+			case ECinemafyActionKind::Say:
+				// Hold for the rest of the line (it may have started during the walk over).
+				ActDoneDelay = LineEndTime >= 0.f && LineBeat == CurrentBeat ? FMath::Max(LineEndTime - PerformTime, 0.05f) : 0.05f;
 				break;
 			case ECinemafyActionKind::Attack:
 			case ECinemafyActionKind::Perform:
@@ -1677,6 +1893,13 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		if (Reading.Kind == ECinemafyActionKind::Look)
 		{
 			FaceToward(GetTargetPoint(Beat, CurrentBeat), DeltaSeconds);
+		}
+		else if (Reading.Kind == ECinemafyActionKind::Say)
+		{
+			if (AActor* Listener = GetLineListener(CurrentBeat))
+			{
+				FaceToward(Listener->GetActorLocation(), DeltaSeconds);
+			}
 		}
 
 		if (ActiveMontage.IsValid())
@@ -2125,6 +2348,7 @@ namespace
 		case ECinemafyActionKind::Perform:  return FColor(200, 120, 255);
 		case ECinemafyActionKind::Equip:    return FColor(255, 150, 60);
 		case ECinemafyActionKind::Look:     return FColor(140, 255, 140);
+		case ECinemafyActionKind::Say:      return FColor(255, 240, 150);
 		default:                            return FColor(200, 200, 200);
 		}
 	}

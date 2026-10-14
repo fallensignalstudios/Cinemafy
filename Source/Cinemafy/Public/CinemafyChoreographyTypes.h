@@ -4,6 +4,8 @@
 #include "Engine/DataAsset.h"
 #include "CinemafyChoreographyTypes.generated.h"
 
+class USoundBase;
+
 class AActor;
 class UAnimSequenceBase;
 
@@ -24,7 +26,9 @@ enum class ECinemafyActionKind : uint8
 	/** Turn to face the point / target. */
 	Look      UMETA(DisplayName = "Look"),
 	/** Draw or switch weapons (the overlay), e.g. "sword", "pistols", "holster". */
-	Equip     UMETA(DisplayName = "Equip")
+	Equip     UMETA(DisplayName = "Equip"),
+	/** Say a line on the spot, facing whoever it's said to: say "Stand down, Admiral". The next beat waits for it. */
+	Say       UMETA(DisplayName = "Say")
 };
 
 /** How fast the performer moves. */
@@ -79,7 +83,10 @@ enum class ECinemafyPerformanceEventKind : uint8
 	Contact     UMETA(DisplayName = "Contact"),
 	ActionEnd   UMETA(DisplayName = "Action End"),
 	/** The target started reacting to a strike (synchronized so its impact meets the contact). */
-	Reaction    UMETA(DisplayName = "Reaction")
+	Reaction    UMETA(DisplayName = "Reaction"),
+	/** A line of dialogue started / finished. */
+	LineStart   UMETA(DisplayName = "Line Start"),
+	LineEnd     UMETA(DisplayName = "Line End")
 };
 
 /** One moment in a take: what, when (take seconds), where, and whether it was observed or estimated. */
@@ -226,6 +233,14 @@ struct CINEMAFY_API FCinemafyPromptReading
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
 	int32 Repeat = 1;
 
+	/** Quoted words in the prompt: walk "Stand down, Admiral" -> the line said while walking. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
+	FString Line;
+
+	/** "answer", "reply", "after": wait for the other character's line to finish first. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
+	bool bAfterLine = false;
+
 	/** Human readable, e.g. "Attack with sword (x3)". */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Prompt")
 	FString Summary;
@@ -260,6 +275,33 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	/** Stable identity (survives reordering and renaming). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat", AdvancedDisplay)
 	FGuid Id;
+
+	/** A line said during this beat (walk-and-talk, a line before a strike). Empty = the prompt's quoted words, if any. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line", meta = (MultiLine = true))
+	FText Dialogue;
+
+	/** The recorded line. Played while performing, laid into the sequence when the director cuts the scene. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
+	TObjectPtr<USoundBase> DialogueAudio = nullptr;
+
+	/** Who it's said to. Empty = the beat's target if it's a character, else whoever this performer last spoke to. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
+	TObjectPtr<AActor> Listener = nullptr;
+
+	/** Hold this beat until that character finishes their line (an answer, or a draw on the last word). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
+	TObjectPtr<AActor> WaitForLineFrom = nullptr;
+
+	/** Seconds into the last take when the line started, and how long it ran (-1 = no line). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
+	float LineStartTime = -1.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Take")
+	float LineDuration = 0.f;
+
+	/** The words this beat says (Dialogue, else the prompt's quotes). */
+	FText GetLineText() const { return Dialogue.IsEmpty() ? FText::FromString(Reading.Line) : Dialogue; }
+	bool HasLine() const { return DialogueAudio != nullptr || !Dialogue.IsEmpty() || !Reading.Line.IsEmpty(); }
 
 	/** Traversal beats: the obstacle as measured from the approach (refreshed when the beat is read). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Beat|Director")

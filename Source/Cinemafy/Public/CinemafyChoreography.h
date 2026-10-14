@@ -11,6 +11,7 @@ class ACharacter;
 class AController;
 class APlayerController;
 class UAnimMontage;
+class UAudioComponent;
 class UTextRenderComponent;
 class ULevelSequence;
 class ACinemafySceneDirector;
@@ -157,6 +158,25 @@ public:
 	/** "wait" with no number. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Timing", meta = (ClampMin = "0.0"))
 	float DefaultWaitSeconds = 1.5f;
+
+	/** Show lines as subtitles while performing (the director bakes its own subtitles into the cut). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue")
+	bool bShowSubtitlesWhilePerforming = true;
+
+	/** Speaking pace for lines without audio, in words per second. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue", meta = (ClampMin = "0.5", ClampMax = "6.0"))
+	float WordsPerSecond = 2.6f;
+
+	/** Longest a beat waits for another character's line before giving up. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Dialogue", meta = (ClampMin = "1.0"))
+	float CueTimeout = 60.f;
+
+	/** How long a beat's line runs: its audio, else its words at WordsPerSecond. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Choreography")
+	float GetLineSeconds(const FCinemafyChoreoBeat& Beat) const;
+
+	/** Who a beat's line is said to (its Listener, else a character target, else whoever this performer last spoke to). */
+	AActor* GetLineListener(int32 BeatIndex) const;
 
 	/** Give up on a beat after this long. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Timing", meta = (ClampMin = "1.0"))
@@ -363,6 +383,14 @@ private:
 
 	void DrawPath() const;
 
+	/** Starts the current beat's line: audio on the performer, a subtitle, and a note for anyone waiting on it. */
+	void StartLine();
+	/** Ends the running line once its time is up (lines can outlast their beat: walk-and-talk). */
+	void UpdateLine();
+	/** True once WaitForLineFrom's character has finished a line that was running or started after the beat began. */
+	bool IsCueReady() const;
+	AActor* GetCueActor(int32 BeatIndex) const;
+
 	TArray<FCinemafyMoveCandidate> Candidates;
 	FString CandidatesSkeleton;
 	void EnsureCandidates();
@@ -386,6 +414,15 @@ private:
 	bool bStepOverOnly = false;
 	/** Set by StartBeat when the beat can't be performed at all (finished on the next tick). */
 	FString PrecheckFailReason;
+	/** Holding the beat until another character's line ends. */
+	bool bWaitingForCue = false;
+	double CueAfterWorldTime = 0.0;
+	float CueWaitTime = 0.f;
+	/** The line being spoken: its beat, and when it ends (take seconds; -1 = none). */
+	int32 LineBeat = INDEX_NONE;
+	float LineEndTime = -1.f;
+	TWeakObjectPtr<UAudioComponent> LineAudio;
+	TWeakObjectPtr<AActor> LastAddressed;
 	bool bSawTraversal = false;
 	float ActDoneDelay = 0.f;
 	TArray<TObjectPtr<UAnimSequenceBase>> AnimQueue;

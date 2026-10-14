@@ -728,4 +728,78 @@ bool FCinemafyTraversalJudgeTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyChoreoDialogueTest, "Cinemafy.Choreography.LinesAndActionInOneScene", CinemafyTests::Flags)
+bool FCinemafyChoreoDialogueTest::RunTest(const FString& Parameters)
+{
+	using Lib = UCinemafyChoreographyLibrary;
+
+	// Prompts: quoted words are a line; speech words make it a Say beat; "answer" waits for the other line.
+	const FCinemafyPromptReading WalkTalk = Lib::ReadPrompt(TEXT("walk \"Stand down, Admiral\""));
+	TestEqual(TEXT("walk \"...\" still walks"), WalkTalk.Kind, ECinemafyActionKind::Move);
+	TestEqual(TEXT("...saying the line"), WalkTalk.Line, FString(TEXT("Stand down, Admiral")));
+	const FCinemafyPromptReading Bare = Lib::ReadPrompt(TEXT("\"Make me.\""));
+	TestEqual(TEXT("Just a quote is a Say beat"), Bare.Kind, ECinemafyActionKind::Say);
+	const FCinemafyPromptReading Answer = Lib::ReadPrompt(TEXT("answer \"Make me.\""));
+	TestEqual(TEXT("An answer is said"), Answer.Kind, ECinemafyActionKind::Say);
+	TestTrue(TEXT("...after the other line"), Answer.bAfterLine);
+	const FCinemafyPromptReading Draw = Lib::ReadPrompt(TEXT("sword after"));
+	TestEqual(TEXT("\"sword after\" draws"), Draw.Kind, ECinemafyActionKind::Equip);
+	TestTrue(TEXT("...once they've finished talking"), Draw.bAfterLine);
+	TestTrue(TEXT("The quote doesn't search animation names"), !Lib::ReadPrompt(TEXT("taunt \"Come on then\"")).Keywords.Contains(TEXT("come")));
+
+	// The take: walk-and-talk, a pause, then the draw and the strike.
+	CinemafyTests::FTestScene Scene;
+	APawn* Thane = Scene.World->SpawnActor<APawn>();
+	auto MakeBeat = [](const TCHAR* Prompt, float Start, float End, AActor* Target)
+	{
+		FCinemafyChoreoBeat Beat;
+		Beat.Prompt = Prompt;
+		Beat.Reading = UCinemafyChoreographyLibrary::ReadPrompt(Prompt);
+		Beat.StartTime = Start;
+		Beat.EndTime = End;
+		Beat.Target = Target;
+		return Beat;
+	};
+	TArray<FCinemafyChoreoBeat> Beats;
+	Beats.Add(MakeBeat(TEXT("walk \"Stand down, Admiral\""), 0.f, 4.f, nullptr));
+	Beats.Last().Listener = Thane;
+	Beats.Last().LineStartTime = 0.f;
+	Beats.Last().LineDuration = 2.5f;
+	Beats.Add(MakeBeat(TEXT("look"), 4.f, 5.f, Thane));
+	Beats.Add(MakeBeat(TEXT("sword after"), 7.f, 8.f, nullptr));
+	Beats.Add(MakeBeat(TEXT("sword attack"), 8.f, 10.f, Thane));
+	Beats.Last().ImpactTimes = { 8.6f };
+
+	const TArray<FCinemafyLine> Lines = Lib::BuildDirectorLines(Beats, Scene.Kara, 10.5f);
+	TestTrue(TEXT("At least the line, the beats and the strike"), Lines.Num() >= 3);
+	if (Lines.Num() < 3)
+	{
+		return true;
+	}
+	TestEqual(TEXT("The walk carries the words"), Lines[0].Text.ToString(), FString(TEXT("Stand down, Admiral")));
+	TestEqual(TEXT("...as walk-and-talk"), Lines[0].Moment, ECinemafyMoment::WalkAndTalk);
+	TestTrue(TEXT("...said to Thane"), Lines[0].Listener == Thane);
+	TestTrue(TEXT("The strike is still action"), Lines.Last().bAction && Lines.Last().ImpactTimes.Num() == 1);
+	float Total = 0.f;
+	for (const FCinemafyLine& Line : Lines)
+	{
+		Total += Line.Duration + Line.PauseAfter;
+	}
+	TestTrue(TEXT("One scene: the lines cover the whole take"), FMath::IsNearlyEqual(Total, 10.5f, 0.01f));
+
+	// An answer that starts after its beat began is cut on its first word.
+	TArray<FCinemafyChoreoBeat> Reply;
+	Reply.Add(MakeBeat(TEXT("answer \"Make me.\""), 0.5f, 6.f, Scene.Kara));
+	Reply.Last().LineStartTime = 3.f;
+	Reply.Last().LineDuration = 1.2f;
+	const TArray<FCinemafyLine> ReplyLines = Lib::BuildDirectorLines(Reply, Thane, 6.f);
+	TestEqual(TEXT("A quiet listen, then the answer"), ReplyLines.Num(), 2);
+	if (ReplyLines.Num() == 2)
+	{
+		TestTrue(TEXT("...which starts on its first word"), FMath::IsNearlyEqual(ReplyLines[0].Duration, 3.f, 0.01f));
+		TestEqual(TEXT("...with its words"), ReplyLines[1].Text.ToString(), FString(TEXT("Make me.")));
+	}
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

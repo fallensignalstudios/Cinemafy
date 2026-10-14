@@ -164,7 +164,7 @@ void FCinemafyChoreoMode::UpdateBanner()
 		return;
 	}
 	Banner->SetText(FText::Format(LOCTEXT("BannerBeats",
-		"Choreographing {0}: {1} beat(s).\nClick where something happens, then type it (walk, vault, sprint, climb, sword attack, taunt). Esc when done."),
+		"Choreographing {0}: {1} beat(s).\nClick where something happens, then type it (walk, vault, sprint, climb, sword attack, taunt, or a line in quotes). Esc when done."),
 		FText::FromString(PerformerLabel(Choreo->Performer)), Choreo->Beats.Num()));
 }
 
@@ -317,7 +317,7 @@ void FCinemafyChoreoMode::OpenPrompt(const FVector2D& ScreenPosition, const FVec
 
 	TSharedRef<SEditableTextBox> TextBox = SNew(SEditableTextBox)
 		.MinDesiredWidth(280.f)
-		.HintText(LOCTEXT("PromptHint", "walk, vault, sprint, climb, sword attack, taunt, wait 2..."))
+		.HintText(LOCTEXT("PromptHint", "walk, vault, sword attack, wait 2, walk \"Stand down, Admiral\", answer \"Make me\"..."))
 		.OnTextCommitted_Lambda([WeakSelf](const FText& Text, ETextCommit::Type Type)
 		{
 			if (Type == ETextCommit::OnEnter)
@@ -331,7 +331,7 @@ void FCinemafyChoreoMode::OpenPrompt(const FVector2D& ScreenPosition, const FVec
 
 	TSharedRef<SWrapBox> Chips = SNew(SWrapBox).UseAllottedSize(true).InnerSlotPadding(FVector2D(4.f, 4.f));
 	for (const TCHAR* Word : { TEXT("walk"), TEXT("run"), TEXT("sprint"), TEXT("sneak"), TEXT("vault"), TEXT("climb"), TEXT("attack"),
-		TEXT("combo"), TEXT("shoot"), TEXT("taunt"), TEXT("wave"), TEXT("look"), TEXT("wait") })
+		TEXT("combo"), TEXT("shoot"), TEXT("taunt"), TEXT("wave"), TEXT("look"), TEXT("wait"), TEXT("say"), TEXT("answer") })
 	{
 		const FString Chip = Word;
 		Chips->AddSlot()
@@ -1033,14 +1033,27 @@ namespace CinemafyChoreoTake
 		}
 		Timed.StableSort([](const FTimedLine& A, const FTimedLine& B) { return A.Start < B.Start; });
 
-		// Lines that start together: the more intense one leads.
+		// Lines that start together: whoever speaks leads (their words and audio must survive), else the more intense one.
+		auto Speaks = [](const FTimedLine& T) { return !T.Line.Text.IsEmpty() || T.Line.Audio != nullptr; };
 		for (int32 Index = Timed.Num() - 1; Index > 0; --Index)
 		{
 			if (Timed[Index].Start - Timed[Index - 1].Start < 0.8f)
 			{
-				if (Timed[Index].Line.Intensity > Timed[Index - 1].Line.Intensity)
+				const bool bLaterSpeaks = Speaks(Timed[Index]);
+				const bool bEarlierSpeaks = Speaks(Timed[Index - 1]);
+				if (bLaterSpeaks && (bEarlierSpeaks || (Index == 1 && Timed[Index].Start > 0.05f)))
 				{
-					Timed[Index].Start = Timed[Index - 1].Start;
+					// Two people talking over each other, or a line just after the take starts: keep both,
+					// so every line's audio still lands on its first word.
+					continue;
+				}
+				if (bLaterSpeaks || (!bEarlierSpeaks && Timed[Index].Line.Intensity > Timed[Index - 1].Line.Intensity))
+				{
+					// A spoken line keeps its own start, so its audio lands on its first word.
+					if (!bLaterSpeaks)
+					{
+						Timed[Index].Start = Timed[Index - 1].Start;
+					}
 					Timed[Index - 1] = Timed[Index];
 				}
 				Timed.RemoveAt(Index);
@@ -1124,7 +1137,8 @@ namespace CinemafyChoreoTake
 		Director->Modify();
 		Director->Lines = MergeLines(Ensemble);
 		Director->bPlacePerformances = false;
-		Director->bPlaceDialogueAudio = false;
+		// The take's bodies are already baked; its spoken lines still need their audio in the cut.
+		Director->bPlaceDialogueAudio = Director->Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return Line.Audio != nullptr; });
 
 		const UMovieScene* MovieScene = Open->GetMovieScene();
 		Sequencer->SetLocalTimeDirectly(FFrameTime(MovieScene->GetTickResolution().AsFrameNumber(Choreo->TakeStartSeconds)));

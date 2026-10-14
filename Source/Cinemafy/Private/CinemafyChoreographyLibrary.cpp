@@ -250,8 +250,45 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 {
 	FCinemafyPromptReading Reading;
 
+	// Quoted words are a line to say: walk "Stand down, Admiral". Straight or curly quotes.
+	FString Actions = Prompt;
+	{
+		FString Normalized = Prompt.Replace(TEXT("\u201C"), TEXT("\"")).Replace(TEXT("\u201D"), TEXT("\""));
+		int32 Open = INDEX_NONE;
+		if (Normalized.FindChar(TEXT('"'), Open))
+		{
+			int32 Close = Normalized.Find(TEXT("\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, Open + 1);
+			if (Close == INDEX_NONE)
+			{
+				Close = Normalized.Len();
+			}
+			Reading.Line = Normalized.Mid(Open + 1, Close - Open - 1).TrimStartAndEnd();
+			Actions = Normalized.Left(Open) + TEXT(" ") + Normalized.Mid(FMath::Min(Close + 1, Normalized.Len()));
+		}
+	}
+
 	TArray<FString> Words;
-	Prompt.ToLower().ParseIntoArrayWS(Words);
+	Actions.ToLower().ParseIntoArrayWS(Words);
+
+	// Speech words make it a line, not an animation search.
+	bool bSay = false;
+	for (int32 Index = Words.Num() - 1; Index >= 0; --Index)
+	{
+		FString Word = Words[Index];
+		Word.TrimCharInline(TEXT(':'), nullptr);
+		Word.TrimCharInline(TEXT(','), nullptr);
+		if (IsOneOf(Word, { TEXT("answer"), TEXT("answers"), TEXT("reply"), TEXT("replies"), TEXT("respond"), TEXT("responds"), TEXT("after") }))
+		{
+			Reading.bAfterLine = true;
+			bSay |= Word != TEXT("after");
+			Words.RemoveAt(Index);
+		}
+		else if (IsOneOf(Word, { TEXT("say"), TEXT("says"), TEXT("tell"), TEXT("tells"), TEXT("speak"), TEXT("speaks"), TEXT("line"), TEXT("ask"), TEXT("asks"), TEXT("shout"), TEXT("shouts") }))
+		{
+			bSay = true;
+			Words.RemoveAt(Index);
+		}
+	}
 
 	// "x3" / "3x" -> 3, and a crude singular ("attacks" -> "attack") except where the plural means something.
 	for (FString& Word : Words)
@@ -449,12 +486,16 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	{
 		Reading.Kind = ECinemafyActionKind::Move;
 	}
+	else if ((bSay || !Reading.Line.IsEmpty()) && !bWait)
+	{
+		// Nothing but a line: say it on the spot.
+		Reading.Kind = ECinemafyActionKind::Say;
+	}
 	else
 	{
 		Reading.Kind = ECinemafyActionKind::Wait;
 		Reading.Seconds = static_cast<float>(Number);
 	}
-	(void)bWait;
 
 	// What to look for in animation names.
 	switch (Reading.Kind)
@@ -528,6 +569,15 @@ FCinemafyPromptReading UCinemafyChoreographyLibrary::ReadPrompt(const FString& P
 	if (Reading.Seconds > 0.f)
 	{
 		Summary += FString::Printf(TEXT(" %.1fs"), Reading.Seconds);
+	}
+	if (Reading.bAfterLine)
+	{
+		Summary = TEXT("After their line: ") + Summary;
+	}
+	if (!Reading.Line.IsEmpty())
+	{
+		const FString Quote = Reading.Line.Len() > 28 ? Reading.Line.Left(26) + TEXT("...") : Reading.Line;
+		Summary += Reading.Kind == ECinemafyActionKind::Say ? FString::Printf(TEXT(" \"%s\""), *Quote) : FString::Printf(TEXT(", saying \"%s\""), *Quote);
 	}
 	Reading.Summary = Summary;
 	return Reading;
@@ -1128,32 +1178,62 @@ FCinemafyTraversalCheck UCinemafyChoreographyLibrary::CheckTraversal(const UObje
 
 TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TArray<FCinemafyChoreoBeat>& Beats, AActor* Performer, float TakeDuration)
 {
-	TArray<const FCinemafyChoreoBeat*> Timed;
+	// Each beat is a piece of the scene; a spoken line is its own piece, starting on its first word
+	// (an answer can start well after its beat did, once the other character stops talking).
+	struct FPiece
+	{
+		float Start;
+		const FCinemafyChoreoBeat* Beat;
+		bool bLine;
+	};
+	TArray<FPiece> Pieces;
 	for (const FCinemafyChoreoBeat& Beat : Beats)
 	{
-		if (Beat.StartTime >= 0.f)
+		if (Beat.StartTime < 0.f)
 		{
-			Timed.Add(&Beat);
+			continue;
+		}
+		const bool bSpoke = Beat.LineStartTime >= 0.f;
+		if (bSpoke && Beat.LineStartTime - Beat.StartTime > 0.5f)
+		{
+			Pieces.Add({ Beat.StartTime, &Beat, false });
+			Pieces.Add({ Beat.LineStartTime, &Beat, true });
+		}
+		else
+		{
+			Pieces.Add({ bSpoke ? FMath::Min(Beat.StartTime, Beat.LineStartTime) : Beat.StartTime, &Beat, bSpoke });
 		}
 	}
-	Timed.StableSort([](const FCinemafyChoreoBeat& A, const FCinemafyChoreoBeat& B) { return A.StartTime < B.StartTime; });
+	Pieces.StableSort([](const FPiece& A, const FPiece& B) { return A.Start < B.Start; });
+	// The scene starts at 0; a line can't (its audio would land early), so a quiet moment leads into it.
+	if (Pieces.Num() > 0 && Pieces[0].bLine && Pieces[0].Start > 0.05f)
+	{
+		Pieces.Insert({ 0.f, Pieces[0].Beat, false }, 0);
+	}
+
+	// The last listener a line went to: who a later line without one is said to.
+	AActor* LastListener = nullptr;
 
 	TArray<FCinemafyLine> Lines;
 	TArray<float> LineStarts;
-	for (int32 Index = 0; Index < Timed.Num(); ++Index)
+	float SpeechEnd = -1.f;
+	for (int32 Index = 0; Index < Pieces.Num(); ++Index)
 	{
-		const FCinemafyChoreoBeat& Beat = *Timed[Index];
-		const float Start = Index == 0 ? 0.f : Beat.StartTime;
-		const float End = Index + 1 < Timed.Num() ? Timed[Index + 1]->StartTime : FMath::Max(TakeDuration, Beat.EndTime);
+		const FPiece& Piece = Pieces[Index];
+		const FCinemafyChoreoBeat& Beat = *Piece.Beat;
+		const float Start = Index == 0 ? 0.f : Piece.Start;
+		const float End = Index + 1 < Pieces.Num() ? Pieces[Index + 1].Start : FMath::Max(TakeDuration, FMath::Max(Beat.EndTime, Beat.LineStartTime + Beat.LineDuration));
 		const float Duration = End - Start;
 
 		const ECinemafyActionKind Kind = Beat.Reading.Kind;
-		const bool bAction = Kind == ECinemafyActionKind::Attack || Kind == ECinemafyActionKind::Traverse;
+		const bool bAction = !Piece.bLine && (Kind == ECinemafyActionKind::Attack || Kind == ECinemafyActionKind::Traverse);
 		const bool bMoving = Kind == ECinemafyActionKind::Move || Kind == ECinemafyActionKind::Traverse
 			|| (Kind == ECinemafyActionKind::Attack && !Beat.Reading.bRanged);
 
-		// Very short beats ride along with the one before (a cut every half second is noise).
-		if (Lines.Num() > 0 && Duration < 0.8f)
+		// Very short beats ride along with the one before (a cut every half second is noise), and so does anything
+		// that isn't a strike while someone is still talking: stay on the line, cut on the action.
+		const bool bUnderLine = !Piece.bLine && Start < SpeechEnd - 0.3f && Kind != ECinemafyActionKind::Attack;
+		if (Lines.Num() > 0 && !Piece.bLine && (Duration < 0.8f || bUnderLine))
 		{
 			FCinemafyLine& Previous = Lines.Last();
 			for (float Impact : Beat.ImpactTimes)
@@ -1162,6 +1242,7 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 			}
 			Previous.Duration += Duration;
 			Previous.bAction |= bAction;
+			Previous.bMoving |= bMoving;
 			Previous.Note += TEXT(", ") + Beat.Prompt;
 			continue;
 		}
@@ -1170,7 +1251,12 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 		FCinemafyLine& Line = Lines.AddDefaulted_GetRef();
 		Line.Speaker = Performer;
 		APawn* TargetPawn = Cast<APawn>(Beat.Target.Get());
-		Line.Listener = TargetPawn && TargetPawn != Performer ? TargetPawn : nullptr;
+		AActor* Listener = Beat.Listener ? Beat.Listener.Get() : (TargetPawn && TargetPawn != Performer ? TargetPawn : nullptr);
+		if (Piece.bLine && !Listener)
+		{
+			Listener = LastListener;
+		}
+		Line.Listener = Listener != Performer ? Listener : nullptr;
 		Line.Duration = FMath::Max(Duration, 0.2f);
 		Line.PauseAfter = 0.f;
 		Line.bUseAudioDuration = false;
@@ -1180,7 +1266,26 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 		Line.Note = FString::Printf(TEXT("%s (%s)"), *Beat.Prompt, *Beat.Reading.Summary);
 		for (float Impact : Beat.ImpactTimes)
 		{
-			Line.ImpactTimes.Add(Impact - Start);
+			if (!Piece.bLine || Pieces.Num() == 1 || Beat.LineStartTime <= Beat.StartTime + 0.5f)
+			{
+				Line.ImpactTimes.Add(Impact - Start);
+			}
+		}
+
+		if (Piece.bLine)
+		{
+			// A spoken line: the director covers it as dialogue (walk-and-talk while moving), with its words and audio.
+			Line.Text = Beat.GetLineText();
+			Line.Audio = Beat.DialogueAudio;
+			Line.bAutoIntensity = Beat.DialogueAudio != nullptr;
+			Line.Intensity = Beat.Reading.bAfterLine ? 0.6f : 0.5f;
+			Line.Moment = bMoving ? ECinemafyMoment::WalkAndTalk : ECinemafyMoment::Dialogue;
+			SpeechEnd = Beat.LineStartTime + Beat.LineDuration;
+			if (Line.Listener)
+			{
+				LastListener = Line.Listener;
+			}
+			continue;
 		}
 
 		switch (Kind)
@@ -1190,6 +1295,7 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 		case ECinemafyActionKind::Perform:  Line.Intensity = 0.55f; break;
 		case ECinemafyActionKind::Equip:    Line.Intensity = 0.5f;  break;
 		case ECinemafyActionKind::Look:     Line.Intensity = 0.35f; break;
+		case ECinemafyActionKind::Say:      Line.Intensity = 0.3f;  Line.Moment = ECinemafyMoment::SilentBeat; break; // waiting to answer
 		case ECinemafyActionKind::Wait:     Line.Intensity = 0.2f;  Line.Moment = ECinemafyMoment::SilentBeat; break;
 		case ECinemafyActionKind::Move:
 			Line.Intensity = Beat.Reading.Gait == ECinemafyGait::Sprint ? 0.7f : Beat.Reading.Gait == ECinemafyGait::Run ? 0.45f : 0.25f;
