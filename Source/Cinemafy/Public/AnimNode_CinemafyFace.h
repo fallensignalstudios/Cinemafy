@@ -116,6 +116,7 @@ private:
 	float ClosureHoldUntil = -1.f;
 	float TuckHoldUntil = -1.f;
 	float LastSpeechTime = -100.f;
+	float LastJawActivityTime = -100.f;
 	float SilenceGateAlpha = 0.f;
 	float PupilConstriction = 0.f;
 };

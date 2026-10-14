@@ -279,8 +279,15 @@ void FAnimNode_CinemafyFace::ApplyLipSync(const TMap<FName, float>& Raw, TMap<FN
 	const float Together = Average(Curves.Closure) * Intensity;
 	const float Bite = Average(Curves.Labiodental) * Intensity;
 
+	// Consonants only count mid-speech: a performer resting with closed lips between lines isn't saying "b".
+	if (Jaw > 0.06f)
+	{
+		LastJawActivityTime = Time;
+	}
+	const float InSpeech = (Time - LastJawActivityTime) < 0.5f ? 1.f : 0.f;
+
 	// P / B / M: lips heading together while the jaw is nearly shut.
-	const float ClosureScore = FMath::Clamp((Together - 0.2f) / 0.3f, 0.f, 1.f) * FMath::Clamp((0.3f - Jaw) / 0.2f, 0.f, 1.f);
+	const float ClosureScore = InSpeech * FMath::Clamp((Together - 0.2f) / 0.3f, 0.f, 1.f) * FMath::Clamp((0.3f - Jaw) / 0.2f, 0.f, 1.f);
 	if (ClosureScore > 0.5f)
 	{
 		ClosureHoldUntil = Time + Settings.ClosureHoldMs / 1000.f;
@@ -290,7 +297,7 @@ void FAnimNode_CinemafyFace::ApplyLipSync(const TMap<FName, float>& Raw, TMap<FN
 	Seal = FMath::FInterpTo(Seal, SealTarget, DeltaTime, SealTarget > Seal ? 40.f : 18.f);
 
 	// F / V: lower lip tucking under the teeth.
-	const float BiteScore = FMath::Clamp((Bite - 0.15f) / 0.3f, 0.f, 1.f);
+	const float BiteScore = InSpeech * FMath::Clamp((Bite - 0.15f) / 0.3f, 0.f, 1.f);
 	if (BiteScore > 0.5f)
 	{
 		TuckHoldUntil = Time + Settings.LabiodentalHoldMs / 1000.f;
