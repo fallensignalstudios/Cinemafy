@@ -32,7 +32,11 @@ public class CinemafyEditor : ModuleRules
 			"EditorFramework",
 			"LevelEditor",
 			"SequenceRecorder",
-			"DesktopPlatform"
+			"DesktopPlatform",
+			"MovieRenderPipelineCore",
+			"MovieRenderPipelineEditor",
+			"MovieRenderPipelineRenderPasses",
+			"ImageWrapper"
 		});
 	}
 }

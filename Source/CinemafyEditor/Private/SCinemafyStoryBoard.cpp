@@ -18,6 +18,8 @@
 #include "UObject/UObjectGlobals.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboButton.h"
+#include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/SWindow.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -57,6 +59,56 @@ namespace CinemafyStoryBoardUI
 			.Text(Label)
 			.ToolTipText(Tip)
 			.OnClicked_Lambda([OnClick]() { OnClick(); return FReply::Handled(); });
+	}
+
+	/** A small modal text box; empty if cancelled. */
+	FString AskText(const FText& Title, const FText& Hint)
+	{
+		FString Result;
+		TSharedPtr<SEditableTextBox> Box;
+		TSharedRef<SWindow> Window = SNew(SWindow)
+			.Title(Title)
+			.SizingRule(ESizingRule::Autosized)
+			.SupportsMaximize(false)
+			.SupportsMinimize(false);
+		TWeakPtr<SWindow> WeakWindow = Window;
+		Window->SetContent(
+			SNew(SBox).Padding(12.f).MinDesiredWidth(420.f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot().AutoHeight()
+				[
+					SAssignNew(Box, SEditableTextBox)
+					.HintText(Hint)
+					.OnTextCommitted_Lambda([&Result, WeakWindow](const FText& Text, ETextCommit::Type Type)
+					{
+						if (Type == ETextCommit::OnEnter)
+						{
+							Result = Text.ToString();
+							if (TSharedPtr<SWindow> Pinned = WeakWindow.Pin())
+							{
+								Pinned->RequestDestroyWindow();
+							}
+						}
+					})
+				]
+				+ SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(0.f, 8.f, 0.f, 0.f)
+				[
+					SNew(SButton)
+					.Text(NSLOCTEXT("CinemafyStoryBoard", "Ok", "OK"))
+					.OnClicked_Lambda([&Result, &Box, WeakWindow]()
+					{
+						Result = Box.IsValid() ? Box->GetText().ToString() : FString();
+						if (TSharedPtr<SWindow> Pinned = WeakWindow.Pin())
+						{
+							Pinned->RequestDestroyWindow();
+						}
+						return FReply::Handled();
+					})
+				]
+			]);
+		GEditor->EditorAddModalWindow(Window);
+		return Result;
 	}
 
 	ACinemafySceneDirector* FindDirector(const UCinemafyScriptProject* Project, const FString& SceneId)
@@ -212,6 +264,14 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 						GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Film);
 					}
 				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Dailies", "Dailies"), LOCTEXT("DailiesTip", "Render every recorded or directed scene with Movie Render Queue (720p frames) to Saved/Cinemafy/Dailies."),
+				WithProject([](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::RenderDailies(P, FString()); })) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Paperwork", "Paperwork"), LOCTEXT("PaperworkTip", "Voice-over scripts per actor, subtitles, a localization string table, shot lists and an HTML storyboard."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					const FString Folder = UCinemafyStoryLibrary::ExportPaperwork(P);
+					FPlatformProcess::ExploreFolder(*Folder);
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Checklist", "Checklist"), LOCTEXT("ChecklistTip", "Write the progress and continuity checklist and open it."),
 				WithProject([](UCinemafyScriptProject* P)
 				{
@@ -320,6 +380,23 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 	[
 		SNew(STextBlock).Text(FText::FromString(Meta))
 	];
+	const int32 OpenNotes = Scene.ReviewNotes.FilterByPredicate([](const FCinemafyReviewNote& Note) { return !Note.bResolved; }).Num();
+	if (OpenNotes > 0)
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::Format(LOCTEXT("OpenNotes", "{0} open review note(s)"), OpenNotes))
+			.ColorAndOpacity(FLinearColor(1.f, 0.8f, 0.3f))
+		];
+		for (const FCinemafyReviewNote& Note : Scene.ReviewNotes)
+		{
+			if (!Note.bResolved)
+			{
+				Tip += FString::Printf(TEXT("\nNote (%s): %s"), *Note.Author, *Note.Text);
+			}
+		}
+	}
 	if (Scene.Warnings.Num() > 0)
 	{
 		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
@@ -400,6 +477,17 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 				Entry(LOCTEXT("Continuity", "Dress the cast for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneContinuity(P, SceneId); });
 				Entry(LOCTEXT("NewDirector", "New Scene Director from the script"), [SceneId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, SceneId); });
 				Entry(LOCTEXT("ScratchScene", "Scratch voices for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::GenerateScratchVoices(P, SceneId, true); });
+				Entry(LOCTEXT("AddNote", "Add a review note..."), [SceneId](UCinemafyScriptProject* P)
+				{
+					const FString Text = CinemafyStoryBoardUI::AskText(LOCTEXT("AddNoteTitle", "Review note"), LOCTEXT("AddNoteHint", "What should change in this scene?"));
+					UCinemafyStoryLibrary::AddReviewNote(P, SceneId, Text);
+				});
+				Entry(LOCTEXT("RenderDaily", "Render a daily"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::RenderDailies(P, SceneId); });
+				Entry(LOCTEXT("Mood", "Set the mood (style, music, ambience)"), [SceneId](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, false)));
+				});
+				Entry(LOCTEXT("LightSet", "Light the set for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, true); });
 				Entry(LOCTEXT("NewTake", "New take (keep this one)"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::NewTake(P, SceneId); });
 				for (int32 Take = 0; Take < Takes.Num(); ++Take)
 				{

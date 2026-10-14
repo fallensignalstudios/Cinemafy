@@ -115,6 +115,29 @@ public:
 	/** Lays foley (Project Settings > Cinemafy > Foley Sounds) under a recorded take at its impacts, landings, draws and falls. */
 	static int32 BakeFoley(ULevelSequence* Sequence, const TArray<ACinemafyChoreography*>& Ensemble, float TakeStartSeconds);
 
+	// --- Dailies, review, paperwork ----------------------------------------------------------------------------------
+
+	/**
+	 * Renders dailies with Movie Render Queue (720p JPEG frames, in play-in-editor): one job per scene with a
+	 * sequence. SceneId empty = every scene that's been recorded or directed. Output goes to
+	 * Saved/Cinemafy/Dailies/<project>/<scene>. Returns the number of jobs queued.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static int32 RenderDailies(UCinemafyScriptProject* Project, const FString& SceneId);
+
+	/** Adds a review note to a scene (from you, now). AtSeconds = where in the scene (-1 = the whole scene). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static bool AddReviewNote(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Text, float AtSeconds = -1.f);
+
+	/**
+	 * Writes the production paperwork to Saved/Cinemafy/Paperwork/<project>: voice-over recording scripts per actor
+	 * (Markdown + CSV, with line ids as file names), subtitles (SRT, estimated or from audio), a localization string
+	 * table (CSV: Key, SourceString, Comment), shot lists from the level's directors (CSV), and an HTML storyboard
+	 * with a frame from each planned shot's camera. Returns the folder.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString ExportPaperwork(UCinemafyScriptProject* Project);
+
 	/** The actor playing a script character in a world: the cast entry's label, else a matching character label. */
 	static AActor* FindCastActor(const UCinemafyScriptProject* Project, const FString& ScriptName, UWorld* World);
 };

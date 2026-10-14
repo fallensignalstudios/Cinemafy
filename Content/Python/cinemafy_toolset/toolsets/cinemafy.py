@@ -865,6 +865,53 @@ class CinemafyTools(unreal.ToolsetDefinition):
         extras.populate()
         return extras
 
+    @toolset_registry.tool_call
+    @staticmethod
+    def render_dailies(project: unreal.CinemafyScriptProject, scene_id: str = '') -> str:
+        """Renders dailies with Movie Render Queue (720p JPEG frames, in play-in-editor), one job per scene sequence.
+        Note: replaces the jobs in the editor's Movie Render Queue.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: One scene, or empty for every recorded / directed scene.
+
+        Returns:
+            How many jobs were queued, and where the frames go.
+        """
+        jobs = unreal.CinemafyStoryLibrary.render_dailies(project, scene_id)
+        return '{} daily job(s) rendering to Saved/Cinemafy/Dailies.'.format(jobs)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def add_review_note(project: unreal.CinemafyScriptProject, scene_id: str, text: str, at_seconds: float = -1.0) -> bool:
+        """Adds a review note to a scene (shown on the Story Board and in the checklist until resolved).
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id.
+            text: The note.
+            at_seconds: Where in the scene, or -1 for the whole scene.
+
+        Returns:
+            True if the scene was found.
+        """
+        return unreal.CinemafyStoryLibrary.add_review_note(project, scene_id, text, at_seconds)
+
+    @toolset_registry.tool_call
+    @staticmethod
+    def export_paperwork(project: unreal.CinemafyScriptProject) -> str:
+        """Writes production paperwork: voice-over scripts per actor (Markdown + CSV, line ids as file names),
+        story subtitles (SRT), a localization String Table CSV, shot lists from the level's directors, an HTML
+        storyboard with a frame per planned shot, and the checklist.
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            The folder written to.
+        """
+        return unreal.CinemafyStoryLibrary.export_paperwork(project)
+
     # --- Edit (video-editor tools on the open sequence) ------------------------------------
 
     @toolset_registry.tool_call

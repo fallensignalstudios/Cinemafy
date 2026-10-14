@@ -1606,7 +1606,7 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 	};
 	for (const FCinemafyScriptScene* Scene : GetAllScenes())
 	{
-		if (Scene->Status != ECinemafySceneStatus::NotStarted || !Scene->Notes.IsEmpty() || !Scene->DirectorLabel.IsEmpty() || !Scene->Sequence.IsNull())
+		if (Scene->Status != ECinemafySceneStatus::NotStarted || !Scene->Notes.IsEmpty() || !Scene->DirectorLabel.IsEmpty() || !Scene->Sequence.IsNull() || Scene->ReviewNotes.Num() > 0)
 		{
 			Kept.Add(FKept{ KeyFor(*Scene), CinemafyScriptText::Normalize(Scene->Heading), *Scene });
 		}
@@ -1685,6 +1685,8 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 			Scene->MatchScore = Match->Scene.MatchScore;
 			Scene->Notes = Match->Scene.Notes;
 			Scene->Takes = Match->Scene.Takes;
+			Scene->ReviewNotes = Match->Scene.ReviewNotes;
+			Scene->DailiesFolder = Match->Scene.DailiesFolder;
 			++Carried;
 		}
 	}
@@ -1826,6 +1828,11 @@ FString UCinemafyScriptProject::BuildChecklist() const
 				for (const FString& Warning : Scene.Warnings)
 				{
 					Out.Add(FString::Printf(TEXT("  - WARNING: %s"), *Warning));
+				}
+				for (const FCinemafyReviewNote& Note : Scene.ReviewNotes)
+				{
+					Out.Add(FString::Printf(TEXT("  - [%s] Review (%s, %s%s): %s"), Note.bResolved ? TEXT("x") : TEXT(" "), *Note.Author, *Note.Date,
+						Note.AtSeconds >= 0.f ? *FString::Printf(TEXT(" at %.1fs"), Note.AtSeconds) : TEXT(""), *Note.Text));
 				}
 				if (!Scene.Notes.IsEmpty())
 				{

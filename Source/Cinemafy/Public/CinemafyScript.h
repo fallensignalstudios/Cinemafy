@@ -97,6 +97,29 @@ struct CINEMAFY_API FCinemafyContinuityFact
 	FString Evidence;
 };
 
+/** A review note on a scene (from dailies or a screening). */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyReviewNote
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Review")
+	FString Author;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Review")
+	FString Date;
+
+	/** Seconds into the scene it's about (-1 = the whole scene). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Review")
+	float AtSeconds = -1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Review", meta = (MultiLine = true))
+	FString Text;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Review")
+	bool bResolved = false;
+};
+
 /**
  * A choice at the end of a scene (games): "* Spare him -> 2.1.3 ~ spared_thane". Shown when its Require Flags
  * hold; picking it sets Set Flags and plays Target.
@@ -236,6 +259,14 @@ struct CINEMAFY_API FCinemafyScriptScene
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production", meta = (MultiLine = true))
 	FString Notes;
+
+	/** Notes from dailies and screenings; open ones show on the Story Board and in the checklist. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Production", meta = (TitleProperty = "{Author}: {Text}"))
+	TArray<FCinemafyReviewNote> ReviewNotes;
+
+	/** Rendered dailies for the current take (folder). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Production")
+	FString DailiesFolder;
 };
 
 /** A run of scenes that belong together (a sequence, a mission, a chapter of the game). */
