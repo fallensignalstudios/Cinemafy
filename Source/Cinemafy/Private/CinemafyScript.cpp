@@ -309,7 +309,7 @@ namespace CinemafyScriptText
 		return true;
 	}
 
-	/** Strips Fountain boneyard (/* */) and notes ([[ ]]). */
+	/** Strips Fountain boneyard (slash-star ... star-slash) and notes ([[ ]]). */
 	FString StripComments(const FString& Text)
 	{
 		FString Out;
@@ -513,7 +513,7 @@ namespace CinemafyScriptBreakdown
 {
 	using namespace CinemafyScriptText;
 
-	struct FScene
+	struct FParsedScene
 	{
 		FCinemafyScriptScene Data;
 		FString ActMark;
@@ -526,9 +526,9 @@ namespace CinemafyScriptBreakdown
 		float Seconds = 0.f;
 	};
 
-	struct FParse
+	struct FScriptParse
 	{
-		TArray<FScene> Scenes;
+		TArray<FParsedScene> Scenes;
 		FString Title;
 		int32 ActMarks = 0;
 		int32 ChapterMarks = 0;
@@ -539,9 +539,9 @@ namespace CinemafyScriptBreakdown
 		bool bPendingChapter = false;
 		bool bPendingHardBreak = false;
 
-		FScene& StartScene(const FString& Heading, const FString& Setting, const FString& Location, const FString& Time)
+		FParsedScene& StartScene(const FString& Heading, const FString& Setting, const FString& Location, const FString& Time)
 		{
-			FScene& Scene = Scenes.AddDefaulted_GetRef();
+			FParsedScene& Scene = Scenes.AddDefaulted_GetRef();
 			Scene.Data.Heading = Heading;
 			Scene.Data.Setting = Setting;
 			Scene.Data.Location = Location;
@@ -560,7 +560,7 @@ namespace CinemafyScriptBreakdown
 		}
 
 		/** Content with no heading yet (game scripts, or text before the first heading): an untitled scene. */
-		FScene& CurrentOrNew()
+		FParsedScene& CurrentOrNew()
 		{
 			if (Scenes.Num() == 0 || bPendingAct || bPendingChapter)
 			{
@@ -617,9 +617,9 @@ namespace CinemafyScriptBreakdown
 		}
 	}
 
-	FParse Parse(const FString& RawText)
+	FScriptParse Parse(const FString& RawText)
 	{
-		FParse P;
+		FScriptParse P;
 		FString Text = RawText;
 		if (Text.Contains(TEXT("<FinalDraft")) || (Text.StartsWith(TEXT("<?xml")) && Text.Contains(TEXT("<Paragraph"))))
 		{
@@ -860,7 +860,7 @@ namespace CinemafyScriptBreakdown
 		}
 
 		// Per-scene numbers.
-		for (FScene& Scene : P.Scenes)
+		for (FParsedScene& Scene : P.Scenes)
 		{
 			FCinemafyScriptScene& Data = Scene.Data;
 			int32 DialogueWords = 0, ActionWords = 0;
@@ -900,7 +900,7 @@ namespace CinemafyScriptBreakdown
 	}
 
 	/** Chooses the scene index closest to Target (0..1 through the running time) that's also a turn in the story. */
-	int32 PickBreak(const TArray<FScene>& Scenes, const TArray<float>& StartFraction, float Target, int32 MinIndex, int32 MaxIndex, FString& OutWhy)
+	int32 PickBreak(const TArray<FParsedScene>& Scenes, const TArray<float>& StartFraction, float Target, int32 MinIndex, int32 MaxIndex, FString& OutWhy)
 	{
 		TSet<FString> Seen;
 		TArray<bool> NewPlace;
@@ -916,7 +916,7 @@ namespace CinemafyScriptBreakdown
 		float BestScore = -BIG_NUMBER;
 		for (int32 Index = FMath::Max(MinIndex, 1); Index <= FMath::Min(MaxIndex, Scenes.Num() - 1); ++Index)
 		{
-			const FScene& Scene = Scenes[Index];
+			const FParsedScene& Scene = Scenes[Index];
 			const float Distance = FMath::Abs(StartFraction[Index] - Target);
 			float Score = -Distance * 12.f;
 			Score += Scene.bHardBreakBefore ? 3.f : 0.f;
@@ -970,10 +970,10 @@ namespace CinemafyScriptBreakdown
 TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString& ScriptText, bool bInferActs, int32 ScenesPerChapter, FString& OutTitle, FString& OutReport)
 {
 	using namespace CinemafyScriptBreakdown;
-	FParse P = Parse(ScriptText);
+	FScriptParse P = Parse(ScriptText);
 	OutTitle = P.Title;
 	TArray<FCinemafyScriptAct> Acts;
-	TArray<FScene>& Scenes = P.Scenes;
+	TArray<FParsedScene>& Scenes = P.Scenes;
 	if (Scenes.Num() == 0)
 	{
 		OutReport = TEXT("No scenes found. Scene headings (INT. / EXT.), \"SCENE\" markers or NAME: dialogue lines are what Cinemafy looks for.");
@@ -982,7 +982,7 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 
 	float Total = 0.f;
 	TArray<float> StartFraction;
-	for (const FScene& Scene : Scenes)
+	for (const FParsedScene& Scene : Scenes)
 	{
 		StartFraction.Add(Total);
 		Total += Scene.Seconds;
@@ -1075,7 +1075,7 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 			const int32 Target = FMath::Max(ScenesPerChapter, 2);
 			for (int32 Index = First + 1; Index < End; ++Index)
 			{
-				const FScene& Scene = Scenes[Index];
+				const FParsedScene& Scene = Scenes[Index];
 				const FString Place = Scene.Data.Location.ToUpper();
 				const bool bNewPlace = !Places.Contains(Place);
 				FString Why;
