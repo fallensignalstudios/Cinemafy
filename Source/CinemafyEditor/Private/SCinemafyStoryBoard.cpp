@@ -588,6 +588,10 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 						UCinemafyStoryLibrary::RenderDailies(P, SceneId);
 					}
 				});
+				Entry(LOCTEXT("DressSet", "Dress the set (placeholder props)"), [SceneId](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::DressSet(P, SceneId)));
+				});
 				Entry(LOCTEXT("FinalScene", "Final render (1080p)"), [SceneId](UCinemafyScriptProject* P) { CinemafyStoryBoardUI::RenderFinalAsked(P, SceneId, false); });
 				Entry(LOCTEXT("FinalScene4K", "Final render (4K)"), [SceneId](UCinemafyScriptProject* P) { CinemafyStoryBoardUI::RenderFinalAsked(P, SceneId, true); });
 				Entry(LOCTEXT("CheckScene", "Pre-flight check"), [SceneId](UCinemafyScriptProject* P)

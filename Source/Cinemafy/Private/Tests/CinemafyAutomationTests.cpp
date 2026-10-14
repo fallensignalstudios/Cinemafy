@@ -1343,6 +1343,29 @@ bool FCinemafyGoldenSampleTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Kade carries her pistol into the hangar"), Scenes[2]->CarriedIn.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Character == TEXT("KADE") && F.Fact.Contains(TEXT("pistol")); }));
 	TestNotNull(TEXT("She holsters it in the med bay"), Find(Staged[3], TEXT("KADE"), [](const FCinemafyStagedBeat& B) { return B.Prompt.Contains(TEXT("holster")); }));
 
+	// The art department's list: set pieces where things happen, props in hand, what's worn; not walls, bodies or the set itself.
+	TArray<FCinemafySetPiece> Dressing;
+	for (const FCinemafyScriptScene* Scene : Scenes)
+	{
+		for (const FCinemafySetPiece& Piece : UCinemafyPrevisLibrary::FindSetDressing(*Scene))
+		{
+			Dressing.Add(Piece);
+		}
+	}
+	auto Has = [&Dressing](const TCHAR* Name, ECinemafyDressingKind Kind)
+	{
+		return Dressing.ContainsByPredicate([Name, Kind](const FCinemafySetPiece& P) { return P.Name == Name && P.Kind == Kind; });
+	};
+	TestTrue(TEXT("Set piece: the lift"), Has(TEXT("lift"), ECinemafyDressingKind::SetPiece));
+	TestTrue(TEXT("Set piece: the cargo crate (vaulted)"), Has(TEXT("cargo crate"), ECinemafyDressingKind::SetPiece));
+	TestTrue(TEXT("Set piece: the weapons rack (taken from)"), Has(TEXT("weapons rack"), ECinemafyDressingKind::SetPiece));
+	TestTrue(TEXT("Set piece: the command chair (not 'empty')"), Has(TEXT("command chair"), ECinemafyDressingKind::SetPiece));
+	TestTrue(TEXT("Hand prop: the saber"), Has(TEXT("saber"), ECinemafyDressingKind::HandProp));
+	TestTrue(TEXT("Hand prop: Kade's pistol"), Dressing.ContainsByPredicate([](const FCinemafySetPiece& P) { return P.Name == TEXT("pistol") && P.UsedBy.Contains(TEXT("KADE")); }));
+	TestTrue(TEXT("Wardrobe: Thane's dress uniform"), Dressing.ContainsByPredicate([](const FCinemafySetPiece& P) { return P.Name == TEXT("dress uniform") && P.Kind == ECinemafyDressingKind::Wardrobe && P.UsedBy.Contains(TEXT("ADMIRAL THANE")); }));
+	TestFalse(TEXT("Not her side"), Dressing.ContainsByPredicate([](const FCinemafySetPiece& P) { return P.Name == TEXT("side"); }));
+	TestFalse(TEXT("Not the corridor (it's the set)"), Dressing.ContainsByPredicate([](const FCinemafySetPiece& P) { return P.Name == TEXT("corridor"); }));
+
 	// Every line reads as a delivery without surprises, and the parenthetical one is still a calm read.
 	for (const FCinemafyScriptScene* Scene : Scenes)
 	{

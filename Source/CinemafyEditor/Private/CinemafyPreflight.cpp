@@ -259,9 +259,23 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 				ECinemafyFix::PlaceMark, TEXT("start"), TEXT("Place a start mark")));
 		}
 	}
+	// Set pieces the script mentions that the level doesn't have yet: one fix dresses them all.
+	TArray<FString> Undressed;
+	for (const FCinemafySetPiece& Piece : UCinemafyPrevisLibrary::FindSetDressing(*Scene))
+	{
+		if (Piece.Kind == ECinemafyDressingKind::SetPiece && !PlaceExists(World, Piece.Name, Scene->Location))
+		{
+			Undressed.Add(Piece.Name);
+		}
+	}
+	if (Undressed.Num() > 0)
+	{
+		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("The script mentions set pieces the level doesn't have: %s."), *FString::Join(Undressed, TEXT(", "))),
+			ECinemafyFix::DressSet, FString(), TEXT("Dress the set")));
+	}
 	for (const FString& Place : Places)
 	{
-		if (!PlaceExists(World, Place, Scene->Location))
+		if (!PlaceExists(World, Place, Scene->Location) && !Undressed.Contains(Place))
 		{
 			Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("No mark or prop for \"%s\": whoever goes there will stay put."), *Place),
 				ECinemafyFix::PlaceMark, Place, FString::Printf(TEXT("Place \"%s\""), *Place)));
@@ -467,6 +481,9 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 		return HasNavMeshBounds(World) || AddNavMesh(World);
 	case ECinemafyFix::ScratchVoices:
 		return UCinemafyStoryLibrary::GenerateScratchVoices(Project, Check.SceneId, false) > 0;
+	case ECinemafyFix::DressSet:
+		UCinemafyStoryLibrary::DressSet(Project, Scene ? Scene->Id : Check.FixArg);
+		return true;
 	case ECinemafyFix::UpdateChanged:
 		UCinemafyStoryLibrary::UpdateChangedScenes(Project);
 		return true;

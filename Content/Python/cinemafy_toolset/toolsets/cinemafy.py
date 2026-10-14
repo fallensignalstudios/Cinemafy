@@ -902,6 +902,23 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def dress_set(project: unreal.CinemafyScriptProject, scene_or_location: str) -> str:
+        """Dresses a set from the script: every set piece its scenes mention (the console, the cargo crate, the
+        weapons rack) that isn't in the level yet is placed, in front of the mark with its name or in a row in front
+        of the camera. Set pieces with a Mesh on the set's Dressing list use it; the rest get a placeholder block of a
+        believable size, labelled so Previs finds it. Also lists hand props and wardrobe to source.
+
+        Args:
+            project: The Script Project asset.
+            scene_or_location: A scene id ("1.2.3"), or a location as the script writes it ("HANGAR DECK").
+
+        Returns:
+            What was placed, what was already there, and the hand props and wardrobe the set's scenes need.
+        """
+        return unreal.CinemafyStoryLibrary.dress_set(project, scene_or_location)
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

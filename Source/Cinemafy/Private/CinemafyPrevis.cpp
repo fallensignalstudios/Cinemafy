@@ -462,3 +462,248 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 	}
 	return Beats;
 }
+
+namespace CinemafyDressing
+{
+	using namespace CinemafyStaging;
+
+	bool IsPlacePreposition(const FString& Word)
+	{
+		static const TSet<FString> Set = { TEXT("to"), TEXT("toward"), TEXT("towards"), TEXT("into"), TEXT("onto"), TEXT("over"), TEXT("across"),
+			TEXT("at"), TEXT("past"), TEXT("behind"), TEXT("beside"), TEXT("near"), TEXT("by"), TEXT("on"), TEXT("off"), TEXT("around"), TEXT("from"),
+			TEXT("against"), TEXT("under"), TEXT("beneath"), TEXT("inside"), TEXT("atop"), TEXT("upon") };
+		return Set.Contains(Word);
+	}
+
+	/** Not dressing: architecture, bodies, people, light and air. */
+	bool IsGeneric(const FString& Noun)
+	{
+		static const TSet<FString> Set = { TEXT("wall"), TEXT("walls"), TEXT("floor"), TEXT("ground"), TEXT("ceiling"), TEXT("room"), TEXT("air"),
+			TEXT("side"), TEXT("way"), TEXT("corner"), TEXT("hand"), TEXT("hands"), TEXT("head"), TEXT("face"), TEXT("eyes"), TEXT("eye"), TEXT("back"),
+			TEXT("arm"), TEXT("arms"), TEXT("leg"), TEXT("legs"), TEXT("feet"), TEXT("foot"), TEXT("shoulder"), TEXT("chest"), TEXT("body"), TEXT("mouth"),
+			TEXT("lips"), TEXT("breath"), TEXT("moment"), TEXT("beat"), TEXT("silence"), TEXT("light"), TEXT("lights"), TEXT("shadow"), TEXT("shadows"),
+			TEXT("darkness"), TEXT("distance"), TEXT("edge"), TEXT("middle"), TEXT("center"), TEXT("centre"), TEXT("end"), TEXT("top"), TEXT("bottom"),
+			TEXT("front"), TEXT("rear"), TEXT("him"), TEXT("her"), TEXT("them"), TEXT("it"), TEXT("himself"), TEXT("herself"), TEXT("themselves"),
+			TEXT("everyone"), TEXT("everybody"), TEXT("someone"), TEXT("something"), TEXT("nothing"), TEXT("view"), TEXT("sight"), TEXT("place"),
+			TEXT("spot"), TEXT("area"), TEXT("space"), TEXT("cover"), TEXT("gap"), TEXT("tears"), TEXT("pain"), TEXT("trigger"), TEXT("grip"),
+			TEXT("hilt"), TEXT("knees"), TEXT("knee"), TEXT("feet"), TEXT("sky"), TEXT("horizon"), TEXT("crowd"), TEXT("one"), TEXT("other"),
+			TEXT("others"), TEXT("us"), TEXT("me"), TEXT("you"), TEXT("this"), TEXT("that"), TEXT("there"), TEXT("here"), TEXT("door"), TEXT("doorway") };
+		return Noun.IsEmpty() || Set.Contains(Noun);
+	}
+
+	bool IsAdjective(const FString& Word)
+	{
+		static const TSet<FString> Set = { TEXT("empty"), TEXT("old"), TEXT("new"), TEXT("broken"), TEXT("small"), TEXT("large"), TEXT("big"),
+			TEXT("huge"), TEXT("tiny"), TEXT("heavy"), TEXT("open"), TEXT("closed"), TEXT("dark"), TEXT("bright"), TEXT("nearby"), TEXT("metal"),
+			TEXT("wooden"), TEXT("steel"), TEXT("rusty"), TEXT("dusty"), TEXT("abandoned"), TEXT("battered"), TEXT("ancient"), TEXT("makeshift"),
+			TEXT("ornate"), TEXT("damaged"), TEXT("smashed"), TEXT("overturned"), TEXT("long"), TEXT("short"), TEXT("tall"), TEXT("low"), TEXT("high"),
+			TEXT("massive"), TEXT("giant"), TEXT("little"), TEXT("same"), TEXT("other"), TEXT("last"), TEXT("first"), TEXT("next"), TEXT("lone") };
+		return Set.Contains(Word);
+	}
+
+	bool IsHandVerb(const FString& Word)
+	{
+		static const TSet<FString> Set = { TEXT("picks"), TEXT("grabs"), TEXT("holds"), TEXT("takes"), TEXT("carries"), TEXT("pockets"), TEXT("drops"),
+			TEXT("draws"), TEXT("unholsters"), TEXT("holsters"), TEXT("sheathes"), TEXT("unsheathes"), TEXT("raises"), TEXT("brandishes"),
+			TEXT("clutches"), TEXT("tosses"), TEXT("throws"), TEXT("catches"), TEXT("loads"), TEXT("reloads"), TEXT("pulls"), TEXT("lifts"),
+			TEXT("snatches"), TEXT("wields"), TEXT("readies"), TEXT("hands"), TEXT("offers"), TEXT("reads"), TEXT("checks") };
+		return Set.Contains(Word);
+	}
+
+	bool IsWearVerb(const FString& Word)
+	{
+		return Word == TEXT("wears") || Word == TEXT("dons") || Word == TEXT("sports") || Word == TEXT("wearing");
+	}
+
+	bool IsTraverseVerb(const FString& Word)
+	{
+		static const TSet<FString> Set = { TEXT("vaults"), TEXT("hurdles"), TEXT("climbs"), TEXT("mantles"), TEXT("clambers"), TEXT("scrambles"),
+			TEXT("jumps"), TEXT("leaps") };
+		return Set.Contains(Word);
+	}
+
+	/** "empty command chair" -> "command chair"; nothing if it's not a thing. */
+	FString Thing(const FString& Phrase)
+	{
+		TArray<FString> Words;
+		Phrase.ParseIntoArrayWS(Words);
+		while (Words.Num() > 1 && IsAdjective(Words[0]))
+		{
+			Words.RemoveAt(0);
+		}
+		if (Words.Num() == 0)
+		{
+			return FString();
+		}
+		if (Words.Last().EndsWith(TEXT("'s")))
+		{
+			return FString(); // "Thane's" is a person, not a thing.
+		}
+		if (IsGeneric(Words.Last()) || (Words.Num() == 1 && IsAdjective(Words[0])))
+		{
+			return FString();
+		}
+		return FString::Join(Words, TEXT(" "));
+	}
+
+	/** Skips "up", "out" and determiners after a verb: "picks up a saber" -> the index of "saber". */
+	int32 ObjectStart(const TArray<FString>& Words, int32 Index)
+	{
+		while (Index < Words.Num() && (Words[Index] == TEXT("up") || Words[Index] == TEXT("out") || Words[Index] == TEXT("off")
+			|| Words[Index] == TEXT("down") || Words[Index] == TEXT("over") || Words[Index] == TEXT("onto") || IsDeterminer(Words[Index])))
+		{
+			++Index;
+		}
+		return Index;
+	}
+}
+
+TArray<FCinemafySetPiece> UCinemafyPrevisLibrary::FindSetDressing(const FCinemafyScriptScene& Scene)
+{
+	using namespace CinemafyDressing;
+	TArray<FCinemafySetPiece> Found;
+
+	TArray<FString> Names = Scene.Characters;
+	for (const FCinemafyScriptLine& Line : Scene.Lines)
+	{
+		if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+		{
+			Names.AddUnique(Line.Speaker);
+		}
+	}
+	FCastAliases Aliases;
+	Aliases.Build(Names);
+	const FString Location = Normalize(Scene.Location);
+	TArray<FString> LocationWords;
+	Location.ParseIntoArrayWS(LocationWords);
+
+	auto Add = [&](const FString& Name, ECinemafyDressingKind Kind, const FString& Who, const FString& Source)
+	{
+		if (Name.IsEmpty() || Location.Contains(Name) || LocationWords.Contains(Name))
+		{
+			return;
+		}
+		FCinemafySetPiece* Piece = Found.FindByPredicate([&Name](const FCinemafySetPiece& P) { return P.Name == Name; });
+		if (!Piece)
+		{
+			Piece = &Found.AddDefaulted_GetRef();
+			Piece->Name = Name;
+			Piece->Kind = Kind;
+			Piece->Source = Source;
+			Piece->Scenes.Add(Scene.Id);
+		}
+		if (!Who.IsEmpty() && Kind != ECinemafyDressingKind::SetPiece)
+		{
+			Piece->UsedBy.AddUnique(Who);
+		}
+	};
+
+	FString LastNamed;
+	for (const FCinemafyScriptLine& Line : Scene.Lines)
+	{
+		if (Line.Kind != ECinemafyScriptLineKind::Action)
+		{
+			continue;
+		}
+		FString Subject;
+		for (const FString& Clause : Clauses(Line.Text))
+		{
+			TArray<FString> Words;
+			Normalize(Clause).ParseIntoArrayWS(Words);
+			if (Words.Num() == 0)
+			{
+				continue;
+			}
+			// Who's doing it: the first character named, a pronoun, or the last clause's subject.
+			FString ClauseSubject;
+			for (int32 Index = 0; Index < Words.Num(); ++Index)
+			{
+				int32 Length = 1;
+				const FString Named = Aliases.At(Words, Index, Length);
+				if (!Named.IsEmpty())
+				{
+					ClauseSubject = ClauseSubject.IsEmpty() ? Named : ClauseSubject;
+					LastNamed = Named;
+					Index += Length - 1;
+				}
+			}
+			if (ClauseSubject.IsEmpty())
+			{
+				const bool bPronoun = Words[0] == TEXT("she") || Words[0] == TEXT("he") || Words[0] == TEXT("they");
+				ClauseSubject = bPronoun ? LastNamed : Subject;
+			}
+			Subject = ClauseSubject;
+
+			for (int32 Index = 0; Index < Words.Num(); ++Index)
+			{
+				const FString& Word = Words[Index];
+				const bool bHand = IsHandVerb(Word);
+				const bool bWear = IsWearVerb(Word);
+				const bool bOver = IsTraverseVerb(Word);
+				const bool bAt = Index > 0 && IsPlacePreposition(Word);
+				if (!bHand && !bWear && !bOver && !bAt)
+				{
+					continue;
+				}
+				const int32 Start = ObjectStart(Words, Index + 1);
+				int32 Length = 1;
+				if (Start >= Words.Num() || !Aliases.At(Words, Start, Length).IsEmpty())
+				{
+					continue; // A person, not a thing.
+				}
+				const FString Name = Thing(NounPhrase(Words, Start));
+				if (Name.IsEmpty())
+				{
+					continue;
+				}
+				if (bHand)
+				{
+					Add(Name, ECinemafyDressingKind::HandProp, Subject, Clause);
+				}
+				else if (bWear)
+				{
+					Add(Name, ECinemafyDressingKind::Wardrobe, Subject, Clause);
+				}
+				else
+				{
+					Add(Name, ECinemafyDressingKind::SetPiece, Subject, Clause);
+				}
+			}
+
+			// Production drafts capitalize props: "She grabs the DATAPAD."
+			TArray<FString> Raw;
+			Clause.ParseIntoArrayWS(Raw);
+			for (int32 Index = 1; Index < Raw.Num(); ++Index)
+			{
+				if (!IsDeterminer(Normalize(Raw[Index - 1])))
+				{
+					continue;
+				}
+				TArray<FString> Caps;
+				for (int32 Run = Index; Run < Raw.Num() && Caps.Num() < 3; ++Run)
+				{
+					FString Token = Raw[Run];
+					Token.TrimCharInline(TEXT('.'), nullptr);
+					Token.TrimCharInline(TEXT(','), nullptr);
+					Token.TrimCharInline(TEXT('!'), nullptr);
+					bool bCaps = Token.Len() >= 2;
+					for (const TCHAR C : Token)
+					{
+						bCaps &= FChar::IsUpper(C) || C == TEXT('-');
+					}
+					if (!bCaps)
+					{
+						break;
+					}
+					Caps.Add(Token.ToLower());
+				}
+				int32 Length = 1;
+				if (Caps.Num() > 0 && Aliases.At(Caps, 0, Length).IsEmpty())
+				{
+					Add(Thing(FString::Join(Caps, TEXT(" "))), ECinemafyDressingKind::HandProp, Subject, Clause);
+				}
+			}
+		}
+	}
+	return Found;
+}

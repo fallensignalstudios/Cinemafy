@@ -27,7 +27,8 @@ enum class ECinemafyFix : uint8
 	AddNavMesh             UMETA(DisplayName = "Add a Nav Mesh"),
 	ScratchVoices          UMETA(DisplayName = "Scratch Voices"),
 	UpdateChanged          UMETA(DisplayName = "Update Changed Scenes"),
-	CastTemplateCharacter  UMETA(DisplayName = "Cast a Template Character")
+	CastTemplateCharacter  UMETA(DisplayName = "Cast a Template Character"),
+	DressSet               UMETA(DisplayName = "Dress the Set")
 };
 
 /** One thing the pre-flight check found, and how to fix it. */

@@ -35,6 +35,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static ACinemafyMark* PlaceMark(const FString& MarkName, const FString& SetName);
 
+	/**
+	 * Dresses a set from the script: every set piece its scenes mention (the console, the cargo crate, the weapons
+	 * rack) that isn't in the level yet goes in, in front of the mark with its name or in a row in front of the camera.
+	 * Pieces with a Mesh on the set's Dressing list use it; the rest get a placeholder block of a believable size,
+	 * labelled with its name so Previs finds it. SceneIdOrLocation: a scene id, or a location as the script writes it.
+	 * Returns a report (with the hand props and wardrobe to source).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString DressSet(UCinemafyScriptProject* Project, const FString& SceneIdOrLocation);
+
 	/** Puts each cast member in the scene in the state the script says they arrive in (props, injuries, costume). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 ApplySceneContinuity(UCinemafyScriptProject* Project, const FString& SceneId);

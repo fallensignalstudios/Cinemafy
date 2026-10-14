@@ -1,5 +1,6 @@
 #include "CinemafyStoryLibrary.h"
 #include "CinemafyModule.h"
+#include "CinemafyPrevis.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafyTypes.h"
 #include "CineCameraActor.h"
@@ -367,6 +368,79 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 		const FString Name = FPaths::MakeValidFileName(Pair.Key).Replace(TEXT(" "), TEXT("_"));
 		FFileHelper::SaveStringToFile(FString::Join(Pair.Value, TEXT("\n")), *(Folder / FString::Printf(TEXT("VO_%s.md"), *Name)), FFileHelper::EEncodingOptions::ForceUTF8);
 		FFileHelper::SaveStringToFile(FString::Join(BoothCsv[Pair.Key], TEXT("\n")), *(Folder / FString::Printf(TEXT("VO_%s.csv"), *Name)), FFileHelper::EEncodingOptions::ForceUTF8);
+	}
+
+	// Props, set dressing and wardrobe, set by set: what the art department builds, sources and fits.
+	{
+		struct FEntry { FCinemafySetPiece Piece; FString Location; };
+		TArray<FEntry> Entries;
+		for (const FCinemafyScriptScene* Scene : Scenes)
+		{
+			if (Scene->Status == ECinemafySceneStatus::Cut)
+			{
+				continue;
+			}
+			for (const FCinemafySetPiece& Found : UCinemafyPrevisLibrary::FindSetDressing(*Scene))
+			{
+				// Hand props and wardrobe travel with the character; set pieces belong to their set.
+				const FString Where = Found.Kind == ECinemafyDressingKind::SetPiece ? Scene->Location : FString();
+				FEntry* Entry = Entries.FindByPredicate([&Found, &Where](const FEntry& E) { return E.Piece.Name == Found.Name && E.Location == Where && E.Piece.Kind == Found.Kind; });
+				if (!Entry)
+				{
+					Entry = &Entries.Add_GetRef(FEntry{ Found, Where });
+				}
+				else
+				{
+					Entry->Piece.Scenes.AddUnique(Scene->Id);
+					for (const FString& Who : Found.UsedBy)
+					{
+						Entry->Piece.UsedBy.AddUnique(Who);
+					}
+				}
+			}
+		}
+		TArray<FString> Md;
+		TArray<FString> Rows;
+		Md.Add(FString::Printf(TEXT("# %s: props, set dressing and wardrobe\n"), *Title));
+		Rows.Add(TEXT("Kind,Item,Set,UsedBy,Scenes,Mesh,FirstMention"));
+		const UEnum* Kinds = StaticEnum<ECinemafyDressingKind>();
+		for (const ECinemafyDressingKind Kind : { ECinemafyDressingKind::SetPiece, ECinemafyDressingKind::HandProp, ECinemafyDressingKind::Wardrobe })
+		{
+			const FString KindName = Kinds->GetDisplayNameTextByValue(static_cast<int64>(Kind)).ToString();
+			Md.Add(FString::Printf(TEXT("\n## %ss\n"), *KindName));
+			Md.Add(Kind == ECinemafyDressingKind::SetPiece ? TEXT("| Set | Item | Scenes | Mesh | First mention |") : TEXT("| Item | Who | Scenes | First mention |"));
+			Md.Add(Kind == ECinemafyDressingKind::SetPiece ? TEXT("| --- | --- | --- | --- | --- |") : TEXT("| --- | --- | --- | --- |"));
+			int32 Count = 0;
+			for (const FEntry& Entry : Entries)
+			{
+				if (Entry.Piece.Kind != Kind)
+				{
+					continue;
+				}
+				++Count;
+				FString Mesh;
+				if (const FCinemafySet* Set = Project->FindSet(Entry.Location))
+				{
+					if (const FCinemafySetPiece* Known = Set->Dressing.FindByPredicate([&Entry](const FCinemafySetPiece& P) { return P.Name.Equals(Entry.Piece.Name, ESearchCase::IgnoreCase); }))
+					{
+						Mesh = Known->Mesh.IsNull() ? FString() : Known->Mesh.GetAssetName();
+					}
+				}
+				const FString Scenes2 = FString::Join(Entry.Piece.Scenes, TEXT(" "));
+				const FString Who = FString::Join(Entry.Piece.UsedBy, TEXT(", "));
+				const FString Source = Entry.Piece.Source.Replace(TEXT("|"), TEXT("/"));
+				Md.Add(Kind == ECinemafyDressingKind::SetPiece
+					? FString::Printf(TEXT("| %s | %s | %s | %s | %s |"), *Entry.Location, *Entry.Piece.Name, *Scenes2, Mesh.IsEmpty() ? TEXT("placeholder") : *Mesh, *Source)
+					: FString::Printf(TEXT("| %s | %s | %s | %s |"), *Entry.Piece.Name, *Who, *Scenes2, *Source));
+				Rows.Add(FString::Printf(TEXT("%s,%s,%s,%s,%s,%s,%s"), *Csv(KindName), *Csv(Entry.Piece.Name), *Csv(Entry.Location), *Csv(Who), *Csv(Scenes2), *Csv(Mesh), *Csv(Entry.Piece.Source)));
+			}
+			if (Count == 0)
+			{
+				Md.Add(TEXT("| (none found) |"));
+			}
+		}
+		FFileHelper::SaveStringToFile(FString::Join(Md, TEXT("\n")), *(Folder / TEXT("Props_and_Dressing.md")), FFileHelper::EEncodingOptions::ForceUTF8);
+		FFileHelper::SaveStringToFile(FString::Join(Rows, TEXT("\n")), *(Folder / TEXT("Props_and_Dressing.csv")), FFileHelper::EEncodingOptions::ForceUTF8);
 	}
 
 	// 2) Subtitles for the whole story, scene after scene (timed by audio where there is some, else estimated).

@@ -165,6 +165,39 @@ int32 UCinemafyStoryLibrary::BuildCastAndSets(UCinemafyScriptProject* Project)
 			Set->Level = World;
 		}
 	}
+
+	// What each set needs dressing with, from its scenes' action (art's meshes and choices are kept).
+	for (FCinemafySet& Set : Project->Sets)
+	{
+		for (FCinemafySetPiece& Piece : Set.Dressing)
+		{
+			Piece.Scenes.Reset();
+			Piece.UsedBy.Reset();
+		}
+	}
+	for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		FCinemafySet* Set = Project->Sets.FindByPredicate([Scene](const FCinemafySet& S) { return S.ScriptLocation.Equals(Scene->Location, ESearchCase::IgnoreCase); });
+		if (!Set || Scene->Status == ECinemafySceneStatus::Cut)
+		{
+			continue;
+		}
+		for (const FCinemafySetPiece& Found : UCinemafyPrevisLibrary::FindSetDressing(*Scene))
+		{
+			FCinemafySetPiece* Piece = Set->Dressing.FindByPredicate([&Found](const FCinemafySetPiece& P) { return P.Name.Equals(Found.Name, ESearchCase::IgnoreCase); });
+			if (!Piece)
+			{
+				Piece = &Set->Dressing.Add_GetRef(Found);
+				Piece->Scenes.Reset();
+				Piece->UsedBy.Reset();
+			}
+			Piece->Scenes.AddUnique(Scene->Id);
+			for (const FString& Who : Found.UsedBy)
+			{
+				Piece->UsedBy.AddUnique(Who);
+			}
+		}
+	}
 	Project->MarkPackageDirty();
 	return Added;
 }
@@ -420,7 +453,16 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 				const FString Label = It->GetActorLabel().ToLower().Replace(TEXT("_"), TEXT(" "));
 				if (*It != Performer && !It->IsA<ACinemafyChoreography>() && (Label.Contains(Wanted) || (Wanted.Len() > 4 && Wanted.Contains(Label) && Label.Len() >= 4)))
 				{
-					return It->GetActorLocation();
+					if (Beat.Prompt == TEXT("vault") || Beat.Prompt == TEXT("climb") || Beat.Prompt == TEXT("jump"))
+					{
+						return It->GetActorLocation(); // Over it: the traversal plans its own line-up.
+					}
+					// Up to it, not into it: the near edge on their side, on the floor.
+					FVector Center, Extent;
+					It->GetActorBounds(true, Center, Extent);
+					FVector Side = (Performer->GetActorLocation() - Center).GetSafeNormal2D();
+					Side = Side.IsNearlyZero() ? FVector::ForwardVector : Side;
+					return FVector(Center.X, Center.Y, Center.Z - Extent.Z) + Side * (FMath::Max(Extent.X, Extent.Y) + 60.f);
 				}
 			}
 			bOutResolved = false;
