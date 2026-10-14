@@ -77,15 +77,40 @@ TArray<FString> UCinemafySubtitleSubsystem::SplitIntoChunks(const FString& Text,
 		return { Clean };
 	}
 
-	// Break into the smallest natural pieces: sentences, then clauses, then words.
-	TArray<FString> Pieces;
+	// Each sentence becomes its own chunk(s); only long sentences break further (clauses, then words).
+	struct FSentenceChunks { TArray<FString> Chunks; bool bWhole = true; };
+	auto Pack = [MaxCharacters](const TArray<FString>& Pieces)
+	{
+		TArray<FString> Packed;
+		FString Chunk;
+		for (const FString& Piece : Pieces)
+		{
+			if (!Chunk.IsEmpty() && Chunk.Len() + 1 + Piece.Len() > MaxCharacters)
+			{
+				Packed.Add(Chunk);
+				Chunk.Reset();
+			}
+			Chunk += Chunk.IsEmpty() ? Piece : TEXT(" ") + Piece;
+		}
+		if (!Chunk.IsEmpty())
+		{
+			Packed.Add(Chunk);
+		}
+		return Packed;
+	};
+
+	TArray<FSentenceChunks> Sentences;
 	for (const FString& Sentence : SplitAfter(Clean, TEXT(".!?\u2026\u3002\uFF01\uFF1F")))
 	{
+		FSentenceChunks& Entry = Sentences.AddDefaulted_GetRef();
 		if (Sentence.Len() <= MaxCharacters)
 		{
-			Pieces.Add(Sentence);
+			Entry.Chunks.Add(Sentence);
 			continue;
 		}
+
+		Entry.bWhole = false;
+		TArray<FString> Pieces;
 		for (const FString& Clause : SplitAfter(Sentence, TEXT(",;:\u2014\u3001\uFF0C")))
 		{
 			if (Clause.Len() <= MaxCharacters)
@@ -104,38 +129,38 @@ TArray<FString> UCinemafySubtitleSubsystem::SplitIntoChunks(const FString& Text,
 				}
 				continue;
 			}
-			FString Current;
-			for (const FString& Word : Words)
-			{
-				if (!Current.IsEmpty() && Current.Len() + 1 + Word.Len() > MaxCharacters)
-				{
-					Pieces.Add(Current);
-					Current.Reset();
-				}
-				Current += Current.IsEmpty() ? Word : TEXT(" ") + Word;
-			}
-			if (!Current.IsEmpty())
-			{
-				Pieces.Add(Current);
-			}
+			Pieces.Append(Pack(Words));
 		}
+		Entry.Chunks = Pack(Pieces);
 	}
 
-	// Pack the pieces back into chunks as full as possible.
+	// Short whole sentences can share a chunk; split sentences keep their own.
 	TArray<FString> Result;
-	FString Chunk;
-	for (const FString& Piece : Pieces)
+	FString Shared;
+	for (const FSentenceChunks& Entry : Sentences)
 	{
-		if (!Chunk.IsEmpty() && Chunk.Len() + 1 + Piece.Len() > MaxCharacters)
+		if (Entry.bWhole && (Shared.IsEmpty() || Shared.Len() + 1 + Entry.Chunks[0].Len() <= MaxCharacters))
 		{
-			Result.Add(Chunk);
-			Chunk.Reset();
+			Shared += Shared.IsEmpty() ? Entry.Chunks[0] : TEXT(" ") + Entry.Chunks[0];
+			continue;
 		}
-		Chunk += Chunk.IsEmpty() ? Piece : TEXT(" ") + Piece;
+		if (!Shared.IsEmpty())
+		{
+			Result.Add(Shared);
+			Shared.Reset();
+		}
+		if (Entry.bWhole)
+		{
+			Shared = Entry.Chunks[0];
+		}
+		else
+		{
+			Result.Append(Entry.Chunks);
+		}
 	}
-	if (!Chunk.IsEmpty())
+	if (!Shared.IsEmpty())
 	{
-		Result.Add(Chunk);
+		Result.Add(Shared);
 	}
 	return Result;
 }
