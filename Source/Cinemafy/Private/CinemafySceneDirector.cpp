@@ -267,7 +267,7 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	{
 		Move->Move = Shot.Move;
 		Move->Distance = Shot.MoveDistance;
-		Move->Play(Shot.Duration);
+		Move->Play(FMath::Max(Shot.MoveEnd - Shot.MoveStart, 0.2f), Shot.MoveStart);
 	}
 	else
 	{

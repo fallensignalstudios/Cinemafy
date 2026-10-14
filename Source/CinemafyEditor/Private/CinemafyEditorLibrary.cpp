@@ -764,10 +764,29 @@ namespace
 		}
 
 		// Linear keys: the component's own easing (operator settle) shapes the move.
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
 		for (const FCameraShotWindow& Window : Windows)
 		{
 			Channel->AddLinearKey(Window.Start, 0.f);
-			Channel->AddLinearKey(Window.End, Window.Shot->bMove ? 1.f : 0.f);
+			if (Window.Shot->bMove)
+			{
+				// Hold, then travel across the move's window (timed to land on the emphasis when there is one).
+				const FFrameNumber MoveStart = Window.Start + TickResolution.AsFrameNumber(Window.Shot->MoveStart);
+				const FFrameNumber MoveEnd = FMath::Min(Window.End, Window.Start + TickResolution.AsFrameNumber(FMath::Max(Window.Shot->MoveEnd, Window.Shot->MoveStart + 0.2f)));
+				if (MoveStart > Window.Start)
+				{
+					Channel->AddLinearKey(MoveStart, 0.f);
+				}
+				Channel->AddLinearKey(MoveEnd, 1.f);
+				if (MoveEnd < Window.End)
+				{
+					Channel->AddLinearKey(Window.End, 1.f);
+				}
+			}
+			else
+			{
+				Channel->AddLinearKey(Window.End, 0.f);
+			}
 		}
 	}
 
@@ -1374,6 +1393,55 @@ FCinemafyAudioAnalysis UCinemafyEditorLibrary::AnalyzeDialogueSound(USoundWave* 
 			Valley = V;
 		}
 	}
+	// Pauses: runs of 120 ms+ below the speech threshold, with talking on both sides.
+	{
+		int32 RunStart = -1;
+		bool bSpokeBefore = false;
+		for (int32 Index = 0; Index < WindowDb.Num(); ++Index)
+		{
+			const bool bSilent = WindowDb[Index] <= SpeechThreshold;
+			if (bSilent && RunStart < 0 && bSpokeBefore)
+			{
+				RunStart = Index;
+			}
+			else if (!bSilent)
+			{
+				if (RunStart >= 0 && Index - RunStart >= 6)
+				{
+					Result.PauseTimes.Add((RunStart + Index) * 0.5f * 0.02f);
+				}
+				RunStart = -1;
+				bSpokeBefore = true;
+			}
+		}
+	}
+
+	// Emphasis: the loudest bursts, clearly above the line's average, loudest first.
+	{
+		TArray<TPair<float, float>> Peaks; // (dB, time)
+		for (int32 Index = 2; Index < WindowDb.Num() - 2; ++Index)
+		{
+			const float V = WindowDb[Index];
+			if (V >= WindowDb[Index - 1] && V >= WindowDb[Index + 1] && V >= WindowDb[Index - 2] && V >= WindowDb[Index + 2] && V > Result.LoudnessDb + 4.f)
+			{
+				Peaks.Emplace(V, Index * 0.02f);
+			}
+		}
+		Peaks.Sort([](const TPair<float, float>& A, const TPair<float, float>& B) { return A.Key > B.Key; });
+		for (const TPair<float, float>& Peak : Peaks)
+		{
+			// Keep distinct moments, not neighbouring syllables of the same word.
+			if (!Result.EmphasisTimes.ContainsByPredicate([&Peak](float T) { return FMath::Abs(T - Peak.Value) < 0.4f; }))
+			{
+				Result.EmphasisTimes.Add(Peak.Value);
+			}
+			if (Result.EmphasisTimes.Num() >= 3)
+			{
+				break;
+			}
+		}
+	}
+
 	const float SpeechSeconds = SpeechDb.Num() * 0.02f;
 	Result.SyllablesPerSecond = SpeechSeconds > 0.f ? Bursts / SpeechSeconds : 0.f;
 	Result.bValid = true;

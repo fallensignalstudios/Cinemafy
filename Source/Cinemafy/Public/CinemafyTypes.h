@@ -559,6 +559,14 @@ struct FCinemafyAudioAnalysis
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
 	float Duration = 0.f;
+
+	/** Breaths and pauses inside the line (seconds from its start): where editors hide cuts. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	TArray<float> PauseTimes;
+
+	/** The most stressed moments (seconds from its start), loudest first: where camera moves should land. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Audio")
+	TArray<float> EmphasisTimes;
 };
 
 /** One line of dialogue in a scene script. */
@@ -664,6 +672,13 @@ struct FCinemafyPlannedShot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	float MoveDistance = 0.f;
+
+	/** When the move starts and lands, in seconds from the start of the shot (lands on emphasis when known). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float MoveStart = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float MoveEnd = 0.f;
 
 	/** Set the speaker's emotion as this shot starts (first shot of a line). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

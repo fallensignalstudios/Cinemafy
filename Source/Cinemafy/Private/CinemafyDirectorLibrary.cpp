@@ -270,6 +270,25 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		{
 			Length = Remaining;
 		}
+		else
+		{
+			// Cut on the breath: slide the cut to the nearest pause in the delivery, if one is close.
+			const float SegmentStart = Time - StartTime;
+			float BestPause = -1.f;
+			for (const float Pause : Line.Analysis.PauseTimes)
+			{
+				const bool bLongEnough = Pause - SegmentStart >= MinShotLength && Remaining - (Pause - SegmentStart) >= MinShotLength;
+				if (bLongEnough && FMath::Abs(Pause - (SegmentStart + Length)) < 0.7f &&
+					(BestPause < 0.f || FMath::Abs(Pause - (SegmentStart + Length)) < FMath::Abs(BestPause - (SegmentStart + Length))))
+				{
+					BestPause = Pause;
+				}
+			}
+			if (BestPause >= 0.f)
+			{
+				Length = BestPause - SegmentStart;
+			}
+		}
 
 		FCinemafyPlannedShot Shot;
 		Shot.StartTime = Time;
@@ -309,7 +328,24 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		// Moves: a creep-in on the establishing shot, push-ins as drama builds.
 		{
 			const bool bEstablishing = Why == TEXT("establishing the space");
-			const float MoveChance = Style.MoveChance * (bEstablishing ? 1.5f : FMath::Lerp(0.6f, 1.4f, Intensity));
+
+			// The strongest stressed word inside this shot, if the audio told us.
+			const float SegmentStart = Time - StartTime;
+			float Emphasis = -1.f;
+			for (const float E : Line.Analysis.EmphasisTimes)
+			{
+				if (E > SegmentStart + 0.4f && E < SegmentStart + Length - 0.1f)
+				{
+					Emphasis = E - SegmentStart;
+					break; // Loudest first.
+				}
+			}
+
+			float MoveChance = Style.MoveChance * (bEstablishing ? 1.5f : FMath::Lerp(0.6f, 1.4f, Intensity));
+			if (Emphasis >= 0.f && !Shot.bIsReaction)
+			{
+				MoveChance *= 1.5f;
+			}
 			ECinemafyCameraMove Move;
 			float Distance;
 			if (Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
@@ -317,7 +353,19 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 				Shot.bMove = true;
 				Shot.Move = Move;
 				Shot.MoveDistance = Distance;
-				Why += TEXT(", moving");
+				Shot.MoveStart = 0.f;
+				Shot.MoveEnd = Length;
+				if (Emphasis >= 0.f && !Shot.bIsReaction)
+				{
+					// Land the push on the stressed word.
+					Shot.MoveStart = FMath::Max(0.f, Emphasis - 1.4f);
+					Shot.MoveEnd = FMath::Min(Length, Emphasis + 0.25f);
+					Why += TEXT(", pushing in on the emphasis");
+				}
+				else
+				{
+					Why += TEXT(", moving");
+				}
 			}
 		}
 

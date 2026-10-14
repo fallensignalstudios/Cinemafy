@@ -107,6 +107,10 @@ Intensity using **Audio Intensity Weight** (0 = your call, 1 = the delivery deci
 **Place Dialogue Audio** on, Direct also lays the recordings into a *Cinemafy Dialogue* track, one row
 per speaker, so the cut plays with the real delivery.
 
+The analysis also finds each line's **pauses** and **stressed words**. Cuts inside a line slide to the
+nearest breath, like an editor would make them, and push-ins are timed to **land on the emphasis**,
+starting about a second before the stressed word.
+
 **Learn a style from your own edit 🧠:** cut a scene by hand (or open one you love), select the
 director and click **Learn Style From Sequence**. It plays through every cut and classifies each shot
 from what the camera actually sees: frame size at the subject, two characters in frame, a foreground

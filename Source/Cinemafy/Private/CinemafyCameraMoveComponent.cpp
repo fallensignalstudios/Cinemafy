@@ -29,10 +29,11 @@ float UCinemafyCameraMoveComponent::ApplyEase(ECinemafyEase InEase, float Alpha)
 	}
 }
 
-void UCinemafyCameraMoveComponent::Play(float Duration)
+void UCinemafyCameraMoveComponent::Play(float Duration, float Delay)
 {
 	bPlaying = true;
-	PlayElapsed = 0.f;
+	// Negative elapsed time = waiting out the delay (Progress clamps to 0 meanwhile).
+	PlayElapsed = -FMath::Max(Delay, 0.f);
 	PlayDuration = FMath::Max(Duration, KINDA_SMALL_NUMBER);
 	Progress = 0.f;
 }

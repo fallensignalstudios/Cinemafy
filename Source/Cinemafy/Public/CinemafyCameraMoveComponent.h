@@ -43,9 +43,9 @@ public:
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Camera Move", meta = (ClampMin = "0", ClampMax = "1"))
 	float Progress = 0.f;
 
-	/** Plays the move over Duration seconds (for gameplay-triggered moments). */
+	/** Plays the move over Duration seconds, optionally after a delay (for gameplay-triggered moments). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Camera Move")
-	void Play(float Duration = 3.f);
+	void Play(float Duration = 3.f, float Delay = 0.f);
 
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Camera Move")
 	void Stop();
