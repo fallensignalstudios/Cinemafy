@@ -764,6 +764,20 @@ struct FCinemafyLine
 	FString Note;
 };
 
+/** A focus pull inside a shot, e.g. a held two-shot racking to whoever starts talking. */
+USTRUCT(BlueprintType)
+struct FCinemafyRackEvent
+{
+	GENERATED_BODY()
+
+	/** Seconds from the start of the shot. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float Time = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	TObjectPtr<AActor> FocusOn = nullptr;
+};
+
 /** A shot the director decided on. */
 USTRUCT(BlueprintType)
 struct FCinemafyPlannedShot
@@ -825,6 +839,14 @@ struct FCinemafyPlannedShot
 	/** Everyone else in frame for a Group Shot. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	TArray<TObjectPtr<AActor>> Group;
+
+	/** Who's in focus as the shot starts (the speaker, for two-shots). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	TObjectPtr<AActor> FocusOn = nullptr;
+
+	/** Focus pulls during the shot (held two-shots rack to each new speaker). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	TArray<FCinemafyRackEvent> RackEvents;
 
 	/** How this shot arrives (opening / scene break). Anything but Cut is a transition. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

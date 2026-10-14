@@ -522,6 +522,9 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			Shot.Group = OthersInGroup(Shot.Subject, Shot.Counterpart);
 		}
 
+		// Singles focus on their subject; shots with both people in them focus on whoever's talking.
+		Shot.FocusOn = IsTwoShot(Shot.ShotType) ? Line.Speaker : Shot.Subject;
+
 		Shot.Lens = BiasLens(UCinemafyFramingLibrary::GetRecommendedPrime(Shot.ShotType), Style.LensBias);
 
 		// Moves: a creep-in on the establishing shot, push-ins as drama builds.
@@ -659,6 +662,42 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 
 		Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 		Plan.Append(LineShots);
+	}
+
+	// Hold-through: a two-shot that already shows both speakers can stay up across a change of speaker,
+	// racking focus instead of cutting.
+	for (int32 Index = 0; Index + 1 < Plan.Num(); ++Index)
+	{
+		FCinemafyPlannedShot& Held = Plan[Index];
+		const FCinemafyPlannedShot& Next = Plan[Index + 1];
+		if (!Next.bLineStart || Next.TransitionIn != ECinemafyTransition::Cut || !IsTwoShot(Held.ShotType)
+			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex))
+		{
+			continue;
+		}
+
+		const FCinemafyLine& NextLine = Lines[Next.LineIndex];
+		const bool bSamePair = (NextLine.Speaker == Held.Subject && NextLine.Listener == Held.Counterpart)
+			|| (NextLine.Speaker == Held.Counterpart && NextLine.Listener == Held.Subject);
+		if (!bSamePair || Random.FRand() >= Style.HoldThroughChance)
+		{
+			continue;
+		}
+
+		// Don't create a jump cut with whatever follows the absorbed shot.
+		if (Plan.IsValidIndex(Index + 2) && Plan[Index + 2].ShotType == Held.ShotType && Plan[Index + 2].Subject == Held.Subject)
+		{
+			continue;
+		}
+
+		FCinemafyRackEvent Rack;
+		Rack.Time = Next.StartTime - Held.StartTime;
+		Rack.FocusOn = NextLine.Speaker;
+		Held.RackEvents.Add(Rack);
+		Held.Duration = (Next.StartTime + Next.Duration) - Held.StartTime;
+		Held.Reason += TEXT(", holding through the exchange (rack focus)");
+		Plan.RemoveAt(Index + 1);
+		--Index; // It may hold through the next exchange too.
 	}
 
 	if (Plan.Num() > 0 && Style.ClosingTransition != ECinemafyTransition::Cut && Style.ClosingTransition != ECinemafyTransition::MatchCut)

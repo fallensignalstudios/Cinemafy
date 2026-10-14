@@ -94,6 +94,9 @@ How it decides, per shot:
 - **Camera moves:** a creep-in on the establishing wide, push-ins on singles as drama builds, a crane-up on low hero shots. They're baked as keyed `Progress` on each camera's Camera Move, and each style has its own appetite for movement (`MoveChance`).
 - **Emotion per line:** tick *Set Emotion* on a line and the speaker's Cinemafy Face emotion is keyed in Sequencer at the start of that line. It crossfades, and the same thing happens live.
 
+- **Hold-through and rack focus:** a two-shot can *hold* across a change of speaker, with focus racking
+  to whoever starts talking instead of cutting (very classic-trilogy; `HoldThroughChance` per style).
+  Shots with both characters in them always focus on the speaker.
 - **Look and light:** each style also brings a grade, a frame shape and a lighting style. Classic
   Hollywood is clean, 1.85:1 and three-point. Intimate Drama is warm, 2.39:1 and Loop. Kinetic Action is
   teal & orange. Slow Burn uses Rembrandt. Noir Thriller uses the Noir grade and hard Noir light. Epic is

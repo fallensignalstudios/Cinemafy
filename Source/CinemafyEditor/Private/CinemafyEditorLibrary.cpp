@@ -811,20 +811,77 @@ namespace
 		}
 	}
 
-	/** Keys each speaker's Face emotion at the start of lines that set one. */
-	void BakeEmotions(ULevelSequence* Sequence, UMovieScene* MovieScene, const TArray<FCinemafyPlannedShot>& Plan, FFrameNumber SceneStart)
+	/**
+	 * Focus for shots with two people in them: the camera's Eye Focus holds Subject (RackAlpha 0) and
+	 * Counterpart (RackAlpha 1), and RackAlpha is keyed to whoever's talking, racking at each speaker change.
+	 */
+	void BakeRackFocus(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera, const TArray<FCameraShotWindow>& Windows)
 	{
-		TMap<AActor*, TArray<const FCinemafyPlannedShot*>> ByCharacter;
-		for (const FCinemafyPlannedShot& Shot : Plan)
+		const bool bAnyTwoShot = Windows.ContainsByPredicate([](const FCameraShotWindow& W)
 		{
-			if (Shot.bSetEmotion && Shot.Subject)
-			{
-				ByCharacter.FindOrAdd(Shot.Subject).Add(&Shot);
-			}
+			return W.Shot->ShotType == ECinemafyShotType::WideTwoShot || W.Shot->ShotType == ECinemafyShotType::MediumTwoShot;
+		});
+		if (!bAnyTwoShot)
+		{
+			return;
+		}
+
+		UCinemafyFocusComponent* Focus = FindOrAddComponent<UCinemafyFocusComponent>(Camera, TEXT("CinemafyFocus"));
+		const FCinemafyPlannedShot& Reference = *Windows[0].Shot;
+		Focus->FocusTarget = Reference.Subject;
+		Focus->RackTarget = Reference.Counterpart;
+
+		const FGuid Binding = CinemafySequencer::BindObject(Sequence, Focus);
+		if (!Binding.IsValid())
+		{
+			return;
+		}
+
+		UMovieSceneFloatTrack* Track = ReplacePropertyTrack<UMovieSceneFloatTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(UCinemafyFocusComponent, RackAlpha));
+		UMovieSceneFloatSection* Section = AddInfiniteSection<UMovieSceneFloatSection>(Track);
+		FMovieSceneFloatChannel* Channel = Section ? Section->GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0) : nullptr;
+		if (!Channel)
+		{
+			return;
 		}
 
 		const FFrameRate TickResolution = MovieScene->GetTickResolution();
-		for (const TPair<AActor*, TArray<const FCinemafyPlannedShot*>>& Pair : ByCharacter)
+		auto AlphaFor = [&Reference](const AActor* Who) { return Who == Reference.Counterpart ? 1.f : 0.f; };
+		for (const FCameraShotWindow& Window : Windows)
+		{
+			float Current = AlphaFor(Window.Shot->FocusOn);
+			Channel->AddLinearKey(Window.Start, Current);
+			for (const FCinemafyRackEvent& Rack : Window.Shot->RackEvents)
+			{
+				// A focus puller starts the pull just as the new voice comes in.
+				const FFrameNumber PullStart = Window.Start + TickResolution.AsFrameNumber(FMath::Max(Rack.Time - 0.1f, 0.f));
+				const FFrameNumber PullEnd = PullStart + TickResolution.AsFrameNumber(0.6);
+				const float Target = AlphaFor(Rack.FocusOn);
+				Channel->AddLinearKey(PullStart, Current);
+				Channel->AddLinearKey(FMath::Min(PullEnd, Window.End), Target);
+				Current = Target;
+			}
+			Channel->AddLinearKey(Window.End, Current);
+		}
+	}
+
+	/** Keys each speaker's Face emotion at the start of lines that set one. */
+	void BakeEmotions(ULevelSequence* Sequence, UMovieScene* MovieScene, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart)
+	{
+		struct FEmotionKey { float StartTime; ECinemafyEmotion Emotion; };
+		TMap<AActor*, TArray<FEmotionKey>> ByCharacter;
+		float Time = 0.f;
+		for (const FCinemafyLine& Line : Lines)
+		{
+			if (Line.bSetEmotion && Line.Speaker)
+			{
+				ByCharacter.FindOrAdd(Line.Speaker).Add({ Time, Line.Emotion });
+			}
+			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+		}
+
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		for (const TPair<AActor*, TArray<FEmotionKey>>& Pair : ByCharacter)
 		{
 			UCinemafyFaceComponent* Face = FindOrAddComponent<UCinemafyFaceComponent>(Pair.Key, TEXT("CinemafyFace"));
 			const FGuid Binding = CinemafySequencer::BindObject(Sequence, Face);
@@ -842,9 +899,9 @@ namespace
 				continue;
 			}
 
-			for (const FCinemafyPlannedShot* Shot : Pair.Value)
+			for (const FEmotionKey& Key : Pair.Value)
 			{
-				Channel->GetData().AddKey(SceneStart + TickResolution.AsFrameNumber(Shot->StartTime), static_cast<uint8>(Shot->Emotion));
+				Channel->GetData().AddKey(SceneStart + TickResolution.AsFrameNumber(Key.StartTime), static_cast<uint8>(Key.Emotion));
 			}
 		}
 	}
@@ -1269,8 +1326,9 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
 	{
 		BakeCameraMoves(Sequence, MovieScene, Pair.Key, Pair.Value);
+		BakeRackFocus(Sequence, MovieScene, Pair.Key, Pair.Value);
 	}
-	BakeEmotions(Sequence, MovieScene, Plan, SceneStart);
+	BakeEmotions(Sequence, MovieScene, EffectiveLines, SceneStart);
 
 	if (Director->bPlaceDialogueAudio)
 	{

@@ -407,7 +407,10 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	}
 
 	FindOrAddRuntimeComponent<UCinemafyCameraFeelComponent>(Camera)->Feel = Shot.Feel;
-	FindOrAddRuntimeComponent<UCinemafyFocusComponent>(Camera)->FocusTarget = Shot.Subject;
+	UCinemafyFocusComponent* Focus = FindOrAddRuntimeComponent<UCinemafyFocusComponent>(Camera);
+	Focus->FocusTarget = Shot.FocusOn ? Shot.FocusOn.Get() : Shot.Subject.Get();
+	Focus->RackTarget = nullptr;
+	Focus->RackAlpha = 0.f;
 
 	UCinemafyCameraMoveComponent* Move = FindOrAddRuntimeComponent<UCinemafyCameraMoveComponent>(Camera);
 	if (Shot.bMove)
