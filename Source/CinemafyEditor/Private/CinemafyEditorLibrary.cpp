@@ -11,6 +11,8 @@
 #include "Tracks/MovieSceneIntegerTrack.h"
 #include "Sections/MovieSceneIntegerSection.h"
 #include "Channels/MovieSceneIntegerChannel.h"
+#include "Tracks/MovieSceneFadeTrack.h"
+#include "Sections/MovieSceneFadeSection.h"
 #include "Engine/SkeletalMesh.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
@@ -41,6 +43,8 @@
 #include "Tracks/MovieSceneIntegerTrack.h"
 #include "Sections/MovieSceneIntegerSection.h"
 #include "Channels/MovieSceneIntegerChannel.h"
+#include "Tracks/MovieSceneFadeTrack.h"
+#include "Sections/MovieSceneFadeSection.h"
 #include "Engine/SkeletalMesh.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
@@ -1006,6 +1010,115 @@ namespace
 		}
 	}
 
+	const FText TransitionTrackName = NSLOCTEXT("CinemafyEditor", "TransitionTrack", "Cinemafy Transitions");
+
+	bool IsOverlayTransition(ECinemafyTransition Type)
+	{
+		return Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve;
+	}
+
+	/**
+	 * Fades through black become a native Fade track (visible in the editor and in renders); wipes and
+	 * dissolves become cues on the director, which plays them over the game view.
+	 */
+	void BakeTransitions(ULevelSequence* Sequence, UMovieScene* MovieScene, ACinemafySceneDirector* Director,
+		const TArray<FCinemafyPlannedShot>& Plan, FFrameNumber SceneStart, FFrameNumber SceneEnd)
+	{
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+
+		// Replace last take's fade track.
+		TArray<UMovieSceneTrack*> OldTracks;
+		for (UMovieSceneTrack* Track : MovieScene->GetTracks())
+		{
+			if (Track && Track->IsA<UMovieSceneFadeTrack>() && Track->GetDisplayName().EqualTo(TransitionTrackName))
+			{
+				OldTracks.Add(Track);
+			}
+		}
+		for (UMovieSceneTrack* Track : OldTracks)
+		{
+			MovieScene->RemoveTrack(*Track);
+		}
+
+		FMovieSceneFloatChannel* FadeChannel = nullptr;
+		auto GetFadeChannel = [&]()
+		{
+			if (!FadeChannel)
+			{
+				UMovieSceneFadeTrack* FadeTrack = MovieScene->AddTrack<UMovieSceneFadeTrack>();
+				FadeTrack->SetDisplayName(TransitionTrackName);
+				if (UMovieSceneFadeSection* Section = AddInfiniteSection<UMovieSceneFadeSection>(FadeTrack))
+				{
+					FadeChannel = Section->GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0);
+					if (FadeChannel)
+					{
+						FadeChannel->AddLinearKey(SceneStart - 1, 0.f);
+					}
+				}
+			}
+			return FadeChannel;
+		};
+
+		TArray<TPair<FFrameNumber, int32>> Cues;
+		for (int32 Index = 0; Index < Plan.Num(); ++Index)
+		{
+			const FCinemafyPlannedShot& Shot = Plan[Index];
+			const FFrameNumber Cut = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
+			const FFrameNumber Half = TickResolution.AsFrameNumber(Shot.TransitionDuration * 0.5f);
+
+			if (Shot.TransitionIn == ECinemafyTransition::FadeThroughBlack)
+			{
+				if (FMovieSceneFloatChannel* Channel = GetFadeChannel())
+				{
+					if (Index == 0)
+					{
+						// Fade in from black.
+						Channel->AddLinearKey(Cut, 1.f);
+						Channel->AddLinearKey(Cut + Half + Half, 0.f);
+					}
+					else
+					{
+						Channel->AddLinearKey(Cut - Half, 0.f);
+						Channel->AddLinearKey(Cut, 1.f);
+						Channel->AddLinearKey(Cut + Half, 0.f);
+					}
+				}
+			}
+			else if (IsOverlayTransition(Shot.TransitionIn))
+			{
+				Cues.Emplace(Cut, Index);
+			}
+		}
+
+		const FCinemafyPlannedShot& Last = Plan.Last();
+		if (Last.TransitionOut == ECinemafyTransition::FadeThroughBlack)
+		{
+			if (FMovieSceneFloatChannel* Channel = GetFadeChannel())
+			{
+				// Fade out to black at the end of the scene.
+				Channel->AddLinearKey(SceneEnd - TickResolution.AsFrameNumber(Last.TransitionDuration), 0.f);
+				Channel->AddLinearKey(SceneEnd, 1.f);
+			}
+		}
+		else if (IsOverlayTransition(Last.TransitionOut))
+		{
+			// Fire just before the end so the last shot is still there to capture.
+			Cues.Emplace(SceneEnd - TickResolution.AsFrameNumber(1.0 / 30.0), Plan.Num());
+		}
+
+		const FGuid Binding = CinemafySequencer::BindActor(Sequence, Director);
+		UMovieSceneIntegerTrack* CueTrack = ReplacePropertyTrack<UMovieSceneIntegerTrack>(MovieScene, Binding, GET_MEMBER_NAME_CHECKED(ACinemafySceneDirector, TransitionCue));
+		UMovieSceneIntegerSection* CueSection = AddInfiniteSection<UMovieSceneIntegerSection>(CueTrack);
+		if (FMovieSceneIntegerChannel* CueChannel = CueSection ? CueSection->GetChannelProxy().GetChannel<FMovieSceneIntegerChannel>(0) : nullptr)
+		{
+			CueChannel->GetData().AddKey(SceneStart - 1, -1);
+			for (const TPair<FFrameNumber, int32>& Cue : Cues)
+			{
+				CueChannel->GetData().AddKey(Cue.Key, Cue.Value);
+			}
+		}
+	}
+
 	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
 	{
 		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
@@ -1171,6 +1284,8 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	{
 		BakeSubtitles(Sequence, MovieScene, Director, EffectiveLines, SceneStart);
 	}
+
+	BakeTransitions(Sequence, MovieScene, Director, Plan, SceneStart, SceneEnd);
 
 	// Light the cast in the style's look: restyle their rigs, or give them one.
 	if (DirectorStyle.bLightCharacters)

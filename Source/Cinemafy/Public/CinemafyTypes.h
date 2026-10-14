@@ -703,6 +703,17 @@ struct FCinemafyLine
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
 	TObjectPtr<USoundBase> Audio = nullptr;
 
+	/** This line starts somewhere (or somewhen) new: use the style's scene-break transition and re-establish. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
+	bool bSceneBreak = false;
+
+	/** Use a specific transition into this line instead of the style's. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (InlineEditConditionToggle))
+	bool bOverrideTransition = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (EditCondition = "bOverrideTransition"))
+	ECinemafyTransition Transition = ECinemafyTransition::Cut;
+
 	/** What's said, for subtitles. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line", meta = (MultiLine = true))
 	FText Text;
@@ -814,6 +825,21 @@ struct FCinemafyPlannedShot
 	/** Everyone else in frame for a Group Shot. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	TArray<TObjectPtr<AActor>> Group;
+
+	/** How this shot arrives (opening / scene break). Anything but Cut is a transition. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyTransition TransitionIn = ECinemafyTransition::Cut;
+
+	/** How the scene leaves this shot (only on the last shot). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyTransition TransitionOut = ECinemafyTransition::Cut;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float TransitionDuration = 0.7f;
+
+	/** Resolved wipe direction (never Alternate). */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	ECinemafyWipeDirection WipeDirection = ECinemafyWipeDirection::LeftToRight;
 
 	/** First shot of its line (where the line, its subtitle and its emotion start). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

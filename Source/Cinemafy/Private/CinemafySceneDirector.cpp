@@ -10,6 +10,8 @@
 #include "CinemafyListenerComponent.h"
 #include "CinemafyModule.h"
 #include "CinemafySubtitleSubsystem.h"
+#include "CinemafyTransitionSubsystem.h"
+#include "Camera/PlayerCameraManager.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Engine/World.h"
@@ -195,6 +197,59 @@ void ACinemafySceneDirector::UpdateSequencedSubtitle()
 	}
 }
 
+void ACinemafySceneDirector::UpdateSequencedTransition()
+{
+	if (TransitionCue < 0)
+	{
+		TriggeredTransitionCue = -1;
+		return;
+	}
+	if (TransitionCue == TriggeredTransitionCue || bLive)
+	{
+		return;
+	}
+	TriggeredTransitionCue = TransitionCue;
+
+	UCinemafyTransitionSubsystem* Transitions = GetWorld() ? GetWorld()->GetSubsystem<UCinemafyTransitionSubsystem>() : nullptr;
+	if (!Transitions || LastPlan.Num() == 0)
+	{
+		return;
+	}
+
+	// Cue N = the transition into shot N; cue == Num = the closing transition out of the last shot.
+	const bool bClosing = TransitionCue >= LastPlan.Num();
+	const FCinemafyPlannedShot& Shot = bClosing ? LastPlan.Last() : LastPlan[TransitionCue];
+	const ECinemafyTransition Type = bClosing ? Shot.TransitionOut : Shot.TransitionIn;
+	const int32 OutgoingIndex = bClosing ? LastPlan.Num() - 1 : TransitionCue - 1;
+	AActor* Outgoing = LastPlanCameras.IsValidIndex(OutgoingIndex) ? LastPlanCameras[OutgoingIndex].Get() : nullptr;
+
+	// Fades through black are baked as a Sequencer Fade track; only wipes and dissolves need the overlay.
+	if (Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve)
+	{
+		Transitions->PlayTransition(Type, Shot.TransitionDuration, Shot.WipeDirection, Outgoing);
+	}
+}
+
+void ACinemafySceneDirector::PlayLiveTransition(ECinemafyTransition Type, float Duration, ECinemafyWipeDirection Direction, AActor* Outgoing, bool bFromGameplayView)
+{
+	UCinemafyTransitionSubsystem* Transitions = GetWorld() ? GetWorld()->GetSubsystem<UCinemafyTransitionSubsystem>() : nullptr;
+	if (!Transitions || Type == ECinemafyTransition::Cut || Type == ECinemafyTransition::MatchCut)
+	{
+		return;
+	}
+
+	if (bFromGameplayView)
+	{
+		const APlayerController* PC = GetWorld()->GetFirstPlayerController();
+		if (PC && PC->PlayerCameraManager)
+		{
+			Transitions->PlayTransitionFromView(Type, Duration, Direction, PC->PlayerCameraManager->GetCameraCacheView());
+			return;
+		}
+	}
+	Transitions->PlayTransition(Type, Duration, Direction, Outgoing);
+}
+
 void ACinemafySceneDirector::DirectLine(AActor* Speaker, AActor* Listener, float Duration, float Intensity, const FText& Subtitle)
 {
 	if (!Speaker)
@@ -246,13 +301,21 @@ void ACinemafySceneDirector::EndConversation()
 
 	bLive = false;
 	LiveQueue.Reset();
+
+	// Closing transition out of the last shot, straight into gameplay.
+	const FCinemafyDirectorStyle Style = GetStyle();
+	const bool bClosingTransition = Style.ClosingTransition != ECinemafyTransition::Cut && Style.ClosingTransition != ECinemafyTransition::MatchCut;
+	if (bClosingTransition)
+	{
+		PlayLiveTransition(Style.ClosingTransition, Style.TransitionDuration, ECinemafyWipeDirection::LeftToRight, LastLiveCamera.Get(), false);
+	}
 	if (UCinemafySubtitleSubsystem* Subtitles = GetWorld() ? GetWorld()->GetSubsystem<UCinemafySubtitleSubsystem>() : nullptr)
 	{
 		Subtitles->ClearSubtitle();
 	}
 	if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
 	{
-		PC->SetViewTargetWithBlend(PC->GetPawn(), BlendOutTime, VTBlend_Cubic);
+		PC->SetViewTargetWithBlend(PC->GetPawn(), bClosingTransition ? 0.f : BlendOutTime, VTBlend_Cubic);
 	}
 }
 
@@ -263,6 +326,7 @@ void ACinemafySceneDirector::Tick(float DeltaSeconds)
 	if (GetWorld() && GetWorld()->IsGameWorld())
 	{
 		UpdateSequencedSubtitle();
+		UpdateSequencedTransition();
 	}
 
 	if (!bLive)
@@ -387,9 +451,22 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 		}
 	}
 
-	// Blend in from gameplay on the first shot; hard cuts after that, like a real edit.
-	PC->SetViewTargetWithBlend(Camera, bFirstCut ? BlendInTime : 0.f, VTBlend_Cubic);
+	// Transitions: the shot's own (scene breaks), or the style's opening on the first shot.
+	ECinemafyTransition Transition = Shot.TransitionIn;
+	if (bFirstCut && Transition == ECinemafyTransition::Cut)
+	{
+		Transition = Style.OpeningTransition;
+	}
+	const bool bTransition = Transition != ECinemafyTransition::Cut && Transition != ECinemafyTransition::MatchCut;
+	if (bTransition)
+	{
+		PlayLiveTransition(Transition, Style.TransitionDuration, Shot.WipeDirection, LastLiveCamera.Get(), bFirstCut);
+	}
+
+	// Blend in from gameplay on the first shot (unless a transition does the job); hard cuts after that.
+	PC->SetViewTargetWithBlend(Camera, (bFirstCut && !bTransition) ? BlendInTime : 0.f, VTBlend_Cubic);
 	bFirstCut = false;
+	LastLiveCamera = Camera;
 	LastLiveShot = Shot;
 	bHasLastLiveShot = true;
 }

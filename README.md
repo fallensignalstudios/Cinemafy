@@ -132,6 +132,15 @@ director opens on a **Group Shot** framing everyone. When a new pair starts talk
 re-establishes, and some reaction cuts go to **bystanders**, whose faces often tell the story. Create
 Shot also offers Group Shot: select the subject, their partner, then everyone else.
 
+**Transitions 🌀:** each style has an opening, a scene-break and a closing transition: **Cut**,
+**Wipe** (the new shot sweeps across while the old one keeps playing), **Dissolve**, **Fade Through
+Black** or **Match Cut** (the new scene opens in the same framing as the last shot). Tick **Scene
+Break** on a line that starts somewhere (or somewhen) new: the director uses the style's transition
+and re-establishes. Any line can also override its transition. Fades are baked as a native Fade track,
+so they show everywhere, including renders. Wipes and dissolves render live in PIE and the game (the
+outgoing camera keeps rendering during the wipe). Space Opera Classic wipes, and alternates directions
+like the serials did.
+
 **Subtitles 💬:** fill in each line's **Text** (and optionally a **Speaker Name**). Subtitles show
 live during `StartConversation` / `DirectLine` (pass the text as `Subtitle`), and Direct keys the
 director's `SubtitleLineIndex`, so cut sequences show them in PIE and in the game. Anything else can

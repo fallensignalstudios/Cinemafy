@@ -608,13 +608,68 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 	TArray<FCinemafyPlannedShot> Plan;
 	float Time = 0.f;
 
+	int32 WipeCount = 0;
+	auto ResolveWipe = [&Style, &WipeCount]()
+	{
+		if (Style.WipeDirection != ECinemafyWipeDirection::Alternate)
+		{
+			return Style.WipeDirection;
+		}
+		// Vary it, like the serials did: across, back, down, up.
+		const ECinemafyWipeDirection Cycle[] = { ECinemafyWipeDirection::LeftToRight, ECinemafyWipeDirection::RightToLeft,
+			ECinemafyWipeDirection::TopToBottom, ECinemafyWipeDirection::BottomToTop };
+		return Cycle[WipeCount++ % 4];
+	};
+
 	for (int32 Index = 0; Index < Lines.Num(); ++Index)
 	{
+		const FCinemafyLine& Line = Lines[Index];
+		const bool bOpening = Plan.Num() == 0;
+		const bool bBreak = !bOpening && Line.bSceneBreak;
+		const ECinemafyTransition Transition = Line.bOverrideTransition ? Line.Transition
+			: (bOpening ? Style.OpeningTransition : (bBreak ? Style.SceneBreakTransition : ECinemafyTransition::Cut));
+
 		const FCinemafyPlannedShot* Previous = Plan.Num() > 0 ? &Plan.Last() : nullptr;
 		const FCinemafyPlannedShot PreviousCopy = Previous ? *Previous : FCinemafyPlannedShot();
-		TArray<FCinemafyPlannedShot> LineShots = PlanLine(Lines[Index], Index, Style, Random, Previous ? &PreviousCopy : nullptr, Plan.Num() == 0, Time, SceneCast);
-		Time += FMath::Max(Lines[Index].Duration + Lines[Index].PauseAfter, 0.2f);
+
+		// A scene break re-establishes the new place, unless it's a match cut (which keeps the framing).
+		FCinemafyLine PlannedLine = Line;
+		if (Transition == ECinemafyTransition::MatchCut && Previous &&
+			(!UCinemafyFramingLibrary::ShotNeedsCounterpart(Previous->ShotType) || Line.Listener))
+		{
+			PlannedLine.bForceShot = true;
+			PlannedLine.ForcedShot = Previous->ShotType;
+		}
+		const bool bEstablish = bOpening || (bBreak && Transition != ECinemafyTransition::MatchCut);
+
+		TArray<FCinemafyPlannedShot> LineShots = PlanLine(PlannedLine, Index, Style, Random,
+			(Previous && !bBreak) ? &PreviousCopy : nullptr, bEstablish, Time, SceneCast);
+
+		if (LineShots.Num() > 0 && (bOpening || bBreak || Line.bOverrideTransition))
+		{
+			FCinemafyPlannedShot& First = LineShots[0];
+			First.TransitionIn = Transition;
+			First.TransitionDuration = Style.TransitionDuration;
+			First.WipeDirection = ResolveWipe();
+			if (Transition != ECinemafyTransition::Cut)
+			{
+				First.Reason += FString::Printf(TEXT(" [%s in]"), *StaticEnum<ECinemafyTransition>()->GetDisplayNameTextByValue(static_cast<int64>(Transition)).ToString());
+			}
+		}
+
+		Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 		Plan.Append(LineShots);
+	}
+
+	if (Plan.Num() > 0 && Style.ClosingTransition != ECinemafyTransition::Cut && Style.ClosingTransition != ECinemafyTransition::MatchCut)
+	{
+		FCinemafyPlannedShot& Last = Plan.Last();
+		Last.TransitionOut = Style.ClosingTransition;
+		Last.TransitionDuration = Style.TransitionDuration;
+		if (Last.TransitionIn == ECinemafyTransition::Cut)
+		{
+			Last.WipeDirection = ResolveWipe();
+		}
 	}
 	return Plan;
 }

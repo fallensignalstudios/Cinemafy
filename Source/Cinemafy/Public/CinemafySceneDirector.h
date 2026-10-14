@@ -77,6 +77,10 @@ public:
 	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Director|Subtitles", AdvancedDisplay)
 	int32 SubtitleLineIndex = -1;
 
+	/** Which shot's transition is playing (keyed by Direct; wipes and dissolves render in PIE / game). */
+	UPROPERTY(Interp, EditAnywhere, BlueprintReadWrite, Category = "Director|Transitions", AdvancedDisplay)
+	int32 TransitionCue = -1;
+
 	/** Which side of the line of action every camera lives on. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director")
 	bool bFlipSide = false;
@@ -184,6 +188,11 @@ private:
 
 	void ShowLineSubtitle(const FCinemafyLine& Line);
 	void UpdateSequencedSubtitle();
+	void UpdateSequencedTransition();
+	void PlayLiveTransition(ECinemafyTransition Type, float Duration, ECinemafyWipeDirection Direction, AActor* Outgoing, bool bFromGameplayView);
+
+	int32 TriggeredTransitionCue = -1;
+	TWeakObjectPtr<AActor> LastLiveCamera;
 
 	int32 ShownSubtitleIndex = -1;
 	FCinemafyLine CurrentLiveLine;
