@@ -7,6 +7,22 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Styling/SlateBrush.h"
+#include "CinemafyModule.h"
+#include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
+#include "ImageUtils.h"
+#include "Misc/Paths.h"
+
+namespace CinemafyTransitionCVars
+{
+	// Diagnostics for the outgoing-shot capture (wipes and dissolves draw a live capture of the old camera).
+	static TAutoConsoleVariable<int32> Dump(TEXT("cinemafy.Transition.Dump"), 0,
+		TEXT("1 = save the outgoing capture to Saved/Cinemafy/TransitionOutgoing_N.png a few frames into each transition, and log its setup."));
+	static TAutoConsoleVariable<float> ManualExposure(TEXT("cinemafy.Transition.ManualExposure"), -100.f,
+		TEXT("Force manual exposure on the outgoing capture with this exposure bias (EV). Default (-100) = inherit the camera's settings."));
+	static TAutoConsoleVariable<int32> CaptureSource(TEXT("cinemafy.Transition.CaptureSource"), -1,
+		TEXT("Override the outgoing capture's ESceneCaptureSource (e.g. 0 SceneColorHDR, 2 FinalColorLDR, 7 FinalToneCurveHDR). -1 = default."));
+}
 
 bool UCinemafyTransitionSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
 {
@@ -96,6 +112,7 @@ void UCinemafyTransitionSubsystem::Start(ECinemafyTransition Type, float InDurat
 
 	Duration = FMath::Max(InDuration, 0.05f);
 	TimeLeft = Duration;
+	FramesSinceStart = 0;
 	Widget->Begin(Type, Direction, OutgoingBrush.Get());
 }
 
@@ -129,6 +146,44 @@ void UCinemafyTransitionSubsystem::UpdateCapture()
 	Capture->FOVAngle = View.FOV;
 	Capture->PostProcessSettings = View.PostProcessSettings;
 	Capture->PostProcessBlendWeight = View.PostProcessBlendWeight;
+
+	// A capture that starts mid-scene has no exposure history: let it adapt instantly (as the Shot Browser does).
+	Capture->PostProcessSettings.bOverride_AutoExposureSpeedUp = true;
+	Capture->PostProcessSettings.AutoExposureSpeedUp = 100.f;
+	Capture->PostProcessSettings.bOverride_AutoExposureSpeedDown = true;
+	Capture->PostProcessSettings.AutoExposureSpeedDown = 100.f;
+
+	const float ManualBias = CinemafyTransitionCVars::ManualExposure.GetValueOnGameThread();
+	if (ManualBias > -99.f)
+	{
+		Capture->PostProcessSettings.bOverride_AutoExposureMethod = true;
+		Capture->PostProcessSettings.AutoExposureMethod = AEM_Manual;
+		Capture->PostProcessSettings.bOverride_AutoExposureBias = true;
+		Capture->PostProcessSettings.AutoExposureBias = ManualBias;
+	}
+	const int32 Source = CinemafyTransitionCVars::CaptureSource.GetValueOnGameThread();
+	Capture->CaptureSource = Source >= 0 ? static_cast<ESceneCaptureSource>(Source) : ESceneCaptureSource::SCS_FinalColorLDR;
+}
+
+void UCinemafyTransitionSubsystem::DumpOutgoing()
+{
+	const AActor* Camera = OutgoingCamera.Get();
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Transition dump: outgoing=%s capture=%s at %s fov=%.1f source=%d target=%s %dx%d format=%d brush=%s"),
+		*GetNameSafe(Camera), Capture ? TEXT("yes") : TEXT("no"),
+		Capture ? *Capture->GetComponentLocation().ToString() : TEXT("-"), Capture ? Capture->FOVAngle : 0.f,
+		Capture ? static_cast<int32>(Capture->CaptureSource.GetValue()) : -1,
+		*GetNameSafe(RenderTarget), RenderTarget ? RenderTarget->SizeX : 0, RenderTarget ? RenderTarget->SizeY : 0,
+		RenderTarget ? static_cast<int32>(RenderTarget->GetFormat()) : -1, OutgoingBrush.IsValid() ? TEXT("render target") : TEXT("black fallback"));
+	if (!RenderTarget)
+	{
+		return;
+	}
+	const FString Path = FPaths::ProjectSavedDir() / FString::Printf(TEXT("Cinemafy/TransitionOutgoing_%d.png"), DumpCount++);
+	if (TUniquePtr<FArchive> File = TUniquePtr<FArchive>(IFileManager::Get().CreateFileWriter(*Path)))
+	{
+		FImageUtils::ExportRenderTarget2DAsPNG(RenderTarget, *File);
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Transition dump: wrote %s"), *Path);
+	}
 }
 
 void UCinemafyTransitionSubsystem::StopCapture()
@@ -150,6 +205,10 @@ void UCinemafyTransitionSubsystem::Tick(float DeltaTime)
 
 	TimeLeft -= DeltaTime;
 	UpdateCapture();
+	if (++FramesSinceStart == 3 && CinemafyTransitionCVars::Dump.GetValueOnGameThread() > 0)
+	{
+		DumpOutgoing();
+	}
 	Widget->SetProgress(1.f - FMath::Max(TimeLeft, 0.f) / Duration);
 
 	if (TimeLeft <= 0.f)

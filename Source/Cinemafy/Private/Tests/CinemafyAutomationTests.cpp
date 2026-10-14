@@ -494,6 +494,13 @@ bool FCinemafyChoreoPickTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("...then the third"), Candidates[Combo[2]].Name, FString(TEXT("AS_Combo_Attack_01_03")));
 	}
 
+	// Folder words count, but less than the asset's own name, and never against it.
+	const FCinemafyPromptReading Jump = Lib::ReadPrompt(TEXT("jump"));
+	TestTrue(TEXT("A dash in a Jump folder is not a jump"), Lib::ScoreAnimation(Jump, Lib::TokenizeName(TEXT("/Game/Anims/Jump/MM_Dash"))) < 0.f);
+	TestTrue(TEXT("A clip named jump is"), Lib::ScoreAnimation(Jump, Lib::TokenizeName(TEXT("/Game/Anims/Jump/MM_Jump_Start"))) > 0.f);
+	TestTrue(TEXT("The name beats the folder"),
+		Lib::ScoreAnimation(Sword, Lib::TokenizeName(TEXT("/Game/Sword/AM_Attack_01"))) < Lib::ScoreAnimation(Sword, Lib::TokenizeName(TEXT("/Game/Anims/AM_Sword_Attack_01"))));
+
 	TestTrue(TEXT("Two pistols means the two-handed pistol overlay"),
 		Lib::ScoreOverlayName(TEXT("pistols"), TEXT("PistolTwoHanded")) > Lib::ScoreOverlayName(TEXT("pistols"), TEXT("PistolOneHanded")));
 	TestTrue(TEXT("A sword isn't a rifle"), Lib::ScoreOverlayName(TEXT("sword"), TEXT("Rifle")) <= 0.f);

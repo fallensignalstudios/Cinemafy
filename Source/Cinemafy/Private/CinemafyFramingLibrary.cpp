@@ -388,6 +388,7 @@ bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldCon
 		{  8.f,   0.f,  0 }, { -8.f,   0.f,  0 }, { 16.f,   0.f,  0 },
 		{  0.f,   0.f, -1 }, { 10.f,   0.f, -1 }, {  0.f,  25.f,  0 },
 		{  0.f, -20.f,  0 }, { 24.f,   0.f, -1 }, {  0.f,   0.f, -2 },
+		{ 40.f,   0.f, -1 }, {-40.f,   0.f, -1 }, { 60.f,   0.f, -2 }, {-60.f,   0.f, -2 },
 	};
 
 	const ECinemafyPrime BaseLens = OutSolution.Lens;
@@ -409,6 +410,24 @@ bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldCon
 			OutSolution = Candidate;
 			bOutClearView = true;
 			return true;
+		}
+	}
+
+	// Last resort, like a spring arm: keep the angle but bring the camera in front of whatever is between it
+	// and the subject, instead of leaving it behind a wall. (Still reported as not clear, so it gets flagged.)
+	if (Request.Subject)
+	{
+		const FVector Eye = GetEyePoint(Request.Subject);
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(CinemafyShotPullIn), false, Request.Subject);
+		if (Request.Counterpart)
+		{
+			Params.AddIgnoredActor(Request.Counterpart);
+		}
+		FHitResult Hit;
+		if (World->SweepSingleByChannel(Hit, Eye, OutSolution.CameraTransform.GetLocation(), FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(15.f), Params)
+			&& FVector::Dist(Eye, Hit.Location) > 60.f)
+		{
+			OutSolution.CameraTransform.SetLocation(Hit.Location);
 		}
 	}
 	return true;

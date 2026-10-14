@@ -59,4 +59,7 @@ private:
 	TSharedPtr<FSlateBrush> OutgoingBrush;
 	float Duration = 0.7f;
 	float TimeLeft = 0.f;
+	int32 FramesSinceStart = 0;
+	int32 DumpCount = 0;
+	void DumpOutgoing();
 };

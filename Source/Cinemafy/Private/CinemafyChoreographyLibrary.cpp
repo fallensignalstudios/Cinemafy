@@ -153,55 +153,93 @@ TArray<FString> UCinemafyChoreographyLibrary::GetSynonyms(const FString& Word)
 	return { Lower };
 }
 
-TArray<FString> UCinemafyChoreographyLibrary::TokenizeName(const FString& NameOrPath)
+namespace
 {
-	TArray<FString> Tokens;
-	FString Current;
-	auto Flush = [&Tokens, &Current]()
+	/** One name's words: split on separators, CamelCase and digits, plus joined CamelCase pairs ("OneHanded"). */
+	TArray<FString> TokenizeSegment(const FString& Text)
 	{
-		if (!Current.IsEmpty())
+		TArray<FString> Tokens;
+		FString Current;
+		auto Flush = [&Tokens, &Current]()
 		{
-			Tokens.Add(Current.ToLower());
-			Current.Reset();
-		}
-	};
+			if (!Current.IsEmpty())
+			{
+				Tokens.Add(Current.ToLower());
+				Current.Reset();
+			}
+		};
 
-	for (int32 Index = 0; Index < NameOrPath.Len(); ++Index)
-	{
-		const TCHAR Char = NameOrPath[Index];
-		if (!FChar::IsAlnum(Char))
+		for (int32 Index = 0; Index < Text.Len(); ++Index)
 		{
-			Flush();
-			continue;
-		}
-		if (!Current.IsEmpty())
-		{
-			const TCHAR Prev = Current[Current.Len() - 1];
-			const bool bCaseBreak = FChar::IsLower(Prev) && FChar::IsUpper(Char);
-			const bool bDigitBreak = FChar::IsDigit(Prev) != FChar::IsDigit(Char);
-			// "HTTPServer" -> "HTTP", "Server": an upper followed by upper+lower starts a new word.
-			const bool bAcronymBreak = FChar::IsUpper(Prev) && FChar::IsUpper(Char) && Index + 1 < NameOrPath.Len() && FChar::IsLower(NameOrPath[Index + 1]);
-			// Keep short alpha-digit combos like "1h", "2h", "w1" together.
-			const bool bKeepCombo = bDigitBreak && Current.Len() == 1;
-			if ((bCaseBreak || bDigitBreak || bAcronymBreak) && !bKeepCombo)
+			const TCHAR Char = Text[Index];
+			if (!FChar::IsAlnum(Char))
 			{
 				Flush();
+				continue;
+			}
+			if (!Current.IsEmpty())
+			{
+				const TCHAR Prev = Current[Current.Len() - 1];
+				const bool bCaseBreak = FChar::IsLower(Prev) && FChar::IsUpper(Char);
+				const bool bDigitBreak = FChar::IsDigit(Prev) != FChar::IsDigit(Char);
+				// "HTTPServer" -> "HTTP", "Server": an upper followed by upper+lower starts a new word.
+				const bool bAcronymBreak = FChar::IsUpper(Prev) && FChar::IsUpper(Char) && Index + 1 < Text.Len() && FChar::IsLower(Text[Index + 1]);
+				// Keep short alpha-digit combos like "1h", "2h", "w1" together.
+				const bool bKeepCombo = bDigitBreak && Current.Len() == 1;
+				if ((bCaseBreak || bDigitBreak || bAcronymBreak) && !bKeepCombo)
+				{
+					Flush();
+				}
+			}
+			Current.AppendChar(Char);
+		}
+		Flush();
+
+		const int32 Count = Tokens.Num();
+		for (int32 Index = 0; Index + 1 < Count; ++Index)
+		{
+			if (!Tokens[Index].IsNumeric() && !Tokens[Index + 1].IsNumeric())
+			{
+				Tokens.Add(Tokens[Index] + Tokens[Index + 1]);
 			}
 		}
-		Current.AppendChar(Char);
+		return Tokens;
 	}
-	Flush();
 
-	// Also keep the joined words of CamelCase runs ("OneHanded" -> "onehanded") so overlay names match whole.
-	TArray<FString> Joined;
-	for (int32 Index = 0; Index + 1 < Tokens.Num(); ++Index)
+	/** Groups that name an action (as opposed to modifiers like heavy / light / spin). */
+	bool IsActionGroup(const TArray<FString>& Group)
 	{
-		if (!Tokens[Index].IsNumeric() && !Tokens[Index + 1].IsNumeric())
+		static const TSet<FString> Actions = { TEXT("attack"), TEXT("punch"), TEXT("kick"), TEXT("shoot"), TEXT("cast"), TEXT("taunt"),
+			TEXT("wave"), TEXT("point"), TEXT("salute"), TEXT("cheer"), TEXT("bow"), TEXT("laugh"), TEXT("shrug"), TEXT("kneel"), TEXT("sit"),
+			TEXT("die"), TEXT("dodge"), TEXT("block"), TEXT("hit"), TEXT("draw"), TEXT("holster"), TEXT("traversal"), TEXT("jump") };
+		return Group.Num() > 0 && Actions.Contains(Group[0]);
+	}
+}
+
+TArray<FString> UCinemafyChoreographyLibrary::TokenizeName(const FString& NameOrPath)
+{
+	// The asset's own name counts fully; folder words are kept with an "@" prefix and count for less.
+	TArray<FString> Segments;
+	NameOrPath.ParseIntoArray(Segments, TEXT("/"));
+	TArray<FString> Tokens;
+	for (int32 Index = 0; Index < Segments.Num(); ++Index)
+	{
+		const bool bName = Index == Segments.Num() - 1;
+		FString Segment = Segments[Index];
+		if (bName)
 		{
-			Joined.Add(Tokens[Index] + Tokens[Index + 1]);
+			// "Name.Name" object paths: just the name.
+			int32 Dot = INDEX_NONE;
+			if (Segment.FindChar(TEXT('.'), Dot))
+			{
+				Segment.LeftInline(Dot);
+			}
+		}
+		for (const FString& Token : TokenizeSegment(Segment))
+		{
+			Tokens.Add(bName ? Token : TEXT("@") + Token);
 		}
 	}
-	Tokens.Append(Joined);
 	return Tokens;
 }
 
@@ -452,48 +490,74 @@ float UCinemafyChoreographyLibrary::ScoreAnimation(const FCinemafyPromptReading&
 		return -1.f;
 	}
 
-	auto HasToken = [&AnimationTokens](const FString& Word) { return AnimationTokens.Contains(Word); };
+	// 1 = in the asset's name, 0.5 = only in a folder name ("@word"), 0 = absent.
+	auto Match = [&AnimationTokens](const FString& Word) -> float
+	{
+		if (AnimationTokens.Contains(Word))
+		{
+			return 1.f;
+		}
+		return AnimationTokens.Contains(TEXT("@") + Word) ? 0.5f : 0.f;
+	};
+	auto HasToken = [&Match](const FString& Word) { return Match(Word) > 0.f; };
 
 	float Score = 0.f;
+	TArray<FString> Primary;
+	float PrimaryWeight = 0.f;
 	for (int32 Index = 0; Index < Reading.Keywords.Num(); ++Index)
 	{
 		TArray<FString> Synonyms;
 		Reading.Keywords[Index].ParseIntoArray(Synonyms, TEXT("|"));
-		bool bMatched = false;
+		float Best = 0.f;
 		for (int32 S = 0; S < Synonyms.Num(); ++S)
 		{
-			if (HasToken(Synonyms[S]))
+			Best = FMath::Max(Best, Match(Synonyms[S]) * (S == 0 ? 2.5f : 2.f));
+		}
+		if (Index == 0)
+		{
+			// The first concept is the action itself: it has to be there.
+			if (Best <= 0.f)
 			{
-				Score += S == 0 ? 2.5f : 2.f;
-				bMatched = true;
-				break;
+				return -1.f;
+			}
+			Primary = Synonyms;
+			PrimaryWeight = Best;
+		}
+		Score += Best;
+	}
+
+	// Only the folder says the action, and the name says a different one (MM_Dash in a Jump folder): not this.
+	const bool bPrimaryInName = Primary.ContainsByPredicate([&AnimationTokens](const FString& Word) { return AnimationTokens.Contains(Word); });
+	if (!bPrimaryInName)
+	{
+		for (const TArray<FString>& Group : SynonymGroups())
+		{
+			if (!IsActionGroup(Group) || Group.ContainsByPredicate([&Primary](const FString& Word) { return Primary.Contains(Word); }))
+			{
+				continue;
+			}
+			if (Group.ContainsByPredicate([&AnimationTokens](const FString& Word) { return AnimationTokens.Contains(Word); }))
+			{
+				return -1.f;
 			}
 		}
-		// The first concept is the action itself: it has to be there.
-		if (!bMatched && Index == 0)
-		{
-			return -1.f;
-		}
 	}
+	(void)PrimaryWeight;
 
 	// The weapon: reward the right one, punish the wrong one.
 	if (!Reading.Weapon.IsEmpty())
 	{
 		const TArray<FString>* Mine = WeaponWords().Find(Reading.Weapon);
-		bool bRight = false;
+		float Right = 0.f;
 		if (Mine)
 		{
 			for (int32 S = 0; S < Mine->Num(); ++S)
 			{
-				if (HasToken((*Mine)[S]))
-				{
-					Score += S == 0 ? 2.f : 1.5f;
-					bRight = true;
-					break;
-				}
+				Right = FMath::Max(Right, Match((*Mine)[S]) * (S == 0 ? 2.f : 1.5f));
 			}
 		}
-		if (!bRight)
+		Score += Right;
+		if (Right <= 0.f)
 		{
 			for (const TPair<FString, TArray<FString>>& Other : WeaponWords())
 			{
@@ -506,12 +570,12 @@ float UCinemafyChoreographyLibrary::ScoreAnimation(const FCinemafyPromptReading&
 		}
 	}
 
-	// One-shot actions shouldn't come from locomotion, poses or loops.
+	// One-shot actions shouldn't come from locomotion, poses or loops (judged by the asset's own name).
 	if (Reading.Kind == ECinemafyActionKind::Attack || Reading.Kind == ECinemafyActionKind::Perform || Reading.Kind == ECinemafyActionKind::Equip)
 	{
 		for (const FString& Token : AnimationTokens)
 		{
-			if (IsLocomotionToken(Token))
+			if (!Token.StartsWith(TEXT("@")) && IsLocomotionToken(Token))
 			{
 				Score -= 1.5f;
 			}
@@ -522,7 +586,7 @@ float UCinemafyChoreographyLibrary::ScoreAnimation(const FCinemafyPromptReading&
 		// An attack isn't a hit reaction, a block or a death.
 		for (const TCHAR* Word : { TEXT("react"), TEXT("die"), TEXT("death"), TEXT("block"), TEXT("parry"), TEXT("dodge"), TEXT("evade"), TEXT("equip"), TEXT("unequip"), TEXT("idle") })
 		{
-			if (HasToken(Word))
+			if (AnimationTokens.Contains(Word))
 			{
 				Score -= 2.f;
 			}
@@ -536,7 +600,7 @@ float UCinemafyChoreographyLibrary::ScoreAnimation(const FCinemafyPromptReading&
 	{
 		Score -= 0.4f;
 	}
-	if (HasToken(TEXT("montage")) || (AnimationTokens.Num() > 0 && AnimationTokens[0] == TEXT("am")))
+	if (HasToken(TEXT("montage")) || AnimationTokens.Contains(TEXT("am")))
 	{
 		Score += 0.3f;
 	}

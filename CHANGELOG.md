@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.2: fixes from the first v0.9 test (bridge scene)
+- **Tracking shots stay out of walls:** the follow rig works like a spring arm. It pulls in in front of a
+  blocker, or swings around the subject when pulling in would get too close (`bAvoidWalls`, `MinDistance`).
+- **Blocked static shots:** wider fallback angles, then a pull-in in front of the blocker instead of a camera
+  left behind a wall. These are still flagged.
+- **Animation picks:** folder words now count half as much as the asset's own name. A folder-only match is
+  rejected when the name says a different action (no more `MM_Dash` for "jump").
+- **Wipe diagnostics:** `cinemafy.Transition.Dump 1` saves the outgoing capture to
+  `Saved/Cinemafy/TransitionOutgoing_N.png` and logs its setup. `cinemafy.Transition.ManualExposure <EV>`
+  and `cinemafy.Transition.CaptureSource <n>` test exposure and source overrides live. The capture now
+  adapts exposure instantly.
+
 ## 0.9.1: "Honest performances" (from Vesryn's review)
 - **Beat outcomes:** Succeeded, Fallback, Blocked, Failed or TimedOut, each with a reason, shown on
   the beat's viewport label and in the bake toast.

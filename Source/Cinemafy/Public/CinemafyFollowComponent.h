@@ -39,8 +39,24 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Follow")
 	void CaptureOffset();
 
+	/**
+	 * Keep the camera out of walls, like a spring arm: when the spot ahead of (or behind) the subject is
+	 * blocked, swing around them a little, or pull in in front of the blocker.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follow")
+	bool bAvoidWalls = true;
+
+	/** Never pull in closer to the subject's eyes than this (cm); swing around instead. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Follow", meta = (ClampMin = "20", EditCondition = "bAvoidWalls"))
+	float MinDistance = 90.f;
+
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
 	FTransform GetTargetFrame() const;
+	/** Where the camera can actually go: Desired, swung or pulled in so it sees the subject. */
+	FTransform ResolveWalls(const FTransform& Desired);
+
+	/** The swing that worked last time (kept while it still works, so the camera doesn't hunt). */
+	float CurrentSwing = 0.f;
 };

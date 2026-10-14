@@ -1,5 +1,7 @@
 #include "CinemafyFollowComponent.h"
 #include "GameFramework/Actor.h"
+#include "CinemafyFramingLibrary.h"
+#include "Engine/World.h"
 
 namespace
 {
@@ -39,7 +41,7 @@ void UCinemafyFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		return;
 	}
 
-	const FTransform Desired = Offset * GetTargetFrame();
+	const FTransform Desired = bAvoidWalls ? ResolveWalls(Offset * GetTargetFrame()) : Offset * GetTargetFrame();
 	const FTransform Current = Owner->GetActorTransform();
 	const bool bSnap = DeltaTime <= 0.f || DeltaTime > MaxLagDeltaTime;
 
@@ -50,4 +52,69 @@ void UCinemafyFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	Location = FMath::Lerp(Current.GetLocation(), Location, W);
 	Rotation = FQuat::Slerp(Current.GetRotation(), Rotation.Quaternion(), W).Rotator();
 	Owner->SetActorLocationAndRotation(Location, Rotation);
+}
+
+FTransform UCinemafyFollowComponent::ResolveWalls(const FTransform& Desired)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return Desired;
+	}
+
+	const FVector Eye = UCinemafyFramingLibrary::GetEyePoint(Target);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(CinemafyFollowWalls), false, GetOwner());
+	Params.AddIgnoredActor(Target);
+	const FCollisionShape Probe = FCollisionShape::MakeSphere(12.f);
+
+	// Swings the desired camera around the subject's eyes by Yaw degrees (position and aim together).
+	auto Swung = [&Desired, &Eye](float Yaw)
+	{
+		const FRotator Turn(0.f, Yaw, 0.f);
+		return FTransform(Turn.Quaternion() * Desired.GetRotation(), Eye + Turn.RotateVector(Desired.GetLocation() - Eye), Desired.GetScale3D());
+	};
+	auto IsClear = [&](const FTransform& Candidate, FHitResult* OutHit)
+	{
+		FHitResult Hit;
+		const bool bBlocked = World->SweepSingleByChannel(Hit, Eye, Candidate.GetLocation(), FQuat::Identity, ECC_Camera, Probe, Params);
+		if (OutHit)
+		{
+			*OutHit = Hit;
+		}
+		return !bBlocked;
+	};
+
+	// Keep the last working swing while it still works; otherwise try the intended spot first.
+	if (CurrentSwing != 0.f && IsClear(Swung(CurrentSwing), nullptr))
+	{
+		return Swung(CurrentSwing);
+	}
+	FHitResult Hit;
+	if (IsClear(Desired, &Hit))
+	{
+		CurrentSwing = 0.f;
+		return Desired;
+	}
+
+	// Pulling in keeps the angle; fine as long as it doesn't end up in the actor's face.
+	const FVector PulledIn = Hit.Location;
+	if (FVector::Dist(Eye, PulledIn) >= MinDistance)
+	{
+		CurrentSwing = 0.f;
+		return FTransform(Desired.GetRotation(), PulledIn, Desired.GetScale3D());
+	}
+
+	// Swing around the subject for a clear angle, smallest change first.
+	for (const float Yaw : { 30.f, -30.f, 60.f, -60.f, 90.f, -90.f })
+	{
+		const FTransform Candidate = Swung(Yaw);
+		if (IsClear(Candidate, nullptr))
+		{
+			CurrentSwing = Yaw;
+			return Candidate;
+		}
+	}
+
+	// Nowhere clear: the closest unblocked spot on the intended line.
+	return FTransform(Desired.GetRotation(), PulledIn, Desired.GetScale3D());
 }
