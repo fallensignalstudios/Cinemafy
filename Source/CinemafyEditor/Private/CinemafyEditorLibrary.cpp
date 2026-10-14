@@ -1310,6 +1310,13 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 
 	TArray<FCinemafyPlannedShot> NewPlan = Director->PlanDirectedLines(DirectedLines);
 
+	// Shots locked by hand survive the new take; the director plans around them.
+	TArray<FCinemafyPlannedShot> Locked = Director->LastPlan.FilterByPredicate([](const FCinemafyPlannedShot& Shot) { return Shot.bLocked; });
+	if (Locked.Num() > 0)
+	{
+		UCinemafyDirectorLibrary::ApplyLockedShots(NewPlan, Locked);
+	}
+
 	// Music: find the beat, then let cuts land on it.
 	if (Director->Music)
 	{
@@ -1521,6 +1528,83 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	GEditor->SelectNone(false, true);
 	GEditor->SelectActor(Director, true, true);
 	return Plan.Num();
+}
+
+bool UCinemafyEditorLibrary::ToggleShotLock(ACinemafySceneDirector* Director, int32 ShotIndex)
+{
+	if (!Director || !Director->LastPlan.IsValidIndex(ShotIndex))
+	{
+		return false;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("ToggleLock", "Cinemafy: Lock Shot"));
+	Director->Modify();
+	FCinemafyPlannedShot& Shot = Director->LastPlan[ShotIndex];
+	Shot.bLocked = !Shot.bLocked;
+	SCinemafyShotBrowser::RefreshActive();
+	return Shot.bLocked;
+}
+
+bool UCinemafyEditorLibrary::SwapShotForAlternate(ACinemafySceneDirector* Director, int32 ShotIndex)
+{
+	if (!Director)
+	{
+		return false;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("SwapShot", "Cinemafy: Alternate Shot"));
+	Director->Modify();
+	if (!UCinemafyDirectorLibrary::SwapForAlternate(Director->LastPlan, ShotIndex, Director->LastDirectedLines, Director->GetStyle()))
+	{
+		return false;
+	}
+	BakeDirectorPlan(Director, true);
+	return true;
+}
+
+bool UCinemafyEditorLibrary::NudgeShotCut(ACinemafySceneDirector* Director, int32 ShotIndex, float DeltaSeconds)
+{
+	if (!Director)
+	{
+		return false;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("NudgeCut", "Cinemafy: Nudge Cut"));
+	Director->Modify();
+	if (!UCinemafyDirectorLibrary::NudgeCut(Director->LastPlan, ShotIndex, DeltaSeconds))
+	{
+		return false;
+	}
+	BakeDirectorPlan(Director, true);
+	return true;
+}
+
+int32 UCinemafyEditorLibrary::SaveDirectorTake(ACinemafySceneDirector* Director, const FString& Name)
+{
+	if (!Director || Director->LastPlan.Num() == 0)
+	{
+		return -1;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("SaveTake", "Cinemafy: Save Take"));
+	Director->Modify();
+	FCinemafyTake Take;
+	Take.Name = Name.IsEmpty() ? FString::Printf(TEXT("Take %d"), Director->Takes.Num() + 1) : Name;
+	Take.Seed = Director->Seed;
+	Take.Plan = Director->LastPlan;
+	Take.Lines = Director->LastDirectedLines;
+	return Director->Takes.Add(Take);
+}
+
+bool UCinemafyEditorLibrary::LoadDirectorTake(ACinemafySceneDirector* Director, int32 TakeIndex)
+{
+	if (!Director || !Director->Takes.IsValidIndex(TakeIndex))
+	{
+		return false;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("LoadTake", "Cinemafy: Load Take"));
+	Director->Modify();
+	const FCinemafyTake& Take = Director->Takes[TakeIndex];
+	Director->Seed = Take.Seed;
+	Director->LastPlan = Take.Plan;
+	Director->LastDirectedLines = Take.Lines;
+	return BakeDirectorPlan(Director, true) > 0;
 }
 
 int32 UCinemafyEditorLibrary::ClearDirectedShots(ACinemafySceneDirector* Director)

@@ -118,6 +118,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 BakeDirectorPlan(ACinemafySceneDirector* Director, bool bAtLastSceneStart = true);
 
+	/** Lock or unlock a shot of the director's current cut (locked shots survive re-rolls). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static bool ToggleShotLock(ACinemafySceneDirector* Director, int32 ShotIndex);
+
+	/** Swap a shot for the director's next-best alternative, lock it and re-bake. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static bool SwapShotForAlternate(ACinemafySceneDirector* Director, int32 ShotIndex);
+
+	/** Move the cut at the start of a shot by DeltaSeconds, lock both sides and re-bake. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static bool NudgeShotCut(ACinemafySceneDirector* Director, int32 ShotIndex, float DeltaSeconds);
+
+	/** Save the director's current cut as a take. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static int32 SaveDirectorTake(ACinemafySceneDirector* Director, const FString& Name);
+
+	/** Restore a saved take and re-bake it where the scene was. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
+	static bool LoadDirectorTake(ACinemafySceneDirector* Director, int32 TakeIndex);
+
 	/** Removes this director's camera cuts from the open sequence (cameras are kept). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static int32 ClearDirectedShots(ACinemafySceneDirector* Director);

@@ -309,4 +309,36 @@ bool FCinemafyBeatTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyLockTest, "Cinemafy.Director.LockedShotsSurviveRerolls", CinemafyTests::Flags)
+bool FCinemafyLockTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	const TArray<FCinemafyLine> Lines = Scene.MakeConversation(6);
+	const FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood);
+
+	TArray<FCinemafyPlannedShot> First = UCinemafyDirectorLibrary::PlanScene(Lines, Style, 1);
+	const int32 LockIndex = First.Num() / 2;
+	TestTrue(TEXT("Alternate swap works"), UCinemafyDirectorLibrary::SwapForAlternate(First, LockIndex, Lines, Style));
+	const FCinemafyPlannedShot Locked = First[LockIndex];
+
+	TArray<FCinemafyPlannedShot> Reroll = UCinemafyDirectorLibrary::PlanScene(Lines, Style, 99);
+	UCinemafyDirectorLibrary::ApplyLockedShots(Reroll, { Locked });
+
+	const FCinemafyPlannedShot* Kept = Reroll.FindByPredicate([&Locked](const FCinemafyPlannedShot& Shot)
+	{
+		return Shot.bLocked && FMath::IsNearlyEqual(Shot.StartTime, Locked.StartTime) && Shot.ShotType == Locked.ShotType;
+	});
+	TestTrue(TEXT("The locked shot is still there after a re-roll"), Kept != nullptr);
+	for (int32 Index = 1; Index < Reroll.Num(); ++Index)
+	{
+		TestTrue(TEXT("No gaps or overlaps around the locked shot"),
+			FMath::IsNearlyEqual(Reroll[Index - 1].StartTime + Reroll[Index - 1].Duration, Reroll[Index].StartTime, 0.01f));
+	}
+
+	TestTrue(TEXT("Nudging a cut works"), UCinemafyDirectorLibrary::NudgeCut(Reroll, 1, 0.25f));
+	TestTrue(TEXT("...and keeps shots back to back"),
+		FMath::IsNearlyEqual(Reroll[0].StartTime + Reroll[0].Duration, Reroll[1].StartTime, 0.001f));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

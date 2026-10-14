@@ -20,11 +20,14 @@
 #include "Tracks/MovieSceneCameraCutTrack.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SComboButton.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/SNullWidget.h"
 
 #define LOCTEXT_NAMESPACE "CinemafyShotBrowser"
 
@@ -148,6 +151,33 @@ void SCinemafyShotBrowser::Construct(const FArguments& InArgs)
 					}
 					return FReply::Handled();
 				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.f, 0.f, 4.f, 0.f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("SaveTake", "Save Take"))
+				.ToolTipText(LOCTEXT("SaveTakeTip", "Keep this cut as a take you can come back to."))
+				.IsEnabled_Lambda([this]() { return GetActiveDirector() != nullptr; })
+				.OnClicked_Lambda([this]()
+				{
+					UCinemafyEditorLibrary::SaveDirectorTake(GetActiveDirector(), FString());
+					return FReply::Handled();
+				})
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.f, 0.f, 4.f, 0.f)
+			[
+				SNew(SComboButton)
+				.ToolTipText(LOCTEXT("TakesTip", "Flip between saved takes."))
+				.IsEnabled_Lambda([this]() { const ACinemafySceneDirector* Director = GetActiveDirector(); return Director && Director->Takes.Num() > 0; })
+				.ButtonContent()
+				[
+					SNew(STextBlock).Text(LOCTEXT("Takes", "Takes"))
+				]
+				.OnGetMenuContent(this, &SCinemafyShotBrowser::MakeTakesMenu)
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -483,6 +513,12 @@ TSharedRef<SWidget> SCinemafyShotBrowser::MakeShotCard(const TSharedRef<FCinemaf
 					.AutoHeight()
 					.Padding(4.f, 0.f, 4.f, 4.f)
 					[
+						MakeEditControls(Shot)
+					]
+					+ SVerticalBox::Slot()
+					.AutoHeight()
+					.Padding(4.f, 0.f, 4.f, 4.f)
+					[
 						SNew(STextBlock)
 						.Visibility(Shot->Reason.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible)
 						.Text(FText::FromString(Shot->Reason))
@@ -559,6 +595,8 @@ void SCinemafyShotBrowser::AttachDirectorNotes()
 			const FFrameNumber PlannedStart = SceneStart + TickResolution.AsFrameNumber(Planned.StartTime);
 			if (FMath::Abs((PlannedStart - Shot->StartTick).Value) <= Tolerance)
 			{
+				Shot->PlanIndex = static_cast<int32>(&Planned - Director->LastPlan.GetData());
+				Shot->bLocked = Planned.bLocked;
 				Shot->Reason = Planned.Reason;
 				Shot->bHasShotType = true;
 				Shot->ShotType = static_cast<uint8>(Planned.ShotType);
@@ -566,6 +604,76 @@ void SCinemafyShotBrowser::AttachDirectorNotes()
 			}
 		}
 	}
+}
+
+TSharedRef<SWidget> SCinemafyShotBrowser::MakeTakesMenu()
+{
+	FMenuBuilder Menu(true, nullptr);
+	ACinemafySceneDirector* Director = GetActiveDirector();
+	if (Director)
+	{
+		for (int32 Index = 0; Index < Director->Takes.Num(); ++Index)
+		{
+			const FCinemafyTake& Take = Director->Takes[Index];
+			const TWeakObjectPtr<ACinemafySceneDirector> WeakDirector = Director;
+			Menu.AddMenuEntry(FText::FromString(Take.Name),
+				FText::Format(LOCTEXT("TakeTip", "{0} shots. Restore this take and re-bake it."), Take.Plan.Num()),
+				FSlateIcon(),
+				FUIAction(FExecuteAction::CreateLambda([WeakDirector, Index]()
+				{
+					UCinemafyEditorLibrary::LoadDirectorTake(WeakDirector.Get(), Index);
+				})));
+		}
+	}
+	return Menu.MakeWidget();
+}
+
+TSharedRef<SWidget> SCinemafyShotBrowser::MakeEditControls(const TSharedRef<FCinemafyShot>& Shot)
+{
+	if (Shot->PlanIndex == INDEX_NONE)
+	{
+		return SNullWidget::NullWidget;
+	}
+
+	const int32 PlanIndex = Shot->PlanIndex;
+	auto SmallButton = [this](const FText& Label, const FText& Tooltip, TFunction<void(ACinemafySceneDirector*)> Action)
+	{
+		return SNew(SButton)
+			.Text(Label)
+			.ToolTipText(Tooltip)
+			.ContentPadding(FMargin(4.f, 1.f))
+			.OnClicked_Lambda([this, Action]()
+			{
+				if (ACinemafySceneDirector* Director = GetActiveDirector())
+				{
+					Action(Director);
+				}
+				return FReply::Handled();
+			});
+	};
+
+	return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)
+		[
+			SmallButton(Shot->bLocked ? LOCTEXT("Unlock", "Unlock") : LOCTEXT("Lock", "Lock"),
+				LOCTEXT("LockTip", "Locked shots survive re-rolls; the director plans around them."),
+				[PlanIndex](ACinemafySceneDirector* Director) { UCinemafyEditorLibrary::ToggleShotLock(Director, PlanIndex); })
+		]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)
+		[
+			SmallButton(LOCTEXT("Alt", "Alt"), LOCTEXT("AltTip", "Swap for the director's next-best shot here (and lock it)."),
+				[PlanIndex](ACinemafySceneDirector* Director) { UCinemafyEditorLibrary::SwapShotForAlternate(Director, PlanIndex); })
+		]
+		+ SHorizontalBox::Slot().AutoWidth().Padding(0.f, 0.f, 3.f, 0.f)
+		[
+			SmallButton(LOCTEXT("Earlier", "<"), LOCTEXT("EarlierTip", "Cut into this shot a quarter second earlier."),
+				[PlanIndex](ACinemafySceneDirector* Director) { UCinemafyEditorLibrary::NudgeShotCut(Director, PlanIndex, -0.25f); })
+		]
+		+ SHorizontalBox::Slot().AutoWidth()
+		[
+			SmallButton(LOCTEXT("Later", ">"), LOCTEXT("LaterTip", "Cut into this shot a quarter second later."),
+				[PlanIndex](ACinemafySceneDirector* Director) { UCinemafyEditorLibrary::NudgeShotCut(Director, PlanIndex, 0.25f); })
+		];
 }
 
 void SCinemafyShotBrowser::RebuildPacingStrip()

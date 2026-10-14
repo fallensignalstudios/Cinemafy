@@ -27,6 +27,8 @@ struct FCinemafyShot
 
 	/** Filled in when a Scene Director cut this shot. */
 	FString Reason;
+	int32 PlanIndex = INDEX_NONE;
+	bool bLocked = false;
 	bool bHasShotType = false;
 	uint8 ShotType = 0;
 
@@ -63,6 +65,8 @@ private:
 	void AttachDirectorNotes();
 	ACinemafySceneDirector* GetActiveDirector() const;
 	FText GetDirectorText() const;
+	TSharedRef<SWidget> MakeTakesMenu();
+	TSharedRef<SWidget> MakeEditControls(const TSharedRef<FCinemafyShot>& Shot);
 	TSharedRef<SWidget> MakeShotCard(const TSharedRef<FCinemafyShot>& Shot);
 	FReply OnShotClicked(TSharedRef<FCinemafyShot> Shot);
 	bool IsShotUnderPlayhead(const FCinemafyShot& Shot) const;

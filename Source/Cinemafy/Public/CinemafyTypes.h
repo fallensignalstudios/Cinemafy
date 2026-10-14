@@ -910,6 +910,10 @@ struct FCinemafyPlannedShot
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	ECinemafyWipeDirection WipeDirection = ECinemafyWipeDirection::LeftToRight;
 
+	/** Locked by hand: re-rolls keep this shot exactly and plan around it. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool bLocked = false;
+
 	/** First shot of its line (where the line, its subtitle and its emotion start). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	bool bLineStart = false;
@@ -917,4 +921,23 @@ struct FCinemafyPlannedShot
 	/** Why the director chose it, in plain words. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	FString Reason;
+};
+
+/** A saved version of a directed scene, for comparing cuts. */
+USTRUCT(BlueprintType)
+struct FCinemafyTake
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Take")
+	FString Name;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Take")
+	int32 Seed = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Take")
+	TArray<FCinemafyPlannedShot> Plan;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Take")
+	TArray<FCinemafyLine> Lines;
 };

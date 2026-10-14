@@ -39,6 +39,18 @@ public:
 	 */
 	static void SnapPlanToBeats(TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyLine>& Lines, const TArray<float>& Beats, float MinShotLength = 0.5f);
 
+	/** Puts locked shots back into a fresh plan, trimming or splitting whatever overlaps them. */
+	static void ApplyLockedShots(TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyPlannedShot>& Locked);
+
+	/**
+	 * Swaps one planned shot for the director's next-best option (different framing, still legal next
+	 * to its neighbours) and locks it. Returns false if there's no alternative.
+	 */
+	static bool SwapForAlternate(TArray<FCinemafyPlannedShot>& Plan, int32 Index, const TArray<FCinemafyLine>& Lines, const FCinemafyDirectorStyle& Style);
+
+	/** Moves the cut at the start of shot Index by DeltaSeconds (keeping both shots >= MinShotLength) and locks both shots. */
+	static bool NudgeCut(TArray<FCinemafyPlannedShot>& Plan, int32 Index, float DeltaSeconds, float MinShotLength = 0.3f);
+
 	/** Everyone who speaks or is spoken to in a script. */
 	static TArray<AActor*> GetCast(const TArray<FCinemafyLine>& Lines);
 

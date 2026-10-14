@@ -139,6 +139,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan", AdvancedDisplay)
 	TArray<TObjectPtr<ACineCameraActor>> LastPlanCameras;
 
+	/** Saved versions of this scene's cut. Save and load them from the Shot Browser. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Takes")
+	TArray<FCinemafyTake> Takes;
+
 	/** The last plan, with the director's reasoning for each shot. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Plan")
 	TArray<FCinemafyPlannedShot> LastPlan;

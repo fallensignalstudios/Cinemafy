@@ -862,3 +862,149 @@ void UCinemafyDirectorLibrary::SnapPlanToBeats(TArray<FCinemafyPlannedShot>& Pla
 		Before.Reason += TEXT(", cut on the beat");
 	}
 }
+
+void UCinemafyDirectorLibrary::ApplyLockedShots(TArray<FCinemafyPlannedShot>& Plan, const TArray<FCinemafyPlannedShot>& Locked)
+{
+	constexpr float MinRemainder = 0.3f;
+
+	for (const FCinemafyPlannedShot& Lock : Locked)
+	{
+		const float LockStart = Lock.StartTime;
+		const float LockEnd = Lock.StartTime + Lock.Duration;
+
+		TArray<FCinemafyPlannedShot> Result;
+		for (const FCinemafyPlannedShot& Shot : Plan)
+		{
+			const float Start = Shot.StartTime;
+			const float End = Shot.StartTime + Shot.Duration;
+			if (End <= LockStart || Start >= LockEnd)
+			{
+				Result.Add(Shot);
+				continue;
+			}
+			// Keep whatever part sticks out on either side of the locked shot.
+			if (Start < LockStart && LockStart - Start >= MinRemainder)
+			{
+				FCinemafyPlannedShot Left = Shot;
+				Left.Duration = LockStart - Start;
+				Left.MoveEnd = FMath::Min(Left.MoveEnd, Left.Duration);
+				Left.MoveStart = FMath::Min(Left.MoveStart, Left.MoveEnd);
+				Left.RackEvents.RemoveAll([&Left](const FCinemafyRackEvent& Rack) { return Rack.Time >= Left.Duration; });
+				Result.Add(Left);
+			}
+			if (End > LockEnd && End - LockEnd >= MinRemainder)
+			{
+				FCinemafyPlannedShot Right = Shot;
+				const float Shift = LockEnd - Start;
+				Right.StartTime = LockEnd;
+				Right.Duration = End - LockEnd;
+				Right.bLineStart = false;
+				Right.TransitionIn = ECinemafyTransition::Cut;
+				Right.bMove = false;
+				Right.bSlowMo = false;
+				for (FCinemafyRackEvent& Rack : Right.RackEvents)
+				{
+					Rack.Time -= Shift;
+				}
+				Right.RackEvents.RemoveAll([&Right](const FCinemafyRackEvent& Rack) { return Rack.Time <= 0.f || Rack.Time >= Right.Duration; });
+				Result.Add(Right);
+			}
+		}
+		Result.Add(Lock);
+		Result.Sort([](const FCinemafyPlannedShot& A, const FCinemafyPlannedShot& B) { return A.StartTime < B.StartTime; });
+
+		// Close any slivers left between pieces by stretching the shot before them.
+		for (int32 Index = 1; Index < Result.Num(); ++Index)
+		{
+			FCinemafyPlannedShot& Before = Result[Index - 1];
+			const float Gap = Result[Index].StartTime - (Before.StartTime + Before.Duration);
+			if (Gap > 0.f && !Before.bLocked)
+			{
+				Before.Duration += Gap;
+			}
+		}
+		Plan = MoveTemp(Result);
+	}
+}
+
+bool UCinemafyDirectorLibrary::SwapForAlternate(TArray<FCinemafyPlannedShot>& Plan, int32 Index, const TArray<FCinemafyLine>& Lines, const FCinemafyDirectorStyle& Style)
+{
+	if (!Plan.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	FCinemafyPlannedShot& Shot = Plan[Index];
+	const FCinemafyPlannedShot* Before = Plan.IsValidIndex(Index - 1) ? &Plan[Index - 1] : nullptr;
+	const FCinemafyPlannedShot* After = Plan.IsValidIndex(Index + 1) ? &Plan[Index + 1] : nullptr;
+	const bool bGroupScene = Shot.Group.Num() > 0;
+
+	// Rank every legal option by how much the style likes it, then take the best one that isn't the current shot.
+	TArray<TPair<ECinemafyShotType, float>> Options;
+	for (ECinemafyShotType Type : AllShotTypes)
+	{
+		if (Type == Shot.ShotType || Type == ECinemafyShotType::TrackingLead || Type == ECinemafyShotType::TrackingFollow)
+		{
+			continue;
+		}
+		if ((UCinemafyFramingLibrary::ShotNeedsCounterpart(Type) && !Shot.Counterpart) || (Type == ECinemafyShotType::GroupShot && !bGroupScene))
+		{
+			continue;
+		}
+		// Swapping must not create a jump cut with either neighbour.
+		if ((Before && Before->Subject == Shot.Subject && Before->ShotType == Type) || (After && After->Subject == Shot.Subject && After->ShotType == Type))
+		{
+			continue;
+		}
+		const float* Preference = Style.ShotPreference.Find(Type);
+		const float Closeness = FMath::Exp(-FMath::Square(GetShotSize(Type) - GetShotSize(Shot.ShotType)) / 4.f);
+		Options.Emplace(Type, (Preference ? *Preference : 1.f) * Closeness);
+	}
+	if (Options.Num() == 0)
+	{
+		return false;
+	}
+	Options.Sort([](const TPair<ECinemafyShotType, float>& A, const TPair<ECinemafyShotType, float>& B) { return A.Value > B.Value; });
+
+	Shot.ShotType = Options[0].Key;
+	Shot.Lens = BiasLens(UCinemafyFramingLibrary::GetRecommendedPrime(Shot.ShotType), Style.LensBias);
+	Shot.bMove = false;
+	Shot.RackEvents.Reset();
+	Shot.FocusOn = IsTwoShot(Shot.ShotType) && Lines.IsValidIndex(Shot.LineIndex) ? Lines[Shot.LineIndex].Speaker.Get() : Shot.Subject.Get();
+	if (Shot.ShotType == ECinemafyShotType::GroupShot && Shot.Group.Num() == 0)
+	{
+		return false;
+	}
+	Shot.bLocked = true;
+	Shot.Reason = FString::Printf(TEXT("Line %d: %s on %s (alternate, chosen by hand)"),
+		Shot.LineIndex + 1, *ShotName(Shot.ShotType), *ActorName(Shot.Subject));
+	return true;
+}
+
+bool UCinemafyDirectorLibrary::NudgeCut(TArray<FCinemafyPlannedShot>& Plan, int32 Index, float DeltaSeconds, float MinShotLength)
+{
+	if (!Plan.IsValidIndex(Index) || !Plan.IsValidIndex(Index - 1))
+	{
+		return false;
+	}
+
+	FCinemafyPlannedShot& Before = Plan[Index - 1];
+	FCinemafyPlannedShot& After = Plan[Index];
+	const float Delta = FMath::Clamp(DeltaSeconds, MinShotLength - Before.Duration, After.Duration - MinShotLength);
+	if (FMath::IsNearlyZero(Delta))
+	{
+		return false;
+	}
+
+	Before.Duration += Delta;
+	After.StartTime += Delta;
+	After.Duration -= Delta;
+	for (FCinemafyPlannedShot* Shot : { &Before, &After })
+	{
+		Shot->MoveStart = FMath::Clamp(Shot->MoveStart, 0.f, Shot->Duration);
+		Shot->MoveEnd = FMath::Clamp(Shot->MoveEnd, Shot->MoveStart, Shot->Duration);
+		Shot->RackEvents.RemoveAll([Shot](const FCinemafyRackEvent& Rack) { return Rack.Time <= 0.f || Rack.Time >= Shot->Duration; });
+		Shot->bLocked = true;
+	}
+	return true;
+}
