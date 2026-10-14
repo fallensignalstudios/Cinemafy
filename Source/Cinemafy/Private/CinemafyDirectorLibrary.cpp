@@ -805,8 +805,9 @@ void UCinemafyDirectorLibrary::SnapPlanToBeats(TArray<FCinemafyPlannedShot>& Pla
 		return;
 	}
 
+	// Any cut is at most half a beat from a beat, so "nearest beat" always finds one.
 	const float BeatPeriod = (Beats.Last() - Beats[0]) / (Beats.Num() - 1);
-	const float Tolerance = BeatPeriod / 3.f;
+	const float Tolerance = BeatPeriod * 0.5f + KINDA_SMALL_NUMBER;
 
 	for (int32 Index = 1; Index < Plan.Num(); ++Index)
 	{

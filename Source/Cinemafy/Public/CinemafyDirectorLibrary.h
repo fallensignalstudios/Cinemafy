@@ -33,7 +33,7 @@ public:
 		const TArray<AActor*>& SceneCast = TArray<AActor*>());
 
 	/**
-	 * Slides cuts onto the nearest beat (within a third of a beat), keeping every shot at least
+	 * Slides cuts onto the nearest beat, keeping every shot at least
 	 * MinShotLength long. Cuts that start a spoken line (lines with audio) stay put so dialogue stays in sync.
 	 * Beats are in seconds from the start of the scene.
 	 */
