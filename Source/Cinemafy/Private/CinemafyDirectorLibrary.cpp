@@ -917,10 +917,28 @@ void UCinemafyDirectorLibrary::ApplyLockedShots(TArray<FCinemafyPlannedShot>& Pl
 		for (int32 Index = 1; Index < Result.Num(); ++Index)
 		{
 			FCinemafyPlannedShot& Before = Result[Index - 1];
-			const float Gap = Result[Index].StartTime - (Before.StartTime + Before.Duration);
-			if (Gap > 0.f && !Before.bLocked)
+			FCinemafyPlannedShot& After = Result[Index];
+			const float Gap = After.StartTime - (Before.StartTime + Before.Duration);
+			if (Gap <= 0.f)
+			{
+				continue;
+			}
+			if (!Before.bLocked)
 			{
 				Before.Duration += Gap;
+			}
+			else if (!After.bLocked)
+			{
+				// The shot after a locked one reaches back to meet it.
+				After.StartTime -= Gap;
+				After.Duration += Gap;
+				for (FCinemafyRackEvent& Rack : After.RackEvents)
+				{
+					Rack.Time += Gap;
+				}
+				After.MoveStart += Gap;
+				After.MoveEnd += Gap;
+				After.SlowMoTime += Gap;
 			}
 		}
 		Plan = MoveTemp(Result);
