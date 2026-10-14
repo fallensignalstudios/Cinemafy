@@ -434,9 +434,30 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		return Shots;
 	}
 
-	const float Intensity = FMath::Clamp(Line.Intensity, 0.f, 1.f);
+	// Action plays hot regardless of the line's dialogue intensity.
+	const float Intensity = Line.bAction ? FMath::Max(FMath::Clamp(Line.Intensity, 0.f, 1.f), 0.8f) : FMath::Clamp(Line.Intensity, 0.f, 1.f);
 	const FVector2D LengthRange = FMath::Lerp(Style.CalmShotLength, Style.IntenseShotLength, Intensity);
 	float Remaining = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+
+	// Cut on action: every impact becomes a cut a few frames early, so the hit lands in the new shot.
+	TArray<float> ActionCuts;
+	TArray<float> Impacts;
+	if (Line.bAction)
+	{
+		Impacts = Line.ImpactTimes.Num() > 0 ? Line.ImpactTimes : Line.Analysis.EmphasisTimes;
+		Impacts.Sort();
+		float LastCut = 0.f;
+		for (const float Impact : Impacts)
+		{
+			const float CutTime = Impact - 0.08f;
+			if (CutTime - LastCut >= 0.4f && (Line.Duration + Line.PauseAfter) - CutTime >= 0.4f)
+			{
+				ActionCuts.Add(CutTime);
+				LastCut = CutTime;
+			}
+		}
+	}
+	int32 SlowMoBudget = 1;
 	float Time = StartTime;
 	FCinemafyPlannedShot Last = Previous ? *Previous : FCinemafyPlannedShot();
 	bool bHasLast = Previous != nullptr;
@@ -444,7 +465,14 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 	for (int32 Segment = 0; Remaining > 0.01f; ++Segment)
 	{
 		float Length = Random.FRandRange(LengthRange.X, FMath::Max(LengthRange.X, LengthRange.Y));
-		if (Remaining - Length < MinShotLength)
+		const float SegmentStartInLine = Time - StartTime;
+		const float* NextActionCut = ActionCuts.FindByPredicate([SegmentStartInLine](float CutTime) { return CutTime > SegmentStartInLine + 0.05f; });
+		if (Line.bAction && ActionCuts.Num() > 0)
+		{
+			// Action is cut by its impacts, not by a clock.
+			Length = NextActionCut ? *NextActionCut - SegmentStartInLine : Remaining;
+		}
+		else if (Remaining - Length < MinShotLength)
 		{
 			Length = Remaining;
 		}
@@ -534,7 +562,8 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			Shot.ShotType = PickShotType(Style, Random, Intensity, Shot.Subject, Shot.Counterpart, Shot.bIsReaction, bHasLast ? &Last : nullptr, bGroupScene);
 			if (Why.IsEmpty())
 			{
-				Why = Shot.bIsReaction ? TEXT("reaction") : (Intensity > 0.7f ? TEXT("tightening for drama") : TEXT("coverage"));
+				Why = Line.bAction ? TEXT("action, cut on the impact")
+					: (Shot.bIsReaction ? TEXT("reaction") : (Intensity > 0.7f ? TEXT("tightening for drama") : TEXT("coverage")));
 			}
 		}
 
@@ -571,7 +600,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			}
 			ECinemafyCameraMove Move;
 			float Distance;
-			if (!Line.bMoving && Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
+			if (!Line.bMoving && !Line.bAction && Random.FRand() < MoveChance && GetMoveForShot(Shot.ShotType, Move, Distance))
 			{
 				Shot.bMove = true;
 				Shot.Move = Move;
@@ -588,6 +617,33 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 				else
 				{
 					Why += TEXT(", moving");
+				}
+			}
+		}
+
+		// Action: a crash zoom or slow motion on an impact that lands in this shot.
+		if (Line.bAction)
+		{
+			const float ShotStart = Time - StartTime;
+			const float* Impact = Impacts.FindByPredicate([ShotStart, Length](float I) { return I >= ShotStart && I < ShotStart + Length; });
+			if (Impact)
+			{
+				const float ImpactInShot = *Impact - ShotStart;
+				if (SlowMoBudget > 0 && Random.FRand() < Style.SlowMoChance)
+				{
+					Shot.bSlowMo = true;
+					Shot.SlowMoTime = ImpactInShot;
+					--SlowMoBudget;
+					Why += TEXT(", speed ramp on the hit");
+				}
+				else if (!Shot.bMove && Random.FRand() < Style.CrashZoomChance)
+				{
+					Shot.bMove = true;
+					Shot.Move = ECinemafyCameraMove::SnapZoomIn;
+					Shot.MoveDistance = 100.f;
+					Shot.MoveStart = FMath::Max(0.f, ImpactInShot - 0.05f);
+					Shot.MoveEnd = FMath::Min(Length, Shot.MoveStart + 0.2f);
+					Why += TEXT(", crash zoom on the hit");
 				}
 			}
 		}

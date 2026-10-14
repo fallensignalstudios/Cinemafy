@@ -190,7 +190,9 @@ enum class ECinemafyCameraMove : uint8
 	CraneUp      UMETA(DisplayName = "Crane Up (tilt to hold)"),
 	CraneDown    UMETA(DisplayName = "Crane Down (tilt to hold)"),
 	OrbitLeft    UMETA(DisplayName = "Orbit Left"),
-	OrbitRight   UMETA(DisplayName = "Orbit Right")
+	OrbitRight   UMETA(DisplayName = "Orbit Right"),
+	/** A crash zoom on the lens itself (focal length), not a dolly. Distance = how far: 100 = 2x. */
+	SnapZoomIn   UMETA(DisplayName = "Snap Zoom In (crash zoom)")
 };
 
 /** How a move accelerates. */
@@ -707,6 +709,14 @@ struct FCinemafyLine
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Audio")
 	TObjectPtr<USoundBase> Audio = nullptr;
 
+	/** A fight, chase or stunt beat: cut on impacts, crash zooms and speed ramps instead of dialogue coverage. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action")
+	bool bAction = false;
+
+	/** Moments of impact (seconds from the line's start). Empty = taken from the audio's loudest hits. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line|Action", meta = (EditCondition = "bAction"))
+	TArray<float> ImpactTimes;
+
 	/** The characters are walking during this line (auto-detected from the sequence when directing). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line")
 	bool bMoving = false;
@@ -855,6 +865,14 @@ struct FCinemafyPlannedShot
 	/** Focus pulls during the shot (held two-shots rack to each new speaker). */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")
 	TArray<FCinemafyRackEvent> RackEvents;
+
+	/** Slow motion around an impact in this shot. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	bool bSlowMo = false;
+
+	/** When the slowed impact happens, in seconds from the start of the shot. */
+	UPROPERTY(BlueprintReadOnly, Category = "Shot")
+	float SlowMoTime = 0.f;
 
 	/** How this shot arrives (opening / scene break). Anything but Cut is a transition. */
 	UPROPERTY(BlueprintReadOnly, Category = "Shot")

@@ -13,6 +13,8 @@
 #include "CinemafySubtitleSubsystem.h"
 #include "CinemafyTransitionSubsystem.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Misc/App.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
 #include "Engine/World.h"
@@ -304,6 +306,12 @@ void ACinemafySceneDirector::EndConversation()
 
 	bLive = false;
 	LiveQueue.Reset();
+	if (SlowMoDelay >= 0.f || SlowMoRemaining > 0.f)
+	{
+		SlowMoDelay = -1.f;
+		SlowMoRemaining = 0.f;
+		UGameplayStatics::SetGlobalTimeDilation(this, 1.f);
+	}
 
 	// Closing transition out of the last shot, straight into gameplay.
 	const FCinemafyDirectorStyle Style = GetStyle();
@@ -338,6 +346,28 @@ void ACinemafySceneDirector::Tick(float DeltaSeconds)
 	}
 
 	LiveTime += DeltaSeconds;
+
+	// Speed ramps run on real time, since game time is what they slow down.
+	if (SlowMoDelay >= 0.f || SlowMoRemaining > 0.f)
+	{
+		const float RealDelta = static_cast<float>(FApp::GetDeltaTime());
+		if (SlowMoDelay >= 0.f)
+		{
+			SlowMoDelay -= RealDelta;
+			if (SlowMoDelay < 0.f)
+			{
+				UGameplayStatics::SetGlobalTimeDilation(this, 0.3f);
+			}
+		}
+		else
+		{
+			SlowMoRemaining -= RealDelta;
+			if (SlowMoRemaining <= 0.f)
+			{
+				UGameplayStatics::SetGlobalTimeDilation(this, 1.f);
+			}
+		}
+	}
 	while (NextShot < LiveQueue.Num() && LiveQueue[NextShot].StartTime <= LiveTime)
 	{
 		CutTo(LiveQueue[NextShot++]);
@@ -441,6 +471,13 @@ void ACinemafySceneDirector::CutTo(const FCinemafyPlannedShot& Shot)
 	{
 		Move->Stop();
 		Move->Progress = 0.f;
+	}
+
+	if (Shot.bSlowMo)
+	{
+		// Live speed ramp: slow the world around the hit, restored in Tick (on real time).
+		SlowMoDelay = Shot.SlowMoTime;
+		SlowMoRemaining = 0.6f;
 	}
 
 	if (Shot.bSetEmotion && !Shot.bIsReaction && Shot.Subject)

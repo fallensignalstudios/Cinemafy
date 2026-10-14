@@ -68,4 +68,8 @@ private:
 
 	/** Pivot distance captured at the start of the move so focus changes mid-move don't wobble the path. */
 	float CachedPivotDistance = -1.f;
+
+	/** Lens focal length before a snap zoom started (restored when it resets). */
+	float BaseFocalLength = -1.f;
+	float LastZoomAlpha = 0.f;
 };

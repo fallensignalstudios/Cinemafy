@@ -14,6 +14,8 @@
 #include "Channels/MovieSceneIntegerChannel.h"
 #include "Tracks/MovieSceneFadeTrack.h"
 #include "Sections/MovieSceneFadeSection.h"
+#include "Tracks/MovieSceneSlomoTrack.h"
+#include "Sections/MovieSceneSlomoSection.h"
 #include "Engine/SkeletalMesh.h"
 #include "CinemafyFocusComponent.h"
 #include "CinemafyGazeComponent.h"
@@ -46,6 +48,8 @@
 #include "Channels/MovieSceneIntegerChannel.h"
 #include "Tracks/MovieSceneFadeTrack.h"
 #include "Sections/MovieSceneFadeSection.h"
+#include "Tracks/MovieSceneSlomoTrack.h"
+#include "Sections/MovieSceneSlomoSection.h"
 #include "Engine/SkeletalMesh.h"
 #include "CineCameraActor.h"
 #include "CineCameraComponent.h"
@@ -786,11 +790,12 @@ namespace
 		}
 
 		// Linear keys: the component's own easing (operator settle) shapes the move.
+		// One camera has one kind of move; shots that wanted another kind stay still on this camera.
 		const FFrameRate TickResolution = MovieScene->GetTickResolution();
 		for (const FCameraShotWindow& Window : Windows)
 		{
 			Channel->AddLinearKey(Window.Start, 0.f);
-			if (Window.Shot->bMove)
+			if (Window.Shot->bMove && Window.Shot->Move == Move->Move)
 			{
 				// Hold, then travel across the move's window (timed to land on the emphasis when there is one).
 				const FFrameNumber MoveStart = Window.Start + TickResolution.AsFrameNumber(Window.Shot->MoveStart);
@@ -1177,6 +1182,54 @@ namespace
 		}
 	}
 
+	const FText SpeedRampTrackName = NSLOCTEXT("CinemafyEditor", "SpeedRampTrack", "Cinemafy Speed Ramps");
+
+	/** Speed ramps around slowed impacts, as a native Play Rate track: ramp down into the hit, hold, ramp back. */
+	void BakeSpeedRamps(UMovieScene* MovieScene, const TArray<FCinemafyPlannedShot>& Plan, FFrameNumber SceneStart)
+	{
+		TArray<UMovieSceneTrack*> OldTracks;
+		for (UMovieSceneTrack* Track : MovieScene->GetTracks())
+		{
+			if (Track && Track->IsA<UMovieSceneSlomoTrack>() && Track->GetDisplayName().EqualTo(SpeedRampTrackName))
+			{
+				OldTracks.Add(Track);
+			}
+		}
+		for (UMovieSceneTrack* Track : OldTracks)
+		{
+			MovieScene->RemoveTrack(*Track);
+		}
+
+		if (!Plan.ContainsByPredicate([](const FCinemafyPlannedShot& Shot) { return Shot.bSlowMo; }))
+		{
+			return;
+		}
+
+		UMovieSceneSlomoTrack* Track = MovieScene->AddTrack<UMovieSceneSlomoTrack>();
+		Track->SetDisplayName(SpeedRampTrackName);
+		UMovieSceneSlomoSection* Section = AddInfiniteSection<UMovieSceneSlomoSection>(Track);
+		FMovieSceneFloatChannel* Channel = Section ? Section->GetChannelProxy().GetChannel<FMovieSceneFloatChannel>(0) : nullptr;
+		if (!Channel)
+		{
+			return;
+		}
+
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		Channel->AddLinearKey(SceneStart, 1.f);
+		for (const FCinemafyPlannedShot& Shot : Plan)
+		{
+			if (!Shot.bSlowMo)
+			{
+				continue;
+			}
+			const float Hit = Shot.StartTime + Shot.SlowMoTime;
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(FMath::Max(Hit - 0.15f, 0.f)), 1.f);
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit), 0.3f);
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit + 0.5f), 0.3f);
+			Channel->AddLinearKey(SceneStart + TickResolution.AsFrameNumber(Hit + 0.8f), 1.f);
+		}
+	}
+
 	UMovieSceneCameraCutTrack* GetOrAddCutTrack(UMovieScene* MovieScene)
 	{
 		UMovieSceneTrack* Track = MovieScene->GetCameraCutTrack();
@@ -1381,6 +1434,7 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	}
 
 	BakeTransitions(Sequence, MovieScene, Director, Plan, SceneStart, SceneEnd);
+	BakeSpeedRamps(MovieScene, Plan, SceneStart);
 
 	// Light the cast in the style's look: restyle their rigs, or give them one.
 	if (DirectorStyle.bLightCharacters)

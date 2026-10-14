@@ -192,6 +192,8 @@ private:
 	void PlayLiveTransition(ECinemafyTransition Type, float Duration, ECinemafyWipeDirection Direction, AActor* Outgoing, bool bFromGameplayView);
 
 	int32 TriggeredTransitionCue = -1;
+	float SlowMoDelay = -1.f;
+	float SlowMoRemaining = 0.f;
 	TWeakObjectPtr<AActor> LastLiveCamera;
 
 	int32 ShownSubtitleIndex = -1;

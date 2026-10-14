@@ -73,6 +73,32 @@ FTransform UCinemafyCameraMoveComponent::EvaluateOffset(float DeltaTime)
 	const float A = ApplyEase(Ease, Progress);
 	const float Pivot = ResolvePivotDistance();
 
+	// Crash zoom: drive the lens, not the camera position.
+	if (UCineCameraComponent* Cine = Cast<UCineCameraComponent>(GetCamera()))
+	{
+		if (Move == ECinemafyCameraMove::SnapZoomIn)
+		{
+			// Remember the lens at rest. If the zoom snapped back to 0 from mid-zoom, the lens is still
+			// zoomed right now, so keep the remembered base instead of re-reading it.
+			if (BaseFocalLength < 0.f || (Progress <= 0.f && LastZoomAlpha <= 0.f))
+			{
+				BaseFocalLength = Cine->CurrentFocalLength;
+			}
+			LastZoomAlpha = A;
+			const float Target = BaseFocalLength * (1.f + Distance / 100.f);
+			// Primes are locked to one focal length; open the range up for the zoom.
+			Cine->LensSettings.MaxFocalLength = FMath::Max(Cine->LensSettings.MaxFocalLength, Target);
+			Cine->SetCurrentFocalLength(FMath::Lerp(BaseFocalLength, Target, A));
+			return FTransform::Identity;
+		}
+		if (BaseFocalLength > 0.f)
+		{
+			// Switched away from a zoom: put the lens back.
+			Cine->SetCurrentFocalLength(BaseFocalLength);
+			BaseFocalLength = -1.f;
+		}
+	}
+
 	// Local camera space: X forward, Y right, Z up.
 	switch (Move)
 	{

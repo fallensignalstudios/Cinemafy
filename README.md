@@ -98,6 +98,11 @@ How it decides, per shot:
   velocity when live), coverage switches to **Lead** (the camera backs up in front of them) and **Follow**
   (behind, over the shoulder) shots. These ride a **Cinemafy Follow Rig** with Steadicam-style lag.
   `TrackingLeadPreference` per style picks which comes first.
+- **Action coverage:** tick **Action** on a fight, chase or stunt line. Shots are cut **on the impacts**
+  (a few frames early, so each hit lands in the new shot), with **crash zooms** on the lens and **speed
+  ramps** on the biggest hit (a native Play Rate track, or global time dilation live). Impacts come from
+  `ImpactTimes`, or from the audio's loudest hits if you leave it empty. `CrashZoomChance` and
+  `SlowMoChance` per style (Space Opera barely touches slow-mo; Grindhouse crash zooms everything).
 - **Hold-through and rack focus:** a two-shot can *hold* across a change of speaker, with focus racking
   to whoever starts talking instead of cutting (very classic-trilogy; `HoldThroughChance` per style).
   Shots with both characters in them always focus on the speaker.
