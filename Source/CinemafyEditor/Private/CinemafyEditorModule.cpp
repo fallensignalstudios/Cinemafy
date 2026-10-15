@@ -331,8 +331,12 @@ void FCinemafyEditorModule::ShutdownModule()
 		SequencerModule->UnregisterOnSequencerCreated(SequencerCreatedHandle);
 	}
 	FCinemafyEditCommands::Unregister();
-	UToolMenus::UnRegisterStartupCallback(this);
-	UToolMenus::UnregisterOwner(this);
+	// At editor exit the UObject system (and with it the menus) can already be gone.
+	if (UObjectInitialized() && UToolMenus::TryGet())
+	{
+		UToolMenus::UnRegisterStartupCallback(this);
+		UToolMenus::UnregisterOwner(this);
+	}
 }
 
 void FCinemafyEditorModule::RegisterMenus()

@@ -6,7 +6,7 @@ Cinemafy packages the rules real DPs, focus pullers and colorists follow into on
 cinema lens kits, coverage shots that frame themselves, human camera feel, eye-tracked focus,
 living MetaHuman eyes and grading looks. It was built for *Sovereign Call*'s in-engine cutscenes.
 
-> Status: **v0.7 (beta)**. New here? Start with **[Getting Started](Docs/GETTING_STARTED.md)** (15 minutes to a
+> Status: **beta** (the version is in `Cinemafy.uplugin` and the [changelog](CHANGELOG.md)). New here? Start with **[Getting Started](Docs/GETTING_STARTED.md)** (15 minutes to a
 > directed scene). Also see the [changelog](CHANGELOG.md), [architecture](Docs/ARCHITECTURE.md),
 > [roadmap](Docs/ROADMAP.md) and [build notes](Docs/BUILD_NOTES.md).
 

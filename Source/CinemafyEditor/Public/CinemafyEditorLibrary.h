@@ -225,6 +225,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
 	static bool OpenSequenceForEditing(ULevelSequence* Sequence);
 
+	/**
+	 * Bake for external playback: a copy of the sequence with no runtime dependency on Cinemafy, for a game that plays
+	 * cutscenes through its own system. Each camera's tracking, moves, handheld feel and focus are played through and
+	 * baked to plain keys (transform on the camera, Manual Focus Distance and focal length on its CineCamera
+	 * component), every frame; the cameras become plain CineCameraActor copies with no Cinemafy components (the
+	 * originals stay for the previs); the director binding (and its transition cues) and Cinemafy component bindings
+	 * (talk curves, gaze) are removed. With bSpawnableCameras the cameras are owned by the sequence, so the map needn't
+	 * be saved. Destination = "/Game/Path/Name" (empty: next to the source, "_Playback"). Returns the new sequence.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Export")
+	static ULevelSequence* ExportSequenceForPlayback(ULevelSequence* Source, const FString& Destination, bool bSpawnableCameras, FString& OutReport);
+
 	/** Direct Scene into a given Level Sequence (opened in Sequencer for the cut), not whatever happens to be open. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
 	static int32 DirectSequence(ACinemafySceneDirector* Director, ULevelSequence* Sequence);

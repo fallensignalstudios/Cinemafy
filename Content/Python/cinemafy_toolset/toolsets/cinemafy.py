@@ -98,6 +98,35 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def export_for_playback(sequence_path: str, destination_path: str = '', spawnable_cameras: bool = True) -> str:
+        """Bakes a directed sequence into a copy with no runtime dependency on Cinemafy, for a game that plays
+        cutscenes through its own system. Camera tracking, moves, handheld feel and focus become plain keys
+        (transform, Manual Focus Distance, focal length) every frame; cameras become plain CineCameraActors with no
+        Cinemafy components (spawnables owned by the sequence with spawnable_cameras, so the map needn't be saved);
+        the director binding, its transition cues and Cinemafy component bindings (talk curves, gaze) are removed.
+        The source sequence and its previs cameras are left as they are. Save the new asset afterwards.
+
+        Args:
+            sequence_path: The directed Level Sequence (/Game path).
+            destination_path: Where to write the copy ("/Game/Cinematics/Z05_Final"). Empty: beside the source,
+                named <source>_Playback.
+            spawnable_cameras: Make the cameras spawnables owned by the sequence.
+
+        Returns:
+            What was baked and removed, and the new asset's path.
+        """
+        source = unreal.load_asset(sequence_path)
+        if not isinstance(source, unreal.LevelSequence):
+            raise ValueError(f'No Level Sequence at {sequence_path}.')
+        result = _lib.export_sequence_for_playback(source, destination_path, spawnable_cameras)
+        # Out-params come back as a tuple: (return value, out_report).
+        sequence, report = result if isinstance(result, tuple) else (result, '')
+        if sequence is None:
+            raise RuntimeError(f'Export failed: {report}')
+        return report
+
+    @_tool
+    @staticmethod
     def set_shot_lock(director: unreal.CinemafySceneDirector, shot_index: int, locked: bool) -> None:
         """Locks or unlocks one shot of the last cut (rerolls and re-cuts keep locked shots). Unlike
         toggle_shot_lock, calling it twice is safe.

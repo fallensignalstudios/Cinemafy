@@ -44,6 +44,12 @@ Every shot card says *why* the director chose it. The pacing strip shows the rhy
 2. In your level Blueprint or trigger: **Get Cinemafy Cutscene Subsystem → Play Cutscene**.
    Set *Anchor = Relative to Player* if the scene should happen wherever the player is.
 3. Bind **On Cutscene Started / Finished** to hide and restore your HUD.
+4. Set the director's **Hand Back To** (the player's camera or pawn) before Direct, and the last shot is chosen
+   to match gameplay's view, so the blend back doesn't swing round.
+
+Your game has its own cutscene player? **Export Sequence For Playback** (MCP `export_for_playback`) makes a
+`_Playback` copy with every camera move and focus baked to plain keys, on plain cameras, needing nothing from
+Cinemafy at runtime.
 
 ## Bonus: live, unscripted conversations
 For NPC chats driven by your dialogue system, skip Sequencer entirely. Call the director's

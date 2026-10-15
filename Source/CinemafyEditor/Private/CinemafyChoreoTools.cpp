@@ -137,16 +137,19 @@ void FCinemafyChoreoMode::Stop()
 	}
 	TSharedPtr<FCinemafyChoreoMode> Old = Instance;
 	Instance.Reset();
+	if (!FSlateApplication::IsInitialized())
+	{
+		// Exiting: Slate already took its notifications and windows with it.
+		Old->Banner.Reset();
+		return;
+	}
 	Old->ClosePrompt();
 	if (Old->Banner.IsValid())
 	{
 		Old->Banner->SetCompletionState(SNotificationItem::CS_None);
 		Old->Banner->ExpireAndFadeout();
 	}
-	if (FSlateApplication::IsInitialized())
-	{
-		FSlateApplication::Get().UnregisterInputPreProcessor(Old);
-	}
+	FSlateApplication::Get().UnregisterInputPreProcessor(Old);
 }
 
 void FCinemafyChoreoMode::UpdateBanner()

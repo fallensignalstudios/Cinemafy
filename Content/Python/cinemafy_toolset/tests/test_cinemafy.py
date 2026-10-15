@@ -295,6 +295,8 @@ class CinemafyToolsTestCase(ToolCallTestCase):
     def test_render_camera_frame_writes_png(self):
         """Writes a PNG at the requested width with the camera's aspect ratio."""
         import os, tempfile
+        if '-nullrhi' in unreal.SystemLibrary.get_command_line().lower():
+            self.skipTest('Rendering needs an RHI (this editor runs with -nullrhi).')
         camera = self._camera()
         CinemafyTools.set_letterbox([camera], 2.0)
         self._open_sequence()
@@ -318,8 +320,11 @@ class CinemafyToolsTestCase(ToolCallTestCase):
 
     def test_eye_point_is_in_front_of_a_placed_mannequin(self):
         """Without eye bones, the eye point sits in front of the head the way the mesh faces (+Y for a mesh at yaw 0)."""
+        mesh = unreal.load_asset(_MESH) if unreal.EditorAssetLibrary.does_asset_exist(_MESH) else None
+        if mesh is None:
+            self.skipTest(f'{_MESH} is only in the UE template projects.')
         actor = self.actors.spawn_actor_from_class(unreal.SkeletalMeshActor, _ORIGIN + unreal.Vector(0, 500, 0), unreal.Rotator(0, 0, 0))
-        actor.skeletal_mesh_component.set_skeletal_mesh_asset(unreal.load_asset(_MESH))
+        actor.skeletal_mesh_component.set_skeletal_mesh_asset(mesh)
         head = actor.skeletal_mesh_component.get_socket_location('head')
         eye = unreal.CinemafyFramingLibrary.get_eye_point(actor)
         self.assertGreater(eye.y - head.y, 5.0)

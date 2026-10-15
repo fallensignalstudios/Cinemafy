@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.20.0: "Vertical slice"
+Notes from the first run in a real game project.
+- **Builds on 5.8:** a Shot Browser local no longer shadows `SWidget::Tag`.
+- **No modal dialogs from scripts:** Cinemafy's message boxes become log lines and toasts when called from Python,
+  MCP, a commandlet or an unattended editor, so an agent's call never hangs on an OK button. Every MCP tool runs
+  quiet. Pre-flight logs its checks instead of asking.
+- **Explicit targets:** `CreateSceneDirectorForActors`, `OpenSequenceForEditing`, `DirectSequence` and
+  `SetShotLock` act on what you name, not on the selection or whatever Sequencer has open. About a dozen MCP tools
+  take a `sequence_path`; new `set_shot_lock`. Create From Selection takes pawns too.
+- **No cut to the same picture:** consecutive shots with the same setup (same camera, or within 25 cm, 3 degrees and
+  1 mm of focal length) are merged into one.
+- **Tidy cuts and range:** cuts are clamped to the scene and back-to-back cuts to one camera are merged. The
+  playback range respects content that isn't Cinemafy's, and **Keep Playback Range** only lets it grow. Cinemafy's
+  sections restore state when the sequence ends.
+- **Hand back to gameplay:** set the director's **Hand Back To** (the player's camera or pawn) and the last shot is
+  picked to match its side and angle (crossing the line costs it), on its own camera; **Hand Back Yaw Delta** says
+  how far gameplay's camera still has to turn. `set_up_gameplay_blend` takes a `director` and reports it.
+- **Things that speak:** a speaker that isn't a pawn (a terminal, a radio, a ship) gets an insert on itself, then
+  reactions on whoever listens.
+- **Establishing shots:** **Establishing Subject** (and **Establishing Seconds**) opens the scene on a place or thing.
+- **Two-shots favour their subject:** they swing toward whoever the shot is for (further when people stand apart),
+  with more room, and aim a little toward them.
+- **Headless subjects:** eyes are looked for on attached actors too (a stand-in body on a pawn), and a pawn whose
+  eyes have to be guessed is warned about once.
+- **No flash cuts:** the shortest shot grows with a calm style, and a reaction needs a little more than that.
+- **Export for Playback:** `ExportSequenceForPlayback` (MCP `export_for_playback`) makes a copy of a sequence that
+  needs nothing from Cinemafy at runtime, for a game with its own cutscene player: every camera's tracking, moves,
+  handheld feel and focus are played through and baked to plain keys each frame, on plain CineCameraActor copies
+  (spawnable by default, so the map needn't be saved). The director, its transition cues and the talk/gaze
+  component tracks are left out of the copy. The original stays as the previs.
+- **Tests:** the render test skips under `-nullrhi`, the mannequin eye test skips without the mannequin.
+- **Shutdown:** the editor module leaves menus and notifications alone once the engine has already torn them down.
+
 ## 0.19.0: "How you see it"
 - **Blocking:** your staging per scene, in plain words, kept apart from the script and across re-imports: "Tarrik and
   Lyessa lie on the bunk, cuddled, for the whole scene." Write it in the Story Board (**Blocking: how you see it
