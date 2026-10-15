@@ -1,4 +1,5 @@
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyDialog.h"
 #include "CinemafyChoreoTools.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyScript.h"
@@ -402,7 +403,7 @@ int32 UCinemafyEditorLibrary::AddSelectedCamerasToSequence()
 {
 	if (!CinemafySequencer::GetOpenSequence())
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open a Level Sequence in Sequencer first."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open a Level Sequence in Sequencer first."));
 		return 0;
 	}
 
@@ -443,7 +444,7 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 
 	if (Characters.Num() != 2 || Cameras.Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LineCheckSelection",
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("LineCheckSelection",
 			"Select exactly two characters (the line of action runs between them) and the cameras you want to check."));
 		return -1;
 	}
@@ -467,7 +468,7 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 	const TArray<AActor*>& Offenders = (NegativeSide.Num() <= PositiveSide.Num()) ? NegativeSide : PositiveSide;
 	if (Offenders.Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckClean",
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckClean",
 			"All {0} cameras are on the same side of the line between {1} and {2}. Cut away!"),
 			Cameras.Num(), FText::FromString(Characters[0]->GetActorLabel()), FText::FromString(Characters[1]->GetActorLabel())));
 		return 0;
@@ -486,7 +487,7 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 	}
 	GEditor->NoteSelectionChange();
 
-	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckCrossed",
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckCrossed",
 		"{0} camera(s) are across the line from the rest (now selected). Cutting between the two sides will flip screen direction:{1}\n\nMove them across, or bridge the jump with a shot on the line or a camera move that crosses it on screen."),
 		Offenders.Num(), FText::FromString(Names)));
 	return Offenders.Num();
@@ -595,7 +596,7 @@ bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeco
 	UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
 	if (!CutTrack || CutTrack->GetAllSections().Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoCuts", "Open a Level Sequence with a camera cut track first (Create Shot adds one for you)."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoCuts", "Open a Level Sequence with a camera cut track first (Create Shot adds one for you)."));
 		return false;
 	}
 
@@ -1867,13 +1868,23 @@ namespace
 	}
 }
 
+void UCinemafyEditorLibrary::BeginScriptedCall()
+{
+	CinemafyDialog::SetQuiet(true);
+}
+
+void UCinemafyEditorLibrary::EndScriptedCall()
+{
+	CinemafyDialog::SetQuiet(false);
+}
+
 int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Director)
 {
 	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
 	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
 	if (!Director || !MovieScene)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoSequence", "Open the Level Sequence you want the scene cut into, then hit Direct."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoSequence", "Open the Level Sequence you want the scene cut into, then hit Direct."));
 		return 0;
 	}
 
@@ -1956,7 +1967,7 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	}
 	if (NewPlan.Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
 		return 0;
 	}
 
@@ -2247,6 +2258,45 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	return Plan.Num();
 }
 
+bool UCinemafyEditorLibrary::SetShotLock(ACinemafySceneDirector* Director, int32 ShotIndex, bool bLocked)
+{
+	if (!Director || !Director->LastPlan.IsValidIndex(ShotIndex))
+	{
+		return false;
+	}
+	if (Director->LastPlan[ShotIndex].bLocked != bLocked)
+	{
+		const FScopedTransaction Transaction(LOCTEXT("SetLock", "Cinemafy: Lock Shot"));
+		Director->Modify();
+		Director->LastPlan[ShotIndex].bLocked = bLocked;
+		SCinemafyShotBrowser::RefreshActive();
+	}
+	return true;
+}
+
+bool UCinemafyEditorLibrary::OpenSequenceForEditing(ULevelSequence* Sequence)
+{
+	if (!Sequence || !GEditor)
+	{
+		return false;
+	}
+	if (CinemafySequencer::GetOpenSequence() != Sequence)
+	{
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Sequence);
+	}
+	return CinemafySequencer::GetOpenSequence() == Sequence;
+}
+
+int32 UCinemafyEditorLibrary::DirectSequence(ACinemafySceneDirector* Director, ULevelSequence* Sequence)
+{
+	if (!OpenSequenceForEditing(Sequence))
+	{
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't open %s in Sequencer to cut the scene into it."), *GetNameSafe(Sequence));
+		return 0;
+	}
+	return DirectSceneInSequencer(Director);
+}
+
 bool UCinemafyEditorLibrary::ToggleShotLock(ACinemafySceneDirector* Director, int32 ShotIndex)
 {
 	if (!Director || !Director->LastPlan.IsValidIndex(ShotIndex))
@@ -2470,7 +2520,7 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 	const UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
 	if (!Director || !Sequencer.IsValid() || !CutTrack)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnNoSequence", "Open a Level Sequence with camera cuts in Sequencer: the director will study its edit."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnNoSequence", "Open a Level Sequence with camera cuts in Sequencer: the director will study its edit."));
 		return 0;
 	}
 
@@ -2549,7 +2599,7 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 
 	if (Observed.Num() < 3)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnTooFew", "Not enough recognizable shots to learn from (need at least 3 cuts with characters in frame)."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnTooFew", "Not enough recognizable shots to learn from (need at least 3 cuts with characters in frame)."));
 		return Observed.Num();
 	}
 
@@ -2638,7 +2688,7 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 	}
 	Summary += FString::Printf(TEXT("\nShot length: median %.1fs (quick %.1fs, long %.1fs)\nLens bias: %+d  |  Low angles: %d  |  Moving shots: %d\nOpens wide: %s\n\nThe director's style is now Custom. Hit Direct to cut a scene your way."),
 		P50, P10, P90, Style.LensBias, LowAngle, Moving, Style.bEstablishingShot ? TEXT("yes") : TEXT("no"));
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
 	return Observed.Num();
 }
 
@@ -2989,7 +3039,7 @@ int32 UCinemafyEditorLibrary::CheckSequenceContinuity()
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	if (!Sequencer.IsValid() || !CutTrack || !World)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("ContinuityNoSequence", "Open a Level Sequence with camera cuts in Sequencer to check its continuity."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("ContinuityNoSequence", "Open a Level Sequence with camera cuts in Sequencer to check its continuity."));
 		return -1;
 	}
 
@@ -3113,7 +3163,7 @@ int32 UCinemafyEditorLibrary::CheckSequenceContinuity()
 			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy continuity: %s"), *Issue);
 		}
 	}
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
 	return Issues.Num();
 }
 
@@ -3202,7 +3252,7 @@ int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Direc
 	TArray<FString> Rows;
 	if (!Director || !FFileHelper::LoadFileToStringArray(Rows, *CsvPath) || Rows.Num() < 2)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvMissing", "Couldn't read a script from {0}. It needs a header row and at least one line."), FText::FromString(CsvPath)));
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvMissing", "Couldn't read a script from {0}. It needs a header row and at least one line."), FText::FromString(CsvPath)));
 		return -1;
 	}
 
@@ -3219,7 +3269,7 @@ int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Direc
 	const int32 DurationCol = Column(TEXT("Duration"));
 	if (SpeakerCol == INDEX_NONE)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("CsvNoSpeaker", "The script needs a Speaker column."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("CsvNoSpeaker", "The script needs a Speaker column."));
 		return -1;
 	}
 
@@ -3291,7 +3341,7 @@ int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Direc
 
 	if (Unmatched > 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvUnmatched",
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvUnmatched",
 			"Imported {0} lines. {1} speaker name(s) didn't match an actor label in the level; set those Speakers by hand."),
 			Director->Lines.Num(), Unmatched));
 	}
@@ -3375,12 +3425,18 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection
 	TArray<AActor*> Characters;
 	for (AActor* Actor : GetSelectedActorsInOrder())
 	{
-		if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		// A pawn counts even with no mesh of its own (some character systems build the visible body at runtime).
+		if (Actor->FindComponentByClass<USkeletalMeshComponent>() || Actor->IsA<APawn>())
 		{
 			Characters.Add(Actor);
 		}
 	}
+	return CreateSceneDirectorForActors(Characters, Style);
+}
 
+ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorForActors(const TArray<AActor*>& InCharacters, ECinemafyDirectorPreset Style)
+{
+	TArray<AActor*> Characters = InCharacters.FilterByPredicate([](const AActor* Actor) { return Actor != nullptr; });
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	if (!World)
 	{
@@ -3572,7 +3628,7 @@ UCinemafyMoveLibrary* UCinemafyEditorLibrary::CreateMoveLibraryFromFolder(const 
 
 	FAssetRegistryModule::AssetCreated(Library);
 	Package->MarkPackageDirty();
-	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("MoveLibraryMade",
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("MoveLibraryMade",
 		"Made {0} with {1} move(s). Set it as the Move Library on your choreographies, and add your own keywords to any entry."),
 		FText::FromString(AssetName), Library->Moves.Num()));
 	return Library;
@@ -3835,7 +3891,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptWithDialog()
 		TArray<UObject*> ToSync = { Project };
 		GEditor->SyncBrowserToObjects(ToSync);
 		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Project);
-		FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
 	}
 	return Project;
 }

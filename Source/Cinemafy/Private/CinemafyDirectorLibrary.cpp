@@ -484,6 +484,8 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		Intensity = FMath::Min(Intensity + 0.15f, 1.f);
 	}
 	const FVector2D LengthRange = FMath::Lerp(Style.CalmShotLength, Style.IntenseShotLength, Intensity);
+	// No flash cuts in a calm scene: the shortest shot scales with the pace (action keeps its own, cut on the hits).
+	const float MinLength = Line.bAction ? MinShotLength : FMath::Lerp(FMath::Max(MinShotLength, static_cast<float>(Style.CalmShotLength.X) * 0.5f), MinShotLength, Intensity);
 	float Remaining = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 
 	// Cut on action: every impact becomes a cut a few frames early, so the hit lands in the new shot.
@@ -522,7 +524,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			// Action is cut by its impacts, not by a clock.
 			Length = NextActionCut ? *NextActionCut - SegmentStartInLine : Remaining;
 		}
-		else if (Remaining - Length < MinShotLength)
+		else if (Remaining - Length < MinLength)
 		{
 			Length = Remaining;
 		}
@@ -533,7 +535,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			float BestPause = -1.f;
 			for (const float Pause : Line.Analysis.PauseTimes)
 			{
-				const bool bLongEnough = Pause - SegmentStart >= MinShotLength && Remaining - (Pause - SegmentStart) >= MinShotLength;
+				const bool bLongEnough = Pause - SegmentStart >= MinLength && Remaining - (Pause - SegmentStart) >= MinLength;
 				if (bLongEnough && FMath::Abs(Pause - (SegmentStart + Length)) < 0.7f &&
 					(BestPause < 0.f || FMath::Abs(Pause - (SegmentStart + Length)) < FMath::Abs(BestPause - (SegmentStart + Length))))
 				{
@@ -565,7 +567,8 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		}
 
 		FString Why;
-		if (Line.Listener && Segment > 0 && (bBeat || Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f)))
+		// A reaction needs time to read: too short a piece stays on the speaker.
+		if (Line.Listener && Segment > 0 && (bBeat || (Length >= MinLength * 1.2f && Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f))))
 		{
 			Shot.Subject = Line.Listener;
 			Shot.Counterpart = Line.Speaker;

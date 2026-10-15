@@ -1,4 +1,5 @@
 #include "CinemafyPreflight.h"
+#include "CinemafyDialog.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyModule.h"
 #include "Misc/MessageDialog.h"
@@ -676,6 +677,13 @@ FString UCinemafyPreflightLibrary::FormatChecks(const TArray<FCinemafyCheck>& Ch
 
 bool UCinemafyPreflightLibrary::ShowPreflight(UCinemafyScriptProject* Project, const FString& SceneId, const FText& Title, const FText& WhatHappens, const FText& GoLabel)
 {
+	if (!CinemafyDialog::IsInteractive())
+	{
+		// Scripted: no window to wait on. The findings go to the log, and the work goes ahead.
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy pre-flight%s%s:\n%s"), SceneId.IsEmpty() ? TEXT("") : TEXT(" for "), *SceneId,
+			*FormatChecks(SceneId.IsEmpty() ? CheckProject(Project) : CheckScene(Project, SceneId)));
+		return true;
+	}
 	if (!Project || !FSlateApplication::IsInitialized())
 	{
 		return false;
@@ -897,7 +905,7 @@ void UCinemafyPreflightLibrary::PrevisWithPreflight(UCinemafyScriptProject* Proj
 		return;
 	}
 	const FString Report = UCinemafyStoryLibrary::PrevisScene(Project, SceneId, bRecord);
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
 }
 
 #undef LOCTEXT_NAMESPACE

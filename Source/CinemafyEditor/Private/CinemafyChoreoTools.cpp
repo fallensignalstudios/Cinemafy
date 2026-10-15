@@ -1,4 +1,5 @@
 #include "CinemafyChoreoTools.h"
+#include "CinemafyDialog.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyEditorLibrary.h"
@@ -946,12 +947,12 @@ namespace CinemafyChoreoTake
 		}
 		if (GEditor->PlayWorld)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("AlreadyPlaying", "Stop the current play session first, then Perform & Record."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("AlreadyPlaying", "Stop the current play session first, then Perform & Record."));
 			return;
 		}
 		if (!Primary->Performer || Primary->Beats.Num() == 0)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NothingToPerform", "Choreograph first: pick a performer and click some beats."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NothingToPerform", "Choreograph first: pick a performer and click some beats."));
 			return;
 		}
 
@@ -1000,7 +1001,7 @@ namespace CinemafyChoreoTake
 			const FText Message = FText::Format(LOCTEXT("TraversalWontWork",
 				"These won't work as placed:\n\n{0}\n\nRecord anyway? (They'll be marked Failed in the take, not faked.)"),
 				FText::FromString(FString::Join(WontWork, TEXT("\n"))));
-			if (FMessageDialog::Open(EAppMsgType::YesNo, Message) != EAppReturnType::Yes)
+			if (CinemafyDialog::Open(EAppMsgType::YesNo, Message, EAppReturnType::Yes) != EAppReturnType::Yes)
 			{
 				for (TActorIterator<ACinemafyChoreography> It(GetEditorWorld()); It; ++It)
 				{
@@ -1116,7 +1117,7 @@ namespace CinemafyChoreoTake
 		}
 		if (Choreo->TakeDuration <= 0.f)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoTake", "Record a take first (Perform & Record), then the director can cut around it."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoTake", "Record a take first (Perform & Record), then the director can cut around it."));
 			return 0;
 		}
 
@@ -1130,7 +1131,7 @@ namespace CinemafyChoreoTake
 		ULevelSequence* Open = CinemafySequencer::GetOpenSequence();
 		if (!Sequencer.IsValid() || !Open)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open the Level Sequence the take was baked into, then Direct Shots."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open the Level Sequence the take was baked into, then Direct Shots."));
 			return 0;
 		}
 

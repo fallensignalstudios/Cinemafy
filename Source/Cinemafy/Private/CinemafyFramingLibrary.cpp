@@ -250,11 +250,22 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& InRequest, F
 	case ECinemafyShotType::MediumTwoShot:
 	{
 		const FVector Mid = 0.5f * (SubjectEye + OtherEye);
-		const float NeededWidth = FVector::Dist2D(SubjectEye, OtherEye) + Spec.TwoShotPadding;
+		const float Separation = FVector::Dist2D(SubjectEye, OtherEye);
+		// The two-shot favours its subject: swung toward their face (a three-quarter on them), so "the two-shot on A"
+		// and "on B" are different setups. People standing well apart swing further, so they aren't flat profiles
+		// pinned to the frame's edges, and get more room.
+		const float Favour = Separation > 200.f ? 34.f : 22.f;
+		const float Padding = Spec.TwoShotPadding * (Separation > 200.f ? 1.3f : 1.f);
+		const FVector Square = SideDir.RotateAngleAxis(Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
+		const FVector TowardA = Square.RotateAngleAxis(Favour, Up);
+		const FVector TowardB = Square.RotateAngleAxis(-Favour, Up);
+		const FVector Dir = FVector::DotProduct(TowardA, LookDir) >= FVector::DotProduct(TowardB, LookDir) ? TowardA : TowardB;
+		// Seen at an angle, the pair takes less of the frame's width.
+		const float Across = Separation * FMath::Abs(FVector::DotProduct(FVector::CrossProduct(Up, Dir).GetSafeNormal(), LookDir));
+		const float NeededWidth = FMath::Max(Across, Separation * 0.6f) + Padding;
 		const float FrameH = FMath::Max(Spec.FrameHeight, NeededWidth / Aspect);
-		const FVector Dir = SideDir.RotateAngleAxis(Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
 		CamPos = Mid + Dir * DistanceForFrame(FrameH, Focal, SensorH) + Up * (Spec.HeightOffset + Request.HeightOffset);
-		AimPoint = Mid - Up * (FrameH / 6.f);
+		AimPoint = FMath::Lerp(Mid, SubjectEye, 0.15f) - Up * (FrameH / 6.f);
 		FocusPoint = Mid;
 		break;
 	}

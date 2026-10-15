@@ -1,4 +1,5 @@
 #include "CinemafyStoryLibrary.h"
+#include "CinemafyDialog.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "CinemafyChoreography.h"

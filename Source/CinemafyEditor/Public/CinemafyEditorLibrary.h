@@ -14,6 +14,7 @@ class ACinemafySceneDirector;
 class USoundWave;
 class UCinemafyDirectorStyleAsset;
 class ACinemafyChoreography;
+class ULevelSequence;
 class USoundBase;
 class UCinemafyMoveLibrary;
 class UCinemafyPerformerProfile;
@@ -119,6 +120,16 @@ public:
 	static int32 DirectSceneInSequencer(ACinemafySceneDirector* Director);
 
 	/**
+	 * Scripted calls (Python, MCP) between Begin and End never open modal dialogs: what a dialog would say goes to the
+	 * log and a toast, and questions take their default answer. Nests. The MCP toolset wraps every tool call in it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Automation")
+	static void BeginScriptedCall();
+
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Automation")
+	static void EndScriptedCall();
+
+	/**
 	 * Bakes the director's current LastPlan (as planned, or as edited in the Shot Browser) into the open
 	 * sequence, without re-planning. bAtLastSceneStart keeps the scene where it was last placed.
 	 */
@@ -128,6 +139,10 @@ public:
 	/** Lock or unlock a shot of the director's current cut (locked shots survive re-rolls). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static bool ToggleShotLock(ACinemafySceneDirector* Director, int32 ShotIndex);
+
+	/** Locks or unlocks a shot (no toggling: safe to call twice). Returns false if there's no such shot. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
+	static bool SetShotLock(ACinemafySceneDirector* Director, int32 ShotIndex, bool bLocked);
 
 	/** Swap a shot for the director's next-best alternative, lock it and re-bake. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
@@ -201,6 +216,18 @@ public:
 	/** Spawns a Scene Director for the selected characters with a starter script (alternating lines, rising intensity). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
 	static ACinemafySceneDirector* CreateSceneDirectorFromSelection(ECinemafyDirectorPreset Style);
+
+	/** A Scene Director for these characters (no editor selection needed): scripts and MCP tools use this. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
+	static ACinemafySceneDirector* CreateSceneDirectorForActors(const TArray<AActor*>& Characters, ECinemafyDirectorPreset Style);
+
+	/** Opens a Level Sequence in Sequencer (if it isn't already the open one). True when it's the open one after. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
+	static bool OpenSequenceForEditing(ULevelSequence* Sequence);
+
+	/** Direct Scene into a given Level Sequence (opened in Sequencer for the cut), not whatever happens to be open. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Director")
+	static int32 DirectSequence(ACinemafySceneDirector* Director, ULevelSequence* Sequence);
 
 	/** Adds a Gaze component to each selected character. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Editor")
