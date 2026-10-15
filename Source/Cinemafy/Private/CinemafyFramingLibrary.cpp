@@ -6,6 +6,7 @@
 #include "Engine/Engine.h"
 #include "CollisionQueryParams.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 
 namespace
 {
@@ -86,36 +87,67 @@ bool UCinemafyFramingLibrary::ShotNeedsCounterpart(ECinemafyShotType ShotType)
 		|| ShotType == ECinemafyShotType::POV;
 }
 
+namespace CinemafyEyes
+{
+	/** The eyes from an actor's own skeletal meshes: real eye bones, else the head bone nudged to eye level. */
+	bool FromMeshes(const AActor* Actor, FVector& OutEye)
+	{
+		TInlineComponentArray<USkeletalMeshComponent*> Meshes(Actor);
+
+		// Real eye bones (MetaHuman face mesh) are the gold standard.
+		for (const USkeletalMeshComponent* Mesh : Meshes)
+		{
+			if (Mesh->GetBoneIndex(Cinemafy::LeftEyeBone) != INDEX_NONE && Mesh->GetBoneIndex(Cinemafy::RightEyeBone) != INDEX_NONE)
+			{
+				OutEye = 0.5f * (Mesh->GetSocketLocation(Cinemafy::LeftEyeBone) + Mesh->GetSocketLocation(Cinemafy::RightEyeBone));
+				return true;
+			}
+		}
+
+		// The head bone sits at the base of the skull, so nudge up and forward to roughly eye level. "Forward" is the
+		// way the mesh faces: skeletal meshes are authored facing +Y, the component's right vector.
+		for (const USkeletalMeshComponent* Mesh : Meshes)
+		{
+			if (Mesh->GetBoneIndex(Cinemafy::HeadBone) != INDEX_NONE)
+			{
+				OutEye = Mesh->GetSocketLocation(Cinemafy::HeadBone) + FVector::UpVector * 9.f + Mesh->GetRightVector() * 8.f;
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
 FVector UCinemafyFramingLibrary::GetEyePoint(const AActor* Actor)
 {
 	if (!Actor)
 	{
 		return FVector::ZeroVector;
 	}
-
-	TInlineComponentArray<USkeletalMeshComponent*> Meshes(Actor);
-
-	// Real eye bones (MetaHuman face mesh) are the gold standard.
-	for (const USkeletalMeshComponent* Mesh : Meshes)
+	FVector Eye;
+	if (CinemafyEyes::FromMeshes(Actor, Eye))
 	{
-		if (Mesh->GetBoneIndex(Cinemafy::LeftEyeBone) != INDEX_NONE && Mesh->GetBoneIndex(Cinemafy::RightEyeBone) != INDEX_NONE)
+		return Eye;
+	}
+	// A visual stand-in: a body attached to the character (some character systems build the visible body as a
+	// separate actor at runtime, so in the editor the character is an empty capsule: attach a stand-in mesh to it).
+	TArray<AActor*> Attached;
+	Actor->GetAttachedActors(Attached, true, true);
+	for (const AActor* Proxy : Attached)
+	{
+		if (CinemafyEyes::FromMeshes(Proxy, Eye))
 		{
-			return 0.5f * (Mesh->GetSocketLocation(Cinemafy::LeftEyeBone) + Mesh->GetSocketLocation(Cinemafy::RightEyeBone));
+			return Eye;
 		}
 	}
 
-	// The head bone sits at the base of the skull, so nudge up and forward to roughly eye level. "Forward" is the way the
-	// mesh faces: skeletal meshes are authored facing +Y, which is the component's right vector. (A Character rotates its
-	// mesh so that matches the actor's forward; a placed Skeletal Mesh Actor doesn't, so the actor's forward points out
-	// the side of the head and focus landed behind the face.)
-	for (const USkeletalMeshComponent* Mesh : Meshes)
+	// Guessing: say so once per actor, since everything framed on them is framed on a guess.
+	static TSet<FString> Warned;
+	if (Actor->IsA<APawn>() && !Warned.Contains(Actor->GetPathName()))
 	{
-		if (Mesh->GetBoneIndex(Cinemafy::HeadBone) != INDEX_NONE)
-		{
-			return Mesh->GetSocketLocation(Cinemafy::HeadBone) + FVector::UpVector * 9.f + Mesh->GetRightVector() * 8.f;
-		}
+		Warned.Add(Actor->GetPathName());
+		UE_LOG(LogTemp, Warning, TEXT("Cinemafy: %s has no head or eye bone (no skeletal mesh with one, on it or attached to it): shots of them are framed on an estimate from its bounds. Attach a stand-in mesh to it to frame on a real head."), *Actor->GetActorNameOrLabel());
 	}
-
 	FVector Origin, Extent;
 	Actor->GetActorBounds(true, Origin, Extent);
 	return FVector(Origin.X, Origin.Y, Origin.Z + Extent.Z - 12.f);

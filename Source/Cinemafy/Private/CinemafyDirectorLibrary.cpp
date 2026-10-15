@@ -1,4 +1,5 @@
 #include "CinemafyDirectorLibrary.h"
+#include "GameFramework/Pawn.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "GameFramework/Actor.h"
@@ -830,6 +831,31 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		bHasLast = true;
 		Time += Length;
 		Remaining -= Length;
+	}
+
+	// The one speaking isn't a person (a carrier on the radio, a console, a ship): show the thing, framed whole, then
+	// watch whoever hears it. Not a close-up on a hull.
+	if (Line.Speaker && !Line.Speaker->IsA<APawn>())
+	{
+		for (FCinemafyPlannedShot& Shot : Shots)
+		{
+			if (Shot.bLineStart || !Line.Listener)
+			{
+				Shot.ShotType = ECinemafyShotType::Insert;
+				Shot.Subject = Line.Speaker;
+				Shot.Counterpart = Line.Listener;
+				Shot.bIsReaction = false;
+				Shot.Reason = FString::Printf(TEXT("Line %d: Insert on %s (it speaks: shown whole, not as a face)"), LineIndex + 1, *ActorName(Line.Speaker));
+			}
+			else
+			{
+				Shot.ShotType = ECinemafyShotType::MediumCloseUp;
+				Shot.Subject = Line.Listener;
+				Shot.Counterpart = Line.Speaker;
+				Shot.bIsReaction = true;
+				Shot.Reason = FString::Printf(TEXT("Line %d: Medium Close-Up on %s, hearing %s"), LineIndex + 1, *ActorName(Line.Listener), *ActorName(Line.Speaker));
+			}
+		}
 	}
 	return Shots;
 }

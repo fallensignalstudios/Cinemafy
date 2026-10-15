@@ -398,7 +398,8 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @_tool
     @staticmethod
     def set_up_gameplay_blend(blend_in_seconds: float = 1.0, blend_out_seconds: float = 1.0,
-                              include_animations: bool = True, sequence_path: str = '') -> None:
+                              include_animations: bool = True, sequence_path: str = '',
+                              director: unreal.CinemafySceneDirector = None) -> str:
         """Makes the open Level Sequence blend in from and back out to the gameplay camera.
 
         Args:
@@ -406,12 +407,23 @@ class CinemafyTools(unreal.ToolsetDefinition):
             blend_out_seconds: Ease from the last cut back to the gameplay camera.
             include_animations: Also ease characters' first and last animation sections.
             sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
+            director: The scene's director: with its Hand Back To set, the report says how far (yaw) the last shot
+                looks from the gameplay camera. Set hand_back_to on the director before directing to keep it small.
+
+        Returns:
+            What was set up, and the hand-back yaw difference when known.
         """
         sequence = CinemafyTools._require_open_sequence(sequence_path)
         if not sequence.find_tracks_by_type(unreal.MovieSceneCameraCutTrack):
             raise ValueError('The open Level Sequence has no camera cuts.')
         if not _lib.set_up_gameplay_blend_for_open_sequence(blend_in_seconds, blend_out_seconds, include_animations):
             raise RuntimeError('Could not set up the gameplay blend.')
+        report = f'Gameplay blend: {blend_in_seconds:.1f} s in, {blend_out_seconds:.1f} s out.'
+        if director is not None and director.get_editor_property('hand_back_to') is not None:
+            delta = director.get_editor_property('hand_back_yaw_delta')
+            report += f' The last shot looks {delta:.0f} degrees from the gameplay camera'
+            report += ' (a reverse-angle flip on the cut back: consider a longer blend out).' if delta > 90 else '.'
+        return report
 
     @_tool
     @staticmethod

@@ -829,6 +829,8 @@ namespace
 		if (Section)
 		{
 			Section->SetRange(TRange<FFrameNumber>::All());
+			// Whatever the project's default: when the sequence stops, the camera and cast go back as they were.
+			Section->SetCompletionMode(EMovieSceneCompletionMode::RestoreState);
 			Track->AddSection(*Section);
 		}
 		return Section;
@@ -1009,7 +1011,9 @@ namespace
 		{
 			return 0;
 		}
-		Section->SetRange(TRange<FFrameNumber>::All());
+		// Bounded to the keys, and restoring the camera after: no state left behind outside the cut.
+		Section->SetRange(TRange<FFrameNumber>(Keys[0].Frame, Keys.Last().Frame + 1));
+		Section->SetCompletionMode(EMovieSceneCompletionMode::RestoreState);
 		Track->AddSection(*Section);
 		const TArrayView<FMovieSceneDoubleChannel*> Channels = Section->GetChannelProxy().GetChannels<FMovieSceneDoubleChannel>();
 		if (Channels.Num() < 9)
@@ -1970,6 +1974,22 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
 		return 0;
 	}
+	// An establishing shot first: the subject the scene is about, whole, for its first seconds.
+	if (Director->EstablishingSubject && NewPlan[0].Duration > Director->EstablishingSeconds + 0.8f)
+	{
+		FCinemafyPlannedShot Establishing = NewPlan[0];
+		Establishing.ShotType = ECinemafyShotType::Insert;
+		Establishing.Subject = Director->EstablishingSubject;
+		Establishing.Counterpart = nullptr;
+		Establishing.Duration = Director->EstablishingSeconds;
+		Establishing.bIsReaction = false;
+		Establishing.Reason = FString::Printf(TEXT("Establishing: %s"), *Director->EstablishingSubject->GetActorNameOrLabel());
+		NewPlan[0].StartTime += Establishing.Duration;
+		NewPlan[0].Duration -= Establishing.Duration;
+		NewPlan[0].TransitionIn = ECinemafyTransition::Cut;
+		NewPlan[0].bLineStart = false;
+		NewPlan.Insert(Establishing, 0);
+	}
 
 	const FScopedTransaction Transaction(LOCTEXT("DirectScene", "Cinemafy: Direct Scene"));
 	Director->Modify();
@@ -2070,10 +2090,12 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	const bool bFrameAtShotTime = FramingSequencer.IsValid() && FramingSequencer->GetFocusedMovieSceneSequence() == Sequence;
 	const FQualifiedFrameTime FramingRestoreTime = bFrameAtShotTime ? FramingSequencer->GetLocalTime() : FQualifiedFrameTime();
 
+	UMovieSceneCameraCutSection* PreviousCut = nullptr;
+	ACineCameraActor* PreviousCamera = nullptr;
 	for (int32 ShotIndex = 0; ShotIndex < Plan.Num(); ++ShotIndex)
 	{
 		const FCinemafyPlannedShot& Shot = Plan[ShotIndex];
-		const FName ShotTag(*FString::Printf(TEXT("Cinemafy.Shot.%s.%d.%s.%s.%d"), *Director->GetName(), static_cast<int32>(Shot.ShotType),
+		FName ShotTag(*FString::Printf(TEXT("Cinemafy.Shot.%s.%d.%s.%s.%d"), *Director->GetName(), static_cast<int32>(Shot.ShotType),
 			Shot.Subject ? *Shot.Subject->GetName() : TEXT("-"), Shot.Counterpart ? *Shot.Counterpart->GetName() : TEXT("-"), Director->bFlipSide ? 1 : 0));
 
 		ACineCameraActor* Camera = ExistingCameras.FindRef(ShotTag);
@@ -2090,6 +2112,42 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		Request.bUseRecommendedLens = false;
 		Request.Lens = Shot.Lens;
 		Request.bFlipSide = Director->bFlipSide;
+		// The last shot hands back to gameplay: framed from the angle nearest the gameplay camera's (the way the
+		// player faces), on its own camera, so the cut back isn't a reverse-angle flip. Crossing the line costs extra.
+		if (ShotIndex == Plan.Num() - 1 && Director->HandBackTo && Shot.Subject)
+		{
+			const float WantYaw = Director->HandBackTo->GetActorRotation().Yaw;
+			float BestScore = TNumericLimits<float>::Max();
+			float BestDelta = 0.f;
+			FCinemafyShotRequest Best = Request;
+			for (const bool bFlip : { Request.bFlipSide, !Request.bFlipSide })
+			{
+				for (float Angle = -60.f; Angle <= 60.f; Angle += 15.f)
+				{
+					FCinemafyShotRequest Try = Request;
+					Try.bFlipSide = bFlip;
+					Try.AngleOffset = Angle;
+					FCinemafyShotSolution Solved;
+					if (!UCinemafyFramingLibrary::SolveShot(Try, Solved))
+					{
+						continue;
+					}
+					const float Delta = FMath::Abs(FRotator::NormalizeAxis(Solved.CameraTransform.Rotator().Yaw - WantYaw));
+					const float Score = Delta + (bFlip != Request.bFlipSide ? 25.f : 0.f) + FMath::Abs(Angle) * 0.2f;
+					if (Score < BestScore)
+					{
+						BestScore = Score;
+						BestDelta = Delta;
+						Best = Try;
+					}
+				}
+			}
+			Request = Best;
+			ShotTag = FName(*(ShotTag.ToString() + TEXT(".HandBack")));
+			Camera = ExistingCameras.FindRef(ShotTag);
+			Director->HandBackYawDelta = BestDelta;
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: the last shot looks %.0f degrees from the gameplay camera (%s)."), BestDelta, *Director->HandBackTo->GetActorLabel());
+		}
 		// Where the subject stood when the camera was framed: a reused camera is re-framed if they've moved since
 		// (a new take put them elsewhere), and keeps its hand tweaks if they haven't.
 		const FVector SubjectAt = Shot.Subject ? UCinemafyFramingLibrary::GetSubjectTrackPoint(Shot.Subject) : FVector::ZeroVector;
@@ -2168,14 +2226,84 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 
 		const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
 		const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime + Shot.Duration);
+		SceneEnd = FMath::Max(SceneEnd, End);
+
+		// A cut to the same picture is no cut: the same camera again, or another one standing in the same place with
+		// the same lens, just carries on the shot before.
+		auto SameSetup = [](const ACineCameraActor* A, const ACineCameraActor* B)
+		{
+			if (A == B)
+			{
+				return true;
+			}
+			if (!A || !B)
+			{
+				return false;
+			}
+			const float Lens = FMath::Abs(A->GetCineCameraComponent()->CurrentFocalLength - B->GetCineCameraComponent()->CurrentFocalLength);
+			return Lens < 1.f && FVector::Dist(A->GetActorLocation(), B->GetActorLocation()) < 25.f
+				&& A->GetActorQuat().AngularDistance(B->GetActorQuat()) < FMath::DegreesToRadians(3.f);
+		};
+		if (PreviousCut && PreviousCamera && Start <= PreviousCut->GetExclusiveEndFrame() + 1 && SameSetup(Camera, PreviousCamera))
+		{
+			PreviousCut->SetRange(TRange<FFrameNumber>(PreviousCut->GetInclusiveStartFrame(), End));
+			if (TArray<FCameraShotWindow>* Windows = CameraWindows.Find(PreviousCamera); Windows && Windows->Num() > 0)
+			{
+				Windows->Last().End = End;
+			}
+			Director->LastPlanCameras[ShotIndex] = PreviousCamera;
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s (same setup as the shot before: carried on, no cut)"), *Shot.Reason);
+			continue;
+		}
 		if (UMovieSceneCameraCutSection* Cut = CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), Start))
 		{
 			Cut->SetRange(TRange<FFrameNumber>(Start, End));
+			PreviousCut = Cut;
+			PreviousCamera = Camera;
 		}
-		SceneEnd = FMath::Max(SceneEnd, End);
 		CameraWindows.FindOrAdd(Camera).Add({ Start, End, &Shot });
 
 		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Shot.Reason);
+	}
+
+	// Housekeeping on the cut track: this director's cuts stay inside the scene (the track can stretch a first cut back
+	// to frame 0), and back-to-back cuts to the same camera become one.
+	{
+		TSet<FGuid> Ours;
+		for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
+		{
+			Ours.Add(CinemafySequencer::FindBinding(Sequence, Pair.Key));
+		}
+		TArray<UMovieSceneCameraCutSection*> Cuts;
+		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
+		{
+			UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+			if (Cut && Ours.Contains(Cut->GetCameraBindingID().GetGuid()) && Cut->HasStartFrame() && Cut->HasEndFrame())
+			{
+				Cuts.Add(Cut);
+			}
+		}
+		Cuts.Sort([](const UMovieSceneCameraCutSection& A, const UMovieSceneCameraCutSection& B) { return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame(); });
+		CutTrack->Modify();
+		UMovieSceneCameraCutSection* Kept = nullptr;
+		for (UMovieSceneCameraCutSection* Cut : Cuts)
+		{
+			const FFrameNumber From = FMath::Max(Cut->GetInclusiveStartFrame(), SceneStart);
+			const FFrameNumber To = FMath::Min(Cut->GetExclusiveEndFrame(), SceneEnd);
+			if (To <= From)
+			{
+				CutTrack->RemoveSection(*Cut);
+				continue;
+			}
+			if (Kept && Kept->GetCameraBindingID().GetGuid() == Cut->GetCameraBindingID().GetGuid() && From <= Kept->GetExclusiveEndFrame())
+			{
+				Kept->SetRange(TRange<FFrameNumber>(Kept->GetInclusiveStartFrame(), FMath::Max(To, Kept->GetExclusiveEndFrame())));
+				CutTrack->RemoveSection(*Cut);
+				continue;
+			}
+			Cut->SetRange(TRange<FFrameNumber>(From, To));
+			Kept = Cut;
+		}
 	}
 
 	int32 Tracked = 0;
@@ -2243,11 +2371,23 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	}
 
 	// The playback range is the cut: the whole scene fits, and nothing plays on past the last shot (a take keeps
-	// recording after its last line, and with no camera that tail plays black).
+	// recording after its last line, and with no camera that tail plays black). But it never cuts off anything else
+	// in the sequence, and with Keep Playback Range it only ever grows.
 	const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
-	if (Playback.GetUpperBoundValue() != SceneEnd && SceneEnd > Playback.GetLowerBoundValue())
+	FFrameNumber ContentEnd = SceneEnd;
+	for (const UMovieSceneSection* Section : MovieScene->GetAllSections())
 	{
-		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), SceneEnd));
+		const UMovieSceneTrack* Track = Section ? Section->GetTypedOuter<UMovieSceneTrack>() : nullptr;
+		const bool bCinemafys = !Track || Track->IsA<UMovieSceneCameraCutTrack>() || Track->GetDisplayName().ToString().Contains(TEXT("Cinemafy"));
+		if (!bCinemafys && Section->HasEndFrame())
+		{
+			ContentEnd = FMath::Max(ContentEnd, Section->GetExclusiveEndFrame());
+		}
+	}
+	const FFrameNumber NewEnd = Director->bKeepPlaybackRange ? FMath::Max(Playback.GetUpperBoundValue(), SceneEnd) : ContentEnd;
+	if (Playback.GetUpperBoundValue() != NewEnd && NewEnd > Playback.GetLowerBoundValue())
+	{
+		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), NewEnd));
 	}
 
 	CinemafySequencer::NotifyChanged();

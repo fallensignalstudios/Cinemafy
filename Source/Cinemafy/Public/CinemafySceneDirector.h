@@ -117,6 +117,35 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Music", AdvancedDisplay)
 	TObjectPtr<USoundBase> MusicAnalyzedFrom = nullptr;
 
+	/**
+	 * Opens the scene on this (any actor: the carrier the scene is about, the city, a door) for Establishing Seconds,
+	 * framed whole, before the first line's coverage. Empty = no establishing shot.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Coverage")
+	TObjectPtr<AActor> EstablishingSubject = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Coverage", meta = (ClampMin = "1.0", EditCondition = "EstablishingSubject != nullptr"))
+	float EstablishingSeconds = 3.f;
+
+	/**
+	 * Return to gameplay: the player's character the scene hands back to (the gameplay camera looks the way they
+	 * face). The last shot is framed from the angle closest to that, so cutting back to gameplay isn't a reverse-angle
+	 * flip. Empty = no constraint.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Gameplay")
+	TObjectPtr<AActor> HandBackTo = nullptr;
+
+	/** How far (degrees of yaw) the last shot looks from the gameplay camera's direction, after the last cut. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Director|Gameplay")
+	float HandBackYawDelta = 0.f;
+
+	/**
+	 * Leave the sequence's playback range alone except to make room for the cut. Off: the range ends at the last cut
+	 * (a take's silent tail doesn't play black), unless something else in the sequence runs longer.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Sequence")
+	bool bKeepPlaybackRange = false;
+
 	/** Lay each line's body / face animation clips onto the speaker when directing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Director|Audio")
 	bool bPlacePerformances = true;
