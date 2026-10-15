@@ -1,4 +1,6 @@
 #include "CinemafyStoryLibrary.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/Character.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreoTools.h"
 #include "CinemafyPrevis.h"
@@ -379,8 +381,20 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		{
 			if (UClass* Class = Member->CharacterClass.LoadSynchronous())
 			{
-				const FTransform Start = StartMarks.IsValidIndex(Spawned) ? StartMarks[Spawned]->GetActorTransform()
+				FTransform Start = StartMarks.IsValidIndex(Spawned) ? StartMarks[Spawned]->GetActorTransform()
 					: FTransform(FVector(0.f, 200.f * Spawned, 100.f));
+				// Marks sit on the floor; a character's origin is its capsule's center, so stand it on the mark
+				// instead of half through the floor (where it falls out of the world when the take plays).
+				if (StartMarks.IsValidIndex(Spawned))
+				{
+					if (const ACharacter* Template = Cast<ACharacter>(Class->GetDefaultObject()))
+					{
+						if (const UCapsuleComponent* Capsule = Template->GetCapsuleComponent())
+						{
+							Start.AddToTranslation(FVector(0.f, 0.f, Capsule->GetScaledCapsuleHalfHeight() + 2.f));
+						}
+					}
+				}
 				FActorSpawnParameters Params;
 				Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 				Actor = World->SpawnActor<AActor>(Class, Start, Params);

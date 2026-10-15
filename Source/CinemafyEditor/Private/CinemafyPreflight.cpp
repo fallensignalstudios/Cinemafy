@@ -531,7 +531,14 @@ int32 UCinemafyPreflightLibrary::FixAll(UCinemafyScriptProject* Project, const T
 	int32 Fixed = 0;
 	bool bVoiced = false;
 	bool bUpdated = false;
-	for (const FCinemafyCheck& Check : Checks)
+	// Checks come worst first, but casting a template character needs the cast entries Build Cast & Sets makes:
+	// build the cast before anything else.
+	TArray<FCinemafyCheck> Ordered = Checks;
+	Ordered.StableSort([](const FCinemafyCheck& A, const FCinemafyCheck& B)
+	{
+		return A.Fix == ECinemafyFix::BuildCastAndSets && B.Fix != ECinemafyFix::BuildCastAndSets;
+	});
+	for (const FCinemafyCheck& Check : Ordered)
 	{
 		// Opening another level is a decision; the rest is safe to do in one go (once each for the big ones).
 		if (Check.Fix == ECinemafyFix::None || Check.Fix == ECinemafyFix::OpenLevel || Check.Fix == ECinemafyFix::OpenProject

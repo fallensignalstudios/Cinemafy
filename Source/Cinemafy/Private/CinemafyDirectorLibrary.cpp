@@ -594,7 +594,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			if (!Shot.Subject || (UCinemafyFramingLibrary::ShotNeedsCounterpart(Shot.ShotType) && (!Shot.Counterpart || Shot.Counterpart == Shot.Subject)))
 			{
 				// Nobody to share the frame with (or look through): the nearest single on the same subject.
-				Shot.Subject = Shot.Subject ? Shot.Subject : On;
+				if (!Shot.Subject) { Shot.Subject = On; }
 				Shot.ShotType = Shot.ShotType == ECinemafyShotType::POV ? ECinemafyShotType::MediumCloseUp : ECinemafyShotType::MediumShot;
 			}
 			Why = Line.ShotCall.IsEmpty() ? FString(TEXT("forced by the script")) : FString::Printf(TEXT("the script calls \"%s\""), *Line.ShotCall);
