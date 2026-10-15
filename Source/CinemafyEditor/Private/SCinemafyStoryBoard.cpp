@@ -1,5 +1,6 @@
 #include "SCinemafyStoryBoard.h"
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyPreflight.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafyScript.h"
 #include "CinemafyStoryLibrary.h"
@@ -62,6 +63,24 @@ namespace CinemafyStoryBoardUI
 	}
 
 	/** A small modal text box; empty if cancelled. */
+	bool ConfirmDailies()
+	{
+		return FMessageDialog::Open(EAppMsgType::OkCancel, NSLOCTEXT("CinemafyStoryBoard", "DailiesConfirm",
+			"Dailies render with Movie Render Queue to Saved/Cinemafy/Dailies. This replaces the jobs in the editor's render queue. Go ahead?")) == EAppReturnType::Ok;
+	}
+
+	/** Asks first (it replaces the render queue and takes a while), then renders and says where it went. */
+	void RenderFinalAsked(UCinemafyScriptProject* P, const FString& What, bool b4K)
+	{
+		const FText Ask = FText::Format(NSLOCTEXT("CinemafyStoryBoard", "FinalConfirm",
+			"Final render of {0} at {1}: full quality frames (PNG) and the mixed audio (WAV) through Movie Render Queue, to Saved/Cinemafy/Final. It replaces the jobs in the editor's render queue and can take a while. Go ahead?"),
+			FText::FromString(What.IsEmpty() ? FString(TEXT("the whole film")) : What), b4K ? FText::FromString(TEXT("4K")) : FText::FromString(TEXT("1080p")));
+		if (FMessageDialog::Open(EAppMsgType::OkCancel, Ask) == EAppReturnType::Ok)
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::RenderFinal(P, What, b4K, false, 8, false)));
+		}
+	}
+
 	FString AskText(const FText& Title, const FText& Hint)
 	{
 		FString Result;
@@ -254,6 +273,17 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 					const int32 Voiced = UCinemafyStoryLibrary::GenerateScratchVoices(P, FString(), false);
 					FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("Voiced", "Voiced {0} line(s). Previs or re-Direct scenes to hear them; faces with Cinemafy Face talk along."), Voiced));
 				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("LipSync", "Lip-Sync"), LOCTEXT("LipSyncTip", "Real lip-sync for every voiced line with MetaHuman's audio-driven animation (needs the MetaHuman plugin). Faces without it keep the Talk curves."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::GenerateLipSync(P, FString(), false)));
+				})) ]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("UpdateChanged", "Update Changed"), LOCTEXT("UpdateChangedTip", "After re-importing a revised script: re-stage the scenes whose pages changed (hand-edited choreographies are kept), refill their directors' lines, and list lines to re-record."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					const FString Report = UCinemafyStoryLibrary::UpdateChangedScenes(P);
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Map", "Map Scenes"), LOCTEXT("MapTip", "Find this level's Scene Directors and mark their scenes' progress."),
 				WithProject([](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::MapScriptScenesInLevel(P); })) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Masters", "Cut Together"), LOCTEXT("MastersTip", "Build a master sequence per act and for the whole story, and open it."),
@@ -265,7 +295,53 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeToolbar()
 					}
 				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Dailies", "Dailies"), LOCTEXT("DailiesTip", "Render every recorded or directed scene with Movie Render Queue (720p frames) to Saved/Cinemafy/Dailies."),
-				WithProject([](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::RenderDailies(P, FString()); })) ]
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					if (CinemafyStoryBoardUI::ConfirmDailies())
+					{
+						UCinemafyStoryLibrary::RenderDailies(P, FString());
+					}
+				})) ]
+			+ SWrapBox::Slot()
+			[
+				SNew(SComboButton)
+				.ToolTipText(LOCTEXT("FinalTip", "The delivery render: full quality frames and mixed audio for the film or an act."))
+				.ButtonContent()[ SNew(STextBlock).Text(LOCTEXT("Final", "Final Render")) ]
+				.OnGetMenuContent_Lambda([this]()
+				{
+					FMenuBuilder Menu(true, nullptr);
+					TWeakObjectPtr<UCinemafyScriptProject> Weak = Project;
+					auto Add = [&Menu, Weak](const FText& Label, const FString& What, bool b4K)
+					{
+						Menu.AddMenuEntry(Label, FText::GetEmpty(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([Weak, What, b4K]()
+						{
+							if (UCinemafyScriptProject* P = Weak.Get())
+							{
+								CinemafyStoryBoardUI::RenderFinalAsked(P, What, b4K);
+							}
+						})));
+					};
+					if (const UCinemafyScriptProject* P = Project.Get())
+					{
+						Add(LOCTEXT("FinalFilm", "The film (1080p)"), FString(), false);
+						Add(LOCTEXT("FinalFilm4K", "The film (4K)"), FString(), true);
+						for (const FCinemafyScriptAct& ScriptAct : P->Acts)
+						{
+							Add(FText::Format(LOCTEXT("FinalAct", "Act {0}: {1} (1080p)"), FText::FromString(ScriptAct.Id), FText::FromString(ScriptAct.Title)), TEXT("act:") + ScriptAct.Id, false);
+						}
+					}
+					else
+					{
+						Menu.AddMenuEntry(LOCTEXT("FinalNeedProject", "Import or pick a script first"), FText::GetEmpty(), FSlateIcon(), FUIAction());
+					}
+					return Menu.MakeWidget();
+				})
+			]
+			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Preflight", "Pre-flight"), LOCTEXT("PreflightTip", "Check the whole project for what's missing (cast, marks, nav mesh, voices, revisions) and fix it."),
+				WithProject([](UCinemafyScriptProject* P)
+				{
+					UCinemafyPreflightLibrary::ShowPreflight(P, FString(), LOCTEXT("PreflightTitle", "Pre-flight check"), FText::GetEmpty(), FText::GetEmpty());
+				})) ]
 			+ SWrapBox::Slot()[ ToolButton(LOCTEXT("Paperwork", "Paperwork"), LOCTEXT("PaperworkTip", "Voice-over scripts per actor, subtitles, a localization string table, shot lists and an HTML storyboard."),
 				WithProject([](UCinemafyScriptProject* P)
 				{
@@ -361,6 +437,43 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 	{
 		Meta += TEXT(" | action");
 	}
+	// A game's scene: how it's presented, who has control either side, its inserts; the contract in the tooltip.
+	const FCinemafyGameContract& Game = Scene.Game;
+	if (Game.Presentation != ECinemafyPresentation::Screenplay)
+	{
+		Meta += FString::Printf(TEXT("\n%s | %s -> %s"), *StaticEnum<ECinemafyPresentation>()->GetDisplayNameTextByValue(static_cast<int64>(Game.Presentation)).ToString(),
+			Game.ControlBefore.IsEmpty() ? TEXT("?") : *Game.ControlBefore, Game.ControlAfter.IsEmpty() ? TEXT("?") : *Game.ControlAfter);
+		if (Scene.Inserts.Num() > 0)
+		{
+			int32 Shot = 0;
+			for (const FCinemafySceneInsert& Insert : Scene.Inserts)
+			{
+				Shot += Insert.Sequence.IsNull() ? 0 : 1;
+			}
+			Meta += FString::Printf(TEXT(" | %d inserts (%d shot)"), Scene.Inserts.Num(), Shot);
+		}
+		if (!Game.bSkippable)
+		{
+			Meta += TEXT(" | unskippable");
+		}
+		Tip += TEXT("\n\nTrigger: ") + Game.Trigger;
+		if (!Game.EntryState.IsEmpty())
+		{
+			Tip += TEXT("\nEntry: ") + Game.EntryState;
+		}
+		for (const FString& State : Game.ExitState)
+		{
+			Tip += TEXT("\nCommits: ") + State;
+		}
+		if (!Game.Handoff.IsEmpty())
+		{
+			Tip += TEXT("\nThen: ") + Game.Handoff;
+		}
+		if (!Game.CameraNotes.IsEmpty())
+		{
+			Tip += TEXT("\nCamera: ") + Game.CameraNotes;
+		}
+	}
 
 	Card->AddSlot().AutoHeight().Padding(4.f, 4.f, 4.f, 0.f)
 	[
@@ -397,6 +510,35 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 			}
 		}
 	}
+	if (Scene.IsOutOfDate())
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("OutOfDate", "Out of date: the script changed"))
+			.ColorAndOpacity(FLinearColor(1.f, 0.55f, 0.1f))
+		];
+		Tip += TEXT("\nThe pages changed since this scene was staged: Update Changed, or Previs again.");
+	}
+	else if (Scene.Revision == ECinemafySceneRevision::Rewritten || (Scene.Revision == ECinemafySceneRevision::New && Project.IsValid() && !Project->RevisionReport.IsEmpty()))
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(Scene.Revision == ECinemafySceneRevision::New ? LOCTEXT("RevNew", "New in this revision") : LOCTEXT("RevRewritten", "Rewritten in this revision"))
+			.ColorAndOpacity(FLinearColor(0.5f, 0.8f, 1.f))
+		];
+	}
+	const int32 Rerecord = Scene.Lines.FilterByPredicate([](const FCinemafyScriptLine& Line) { return Line.bNeedsRerecord; }).Num();
+	if (Rerecord > 0)
+	{
+		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
+		[
+			SNew(STextBlock)
+			.Text(FText::Format(LOCTEXT("Rerecord", "{0} line(s) to re-record"), Rerecord))
+			.ColorAndOpacity(FLinearColor(1.f, 0.55f, 0.1f))
+		];
+	}
 	if (Scene.Warnings.Num() > 0)
 	{
 		Card->AddSlot().AutoHeight().Padding(4.f, 0.f)
@@ -408,6 +550,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 	}
 
 	TArray<TSoftObjectPtr<ULevelSequence>> Takes = Scene.Takes;
+	const int32 InsertCount = Scene.Inserts.Num();
 	Card->AddSlot().AutoHeight().Padding(2.f, 4.f)
 	[
 		SNew(SHorizontalBox)
@@ -416,8 +559,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 			ToolButton(LOCTEXT("Previs", "Previs"), LOCTEXT("PrevisTip", "Stage this scene from the script and record a take."),
 				Act([](UCinemafyScriptProject* P, const FString& Id)
 				{
-					const FString Report = UCinemafyStoryLibrary::PrevisScene(P, Id, true);
-					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
+					UCinemafyPreflightLibrary::PrevisWithPreflight(P, Id, true);
 				}))
 		]
 		+ SHorizontalBox::Slot().AutoWidth().Padding(1.f)
@@ -446,7 +588,7 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 		[
 			SNew(SComboButton)
 			.ButtonContent()[ SNew(STextBlock).Text(LOCTEXT("More", "...")) ]
-			.OnGetMenuContent_Lambda([this, WeakProject, SceneId, Takes]()
+			.OnGetMenuContent_Lambda([this, WeakProject, SceneId, Takes, InsertCount]()
 			{
 				FMenuBuilder Menu(true, nullptr);
 				Menu.BeginSection("Status", LOCTEXT("StatusSection", "Status"));
@@ -473,7 +615,15 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 						}
 					})));
 				};
-				Entry(LOCTEXT("StageOnly", "Stage without recording"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::PrevisScene(P, SceneId, false); });
+				Entry(LOCTEXT("StageOnly", "Stage without recording"), [SceneId](UCinemafyScriptProject* P) { UCinemafyPreflightLibrary::PrevisWithPreflight(P, SceneId, false); });
+				// A gameplay bridge's inserts, each its own sequence.
+				for (int32 Insert = 1; Insert <= InsertCount; ++Insert)
+				{
+					const FString InsertId = FString::Printf(TEXT("%s#%d"), *SceneId, Insert);
+					Entry(FText::Format(LOCTEXT("PrevisInsert", "Insert {0}: Previs"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyPreflightLibrary::PrevisWithPreflight(P, InsertId, true); });
+					Entry(FText::Format(LOCTEXT("OpenInsert", "Insert {0}: Open its sequence"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::OpenSceneSequence(P, InsertId); });
+					Entry(FText::Format(LOCTEXT("DirectInsert", "Insert {0}: New Scene Director"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, InsertId); });
+				}
 				Entry(LOCTEXT("Continuity", "Dress the cast for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneContinuity(P, SceneId); });
 				Entry(LOCTEXT("NewDirector", "New Scene Director from the script"), [SceneId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, SceneId); });
 				Entry(LOCTEXT("ScratchScene", "Scratch voices for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::GenerateScratchVoices(P, SceneId, true); });
@@ -482,12 +632,38 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 					const FString Text = CinemafyStoryBoardUI::AskText(LOCTEXT("AddNoteTitle", "Review note"), LOCTEXT("AddNoteHint", "What should change in this scene?"));
 					UCinemafyStoryLibrary::AddReviewNote(P, SceneId, Text);
 				});
-				Entry(LOCTEXT("RenderDaily", "Render a daily"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::RenderDailies(P, SceneId); });
+				Entry(LOCTEXT("RenderDaily", "Render a daily"), [SceneId](UCinemafyScriptProject* P)
+				{
+					if (CinemafyStoryBoardUI::ConfirmDailies())
+					{
+						UCinemafyStoryLibrary::RenderDailies(P, SceneId);
+					}
+				});
+				Entry(LOCTEXT("LipSyncScene", "Lip-sync (MetaHuman)"), [SceneId](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::GenerateLipSync(P, SceneId, false)));
+				});
+				Entry(LOCTEXT("DressSet", "Dress the set (placeholder props)"), [SceneId](UCinemafyScriptProject* P)
+				{
+					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::DressSet(P, SceneId)));
+				});
+				Entry(LOCTEXT("FinalScene", "Final render (1080p)"), [SceneId](UCinemafyScriptProject* P) { CinemafyStoryBoardUI::RenderFinalAsked(P, SceneId, false); });
+				Entry(LOCTEXT("FinalScene4K", "Final render (4K)"), [SceneId](UCinemafyScriptProject* P) { CinemafyStoryBoardUI::RenderFinalAsked(P, SceneId, true); });
+				Entry(LOCTEXT("CheckScene", "Pre-flight check"), [SceneId](UCinemafyScriptProject* P)
+				{
+					UCinemafyPreflightLibrary::ShowPreflight(P, SceneId, FText::Format(LOCTEXT("CheckSceneTitle", "Pre-flight: {0}"), FText::FromString(SceneId)), FText::GetEmpty(), FText::GetEmpty());
+				});
 				Entry(LOCTEXT("Mood", "Set the mood (style, music, ambience)"), [SceneId](UCinemafyScriptProject* P)
 				{
 					FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, false)));
 				});
-				Entry(LOCTEXT("LightSet", "Light the set for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, true); });
+				Entry(LOCTEXT("LightSet", "Light the set for this scene"), [SceneId](UCinemafyScriptProject* P)
+				{
+					if (FMessageDialog::Open(EAppMsgType::OkCancel, LOCTEXT("LightConfirm", "Light the set: this sets the director's style, temp music and ambience, and turns the level's sun and sky lights to the scene's time of day. Ctrl+Z undoes it.")) == EAppReturnType::Ok)
+					{
+						FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::ApplySceneMood(P, SceneId, true)));
+					}
+				});
 				Entry(LOCTEXT("NewTake", "New take (keep this one)"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::NewTake(P, SceneId); });
 				for (int32 Take = 0; Take < Takes.Num(); ++Take)
 				{

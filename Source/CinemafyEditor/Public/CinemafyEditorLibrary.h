@@ -268,6 +268,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
 	static ACinemafySceneDirector* CreateDirectorForScene(UCinemafyScriptProject* Project, const FString& SceneId);
 
+	/**
+	 * Refills a script-linked director's lines from the current script. Lines whose words didn't change keep their
+	 * hand tweaks (speaker, listener, audio, emotion, cut notes); rewritten and new lines come in fresh, cut lines go.
+	 * Returns how many lines changed (-1 when the director isn't linked to a script scene).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static int32 RefreshDirectorFromScript(ACinemafySceneDirector* Director);
+
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
 	static bool SetScriptSceneStatus(UCinemafyScriptProject* Project, const FString& SceneId, ECinemafySceneStatus Status);
 

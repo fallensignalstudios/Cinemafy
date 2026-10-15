@@ -165,6 +165,39 @@ int32 UCinemafyStoryLibrary::BuildCastAndSets(UCinemafyScriptProject* Project)
 			Set->Level = World;
 		}
 	}
+
+	// What each set needs dressing with, from its scenes' action (art's meshes and choices are kept).
+	for (FCinemafySet& Set : Project->Sets)
+	{
+		for (FCinemafySetPiece& Piece : Set.Dressing)
+		{
+			Piece.Scenes.Reset();
+			Piece.UsedBy.Reset();
+		}
+	}
+	for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		FCinemafySet* Set = Project->Sets.FindByPredicate([Scene](const FCinemafySet& S) { return S.ScriptLocation.Equals(Scene->Location, ESearchCase::IgnoreCase); });
+		if (!Set || Scene->Status == ECinemafySceneStatus::Cut)
+		{
+			continue;
+		}
+		for (const FCinemafySetPiece& Found : UCinemafyPrevisLibrary::FindSetDressing(*Scene))
+		{
+			FCinemafySetPiece* Piece = Set->Dressing.FindByPredicate([&Found](const FCinemafySetPiece& P) { return P.Name.Equals(Found.Name, ESearchCase::IgnoreCase); });
+			if (!Piece)
+			{
+				Piece = &Set->Dressing.Add_GetRef(Found);
+				Piece->Scenes.Reset();
+				Piece->UsedBy.Reset();
+			}
+			Piece->Scenes.AddUnique(Scene->Id);
+			for (const FString& Who : Found.UsedBy)
+			{
+				Piece->UsedBy.AddUnique(Who);
+			}
+		}
+	}
 	Project->MarkPackageDirty();
 	return Added;
 }
@@ -240,13 +273,19 @@ ULevelSequence* UCinemafyStoryLibrary::OpenSceneSequence(UCinemafyScriptProject*
 	{
 		return nullptr;
 	}
-	ULevelSequence* Sequence = Scene->Sequence.LoadSynchronous();
+	// "<scene>#<n>": one insert of a gameplay bridge, with a sequence of its own.
+	FCinemafySceneInsert* Insert = Project->FindInsert(SceneId);
+	TSoftObjectPtr<ULevelSequence>& Slot = Insert ? Insert->Sequence : Scene->Sequence;
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
+	ULevelSequence* Sequence = Slot.LoadSynchronous();
 	if (!Sequence)
 	{
 		const FString Place = FPaths::MakeValidFileName(Scene->Location.IsEmpty() ? FString(TEXT("Scene")) : Scene->Location).Replace(TEXT(" "), TEXT("_"));
+		const FString Id = Scene->Id.Replace(TEXT("."), TEXT("_")) + (Insert ? FString::Printf(TEXT("_I%d"), InsertIndex) : FString());
 		IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
 		FString PackageName, AssetName;
-		AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("/Game/Cinemafy/Scenes/SC_%s_%s"), *Scene->Id.Replace(TEXT("."), TEXT("_")), *Place), TEXT(""), PackageName, AssetName);
+		AssetTools.CreateUniqueAssetName(FString::Printf(TEXT("/Game/Cinemafy/Scenes/SC_%s_%s"), *Id, *Place.Left(40)), TEXT(""), PackageName, AssetName);
 		UPackage* Package = CreatePackage(*PackageName);
 		Sequence = NewObject<ULevelSequence>(Package, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
 		Sequence->Initialize();
@@ -256,10 +295,26 @@ ULevelSequence* UCinemafyStoryLibrary::OpenSceneSequence(UCinemafyScriptProject*
 		FAssetRegistryModule::AssetCreated(Sequence);
 		Package->MarkPackageDirty();
 		Project->Modify();
-		Scene->Sequence = Sequence;
+		Slot = Sequence;
 	}
 	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Sequence);
 	return Sequence;
+}
+
+namespace CinemafyRevision
+{
+	/** A fingerprint of a choreography's beats as staged (what, where, at whom, which line): changes mean hand edits. */
+	FString BeatPrint(const ACinemafyChoreography* Choreo)
+	{
+		FString Words;
+		for (const FCinemafyChoreoBeat& Beat : Choreo->Beats)
+		{
+			const FIntVector Rounded(FMath::RoundToInt(Beat.Location.X / 10.f), FMath::RoundToInt(Beat.Location.Y / 10.f), FMath::RoundToInt(Beat.Location.Z / 10.f));
+			Words += FString::Printf(TEXT("|%s|%s|%s|%s|%d|%s"), *Beat.Prompt, *Rounded.ToString(), Beat.Target ? *Beat.Target->GetName() : TEXT(""),
+				*Beat.Dialogue.ToString(), static_cast<int32>(Beat.Arrival), Beat.AnimationOverride ? *Beat.AnimationOverride->GetName() : TEXT(""));
+		}
+		return FString::Printf(TEXT("%08X"), FCrc::StrCrc32(*Words));
+	}
 }
 
 FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bRecord)
@@ -288,9 +343,13 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		Report.Add(FString::Printf(TEXT("Note: %s is set in %s, but %s is open. Staging here anyway."), *Scene->Location, *Set->Level.GetAssetName(), *World->GetMapName()));
 	}
 
-	// The staging, from the script.
+	// The staging, from the script (one insert of a gameplay bridge: just its lines).
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
+	const bool bInsert = Project->FindInsert(SceneId) != nullptr;
+	const FString TargetId = bInsert ? FString::Printf(TEXT("%s#%d"), *Scene->Id, InsertIndex) : Scene->Id;
 	TArray<FString> NotStaged;
-	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(*Scene, NotStaged);
+	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(UCinemafyScriptLibrary::SceneForInsert(*Scene, bInsert ? InsertIndex : 0), NotStaged);
 
 	// The cast on set: who's here, who has to be brought in.
 	TArray<FString> Characters;
@@ -345,8 +404,9 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	}
 	ApplySceneContinuity(Project, SceneId);
 
-	// Last pass's previs for this scene goes; the new one is built fresh.
-	const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *Scene->Id.Replace(TEXT("."), TEXT("_")));
+	// Last pass's previs for this scene goes; the new one is built fresh. Choreographies changed by hand since
+	// they were generated are kept (renamed Edited_..., sitting out takes) so no work is lost.
+	const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *TargetId.Replace(TEXT("."), TEXT("_")).Replace(TEXT("#"), TEXT("_I")));
 	TArray<ACinemafyChoreography*> Old;
 	for (TActorIterator<ACinemafyChoreography> It(World); It; ++It)
 	{
@@ -357,6 +417,16 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	}
 	for (ACinemafyChoreography* Choreo : Old)
 	{
+		const FString Label = Choreo->GetActorLabel();
+		const FString* Generated = Scene->GeneratedPrints.Find(Label);
+		if (Generated && *Generated != CinemafyRevision::BeatPrint(Choreo))
+		{
+			Choreo->Modify();
+			Choreo->SetActorLabel(TEXT("Edited_") + Label);
+			Choreo->bIncludeInTakes = false;
+			Report.Add(FString::Printf(TEXT("Kept your edits: %s is now Edited_%s (out of takes). Copy beats across, or delete it."), *Label, *Label));
+			continue;
+		}
 		World->EditorDestroyActor(Choreo, true);
 	}
 	// Other choreographies in the level sit this take out (Include In Takes is turned off on them; turn it back on to mix them in).
@@ -393,7 +463,16 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 				const FString Label = It->GetActorLabel().ToLower().Replace(TEXT("_"), TEXT(" "));
 				if (*It != Performer && !It->IsA<ACinemafyChoreography>() && (Label.Contains(Wanted) || (Wanted.Len() > 4 && Wanted.Contains(Label) && Label.Len() >= 4)))
 				{
-					return It->GetActorLocation();
+					if (Beat.Prompt == TEXT("vault") || Beat.Prompt == TEXT("climb") || Beat.Prompt == TEXT("jump"))
+					{
+						return It->GetActorLocation(); // Over it: the traversal plans its own line-up.
+					}
+					// Up to it, not into it: the near edge on their side, on the floor.
+					FVector Center, Extent;
+					It->GetActorBounds(true, Center, Extent);
+					FVector Side = (Performer->GetActorLocation() - Center).GetSafeNormal2D();
+					Side = Side.IsNearlyZero() ? FVector::ForwardVector : Side;
+					return FVector(Center.X, Center.Y, Center.Z - Extent.Z) + Side * (FMath::Max(Extent.X, Extent.Y) + 60.f);
 				}
 			}
 			bOutResolved = false;
@@ -461,6 +540,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 			{
 				Added.Dialogue = FText::FromString(Beat.Line);
 				Added.DialogueAudio = Beat.LineAudio.LoadSynchronous();
+				Added.LineDirection = Beat.LineDirection;
 				Added.Listener = Target;
 			}
 			if (AActor* const* Cue = Actors.Find(Beat.WaitFor))
@@ -471,9 +551,11 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		}
 		++BeatCount;
 	}
+	Project->Modify();
 	for (const TPair<FString, ACinemafyChoreography*>& Pair : Choreos)
 	{
 		Pair.Value->RefreshLabels();
+		Scene->GeneratedPrints.Add(Pair.Value->GetActorLabel(), CinemafyRevision::BeatPrint(Pair.Value));
 	}
 	Report.Add(FString::Printf(TEXT("Staged %d beat(s) for %d character(s)."), BeatCount, Choreos.Num()));
 	for (const FString& Clause : NotStaged)
@@ -486,7 +568,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	ACinemafySceneDirector* Director = nullptr;
 	for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
 	{
-		if (It->ScriptProject == Project && It->ScriptSceneId == Scene->Id)
+		if (It->ScriptProject == Project && It->ScriptSceneId == TargetId)
 		{
 			Director = *It;
 			break;
@@ -494,8 +576,14 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	}
 	if (!Director)
 	{
-		Director = UCinemafyEditorLibrary::CreateDirectorForScene(Project, Scene->Id);
+		Director = UCinemafyEditorLibrary::CreateDirectorForScene(Project, TargetId);
 	}
+	else if (Scene->IsOutOfDate())
+	{
+		const int32 Changed = UCinemafyEditorLibrary::RefreshDirectorFromScript(Director);
+		Report.Add(FString::Printf(TEXT("The script changed: %d of the director's line(s) updated (unchanged lines keep your tweaks)."), FMath::Max(0, Changed)));
+	}
+	Scene->StagedHash = Scene->ContentHash;
 
 	ACinemafyChoreography* Primary = nullptr;
 	for (const TPair<FString, ACinemafyChoreography*>& Pair : Choreos)
@@ -528,6 +616,88 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		CinemafyChoreoTake::PerformAndRecord(Primary, /*bAskAboutProblems*/ false);
 		Report.Add(TEXT("Recording: play stops by itself, then the take is baked and cut into the scene's sequence."));
 	}
+	const FString Text = FString::Join(Report, TEXT("\n"));
+	UE_LOG(LogCinemafy, Log, TEXT("%s"), *Text);
+	return Text;
+}
+
+FString UCinemafyStoryLibrary::UpdateChangedScenes(UCinemafyScriptProject* Project)
+{
+	UWorld* World = CinemafyStory::EditorWorld();
+	if (!Project || !World)
+	{
+		return TEXT("No script project, or no level open.");
+	}
+	if (GEditor->PlayWorld)
+	{
+		return TEXT("Stop the play session first.");
+	}
+	TArray<FString> Report;
+	TArray<FString> Ids;
+	for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		if (Scene->IsOutOfDate() && Scene->Status != ECinemafySceneStatus::Cut)
+		{
+			Ids.Add(Scene->Id);
+		}
+	}
+	int32 Updated = 0;
+	for (const FString& Id : Ids)
+	{
+		FCinemafyScriptScene* Scene = Project->FindScene(Id);
+		if (!Scene->Level.IsNull() && Scene->Level.ToSoftObjectPath() != FSoftObjectPath(World))
+		{
+			Report.Add(FString::Printf(TEXT("%s %s: staged in %s; open it and update again."), *Scene->Id, *Scene->Heading, *Scene->Level.GetAssetName()));
+			continue;
+		}
+		const FString Prefix = FString::Printf(TEXT("Previs_%s_"), *Scene->Id.Replace(TEXT("."), TEXT("_")));
+		bool bPrevisd = false;
+		for (TActorIterator<ACinemafyChoreography> It(World); It && !bPrevisd; ++It)
+		{
+			bPrevisd = It->GetActorLabel().StartsWith(Prefix);
+		}
+		if (bPrevisd)
+		{
+			Report.Add(PrevisScene(Project, Id, false));
+			Report.Add(TEXT("  Re-staged: Perform & Record (or Previs) to shoot the new version."));
+			++Updated;
+			continue;
+		}
+		ACinemafySceneDirector* Director = nullptr;
+		for (TActorIterator<ACinemafySceneDirector> It(World); It; ++It)
+		{
+			if (It->ScriptProject == Project && It->ScriptSceneId == Scene->Id)
+			{
+				Director = *It;
+				break;
+			}
+		}
+		if (Director)
+		{
+			const int32 Changed = UCinemafyEditorLibrary::RefreshDirectorFromScript(Director);
+			Report.Add(FString::Printf(TEXT("%s %s: %d director line(s) updated. Direct again to re-cut."), *Scene->Id, *Scene->Heading, FMath::Max(0, Changed)));
+			++Updated;
+		}
+		else
+		{
+			Report.Add(FString::Printf(TEXT("%s %s: nothing of it in this level; Previs it again."), *Scene->Id, *Scene->Heading));
+		}
+	}
+
+	// The booth's list.
+	for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+	{
+		for (const FCinemafyScriptLine& Line : Scene->Lines)
+		{
+			if (Line.bNeedsRerecord)
+			{
+				Report.Add(FString::Printf(TEXT("Re-record %s (%s): \"%s\" (was \"%s\")"), *Line.LineId, *Line.Speaker, *Line.Text, *Line.PreviousText));
+			}
+		}
+	}
+	Report.Insert(Ids.Num() == 0 ? FString(TEXT("Every staged scene matches the script.")) :
+		FString::Printf(TEXT("Updated %d of %d out-of-date scene(s)."), Updated, Ids.Num()), 0);
+	Project->MarkPackageDirty();
 	const FString Text = FString::Join(Report, TEXT("\n"));
 	UE_LOG(LogCinemafy, Log, TEXT("%s"), *Text);
 	return Text;
@@ -701,7 +871,7 @@ bool UCinemafyStoryLibrary::MoveScene(UCinemafyScriptProject* Project, const FSt
 					for (int32 S = 0; S < Scenes.Num(); ++S)
 					{
 						const FString NewId = FString::Printf(TEXT("%d.%d.%d"), A + 1, C + 1, S + 1);
-						if (Scenes[S].Id != NewId)
+						if (!Scenes[S].bFixedId && Scenes[S].Id != NewId)
 						{
 							Renamed.Add(Scenes[S].Id, NewId);
 							Scenes[S].Id = NewId;
@@ -743,10 +913,20 @@ void UCinemafyStoryLibrary::OpenStoryBoard(UCinemafyScriptProject* Project)
 namespace CinemafyVoices
 {
 	/** Speaks Text into a .wav with the platform's voices. */
-	bool Synthesize(const FString& Text, const FString& Voice, float Rate, const FString& WavPath)
+	bool Synthesize(const FString& Text, const FString& InVoice, float Rate, float Volume, bool bWhisper, const FString& WavPath)
 	{
 		const FString TextPath = FPaths::ChangeExtension(WavPath, TEXT("txt"));
-		FFileHelper::SaveStringToFile(Text, *TextPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+		FString Voice = InVoice;
+		FString Spoken = Text;
+#if PLATFORM_MAC
+		// macOS speech takes loudness inline; a whisper uses the Whisper voice unless the cast picked one.
+		Spoken = FString::Printf(TEXT("[[volm %.2f]] %s"), FMath::Clamp(Volume, 0.1f, 1.f), *Text);
+		if (bWhisper && Voice.IsEmpty())
+		{
+			Voice = TEXT("Whisper");
+		}
+#endif
+		FFileHelper::SaveStringToFile(Spoken, *TextPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 		IFileManager::Get().Delete(*WavPath, false, true, true);
 		int32 Code = -1;
 		FString Out, Err;
@@ -758,15 +938,16 @@ namespace CinemafyVoices
 #elif PLATFORM_WINDOWS
 		const int32 SpeechRate = FMath::Clamp(FMath::RoundToInt((Rate - 1.f) * 10.f), -10, 10);
 		const FString Script = FString::Printf(
-			TEXT("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; %s$s.Rate = %d; ")
+			TEXT("Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; %s$s.Rate = %d; $s.Volume = %d; ")
 			TEXT("$s.SetOutputToWaveFile('%s'); $s.Speak([IO.File]::ReadAllText('%s')); $s.Dispose()"),
 			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("try { $s.SelectVoice('%s') } catch {}; "), *Voice.Replace(TEXT("'"), TEXT("''"))),
-			SpeechRate, *WavPath.Replace(TEXT("'"), TEXT("''")), *TextPath.Replace(TEXT("'"), TEXT("''")));
+			SpeechRate, FMath::Clamp(FMath::RoundToInt(Volume * 100.f), 5, 100), *WavPath.Replace(TEXT("'"), TEXT("''")), *TextPath.Replace(TEXT("'"), TEXT("''")));
 		FPlatformProcess::ExecProcess(TEXT("powershell.exe"), *FString::Printf(TEXT("-NoProfile -NonInteractive -Command \"%s\""), *Script), &Code, &Out, &Err);
 #else
 		const int32 WordsPerMinute = FMath::RoundToInt(165.f * Rate);
-		const FString Params = FString::Printf(TEXT("%s-s %d -w \"%s\" -f \"%s\""),
-			Voice.IsEmpty() ? TEXT("") : *FString::Printf(TEXT("-v %s "), *Voice), WordsPerMinute, *WavPath, *TextPath);
+		const FString Params = FString::Printf(TEXT("%s-s %d -a %d -w \"%s\" -f \"%s\""),
+			Voice.IsEmpty() ? (bWhisper ? TEXT("-v en+whisper ") : TEXT("")) : *FString::Printf(TEXT("-v %s "), *Voice), WordsPerMinute,
+			FMath::Clamp(FMath::RoundToInt(Volume * 100.f), 10, 200), *WavPath, *TextPath);
 		FPlatformProcess::ExecProcess(TEXT("/usr/bin/espeak-ng"), *Params, &Code, &Out, &Err);
 		if (!FPaths::FileExists(WavPath))
 		{
@@ -799,6 +980,7 @@ namespace CinemafyVoices
 					Line.Audio = Audio;
 					Line.bUseAudioDuration = true;
 					Line.Analysis = FCinemafyAudioAnalysis();
+					Line.FaceAnimation = nullptr; // Made from the old audio.
 				}
 			}
 		}
@@ -833,7 +1015,10 @@ int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Proje
 			}
 			const FCinemafyCastMember* Member = Project->FindCastMember(Line.Speaker);
 			const FString Wav = Folder / (Line.LineId + TEXT(".wav"));
-			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), Member ? Member->ScratchRate : 1.f, Wav))
+			// Read the way the script directs it: "(whispering)" quiet and slow, "(shouting)" loud and quick.
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(Line.Direction, Line.Text);
+			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), (Member ? Member->ScratchRate : 1.f) * Delivery.Rate,
+				Delivery.Volume, Delivery.bWhisper, Wav))
 			{
 				Spoken.Add({ &Line, Wav });
 			}
@@ -933,6 +1118,8 @@ int32 UCinemafyStoryLibrary::AssignRecordedVoices(UCinemafyScriptProject* Projec
 			}
 			Line.Audio = Sound;
 			Line.bScratchAudio = false;
+			Line.bNeedsRerecord = false;
+			Line.PreviousText.Reset();
 			CinemafyVoices::ShareWithDirectors(World, Line.Text, Sound);
 			++Matched;
 		}
@@ -971,7 +1158,8 @@ void UCinemafyStoryLibrary::BakeTalkCurves(ULevelSequence* Sequence, const TArra
 	for (const FCinemafyLine& Line : Lines)
 	{
 		const TArray<float>& Open = Line.Analysis.TalkOpen;
-		UCinemafyFaceComponent* Face = Line.Speaker && Line.Audio ? Line.Speaker->FindComponentByClass<UCinemafyFaceComponent>() : nullptr;
+		// A line with a real face performance (MetaHuman lip-sync) doesn't need the stand-in.
+		UCinemafyFaceComponent* Face = Line.Speaker && Line.Audio && !Line.FaceAnimation ? Line.Speaker->FindComponentByClass<UCinemafyFaceComponent>() : nullptr;
 		if (Face && Open.Num() > 0)
 		{
 			FFaceChannels* Channels = Faces.Find(Face);

@@ -46,6 +46,8 @@
 #include "IAssetTools.h"
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
 #include "Sections/MovieSceneCameraCutSection.h"
 #include "Sections/MovieSceneByteSection.h"
 #include "Sections/MovieSceneFloatSection.h"
@@ -1552,7 +1554,15 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 			if (FCinemafyScriptScene* Scene = Director->ScriptProject->FindScene(Director->ScriptSceneId))
 			{
 				Director->ScriptProject->Modify();
-				Scene->Sequence = Sequence;
+				// An insert of a gameplay bridge keeps its own sequence; the scene counts as directed once any of it is.
+				if (FCinemafySceneInsert* Insert = Director->ScriptProject->FindInsert(Director->ScriptSceneId))
+				{
+					Insert->Sequence = Sequence;
+				}
+				else
+				{
+					Scene->Sequence = Sequence;
+				}
 				Scene->Level = Director->GetWorld();
 				Scene->DirectorLabel = Director->GetActorLabel();
 				if (Scene->Status < ECinemafySceneStatus::Directed)
@@ -3238,6 +3248,43 @@ namespace CinemafyScriptEditor
 		return Project;
 	}
 
+	/**
+	 * A script file's text. A PDF (a printed screenplay) goes through pdftotext, from poppler (Homebrew's
+	 * "brew install poppler" on a Mac, "poppler-utils" on Linux, or on the PATH on Windows).
+	 */
+	bool LoadScriptText(const FString& FilePath, FString& OutText)
+	{
+		if (!FPaths::GetExtension(FilePath).Equals(TEXT("pdf"), ESearchCase::IgnoreCase))
+		{
+			return FFileHelper::LoadFileToString(OutText, *FilePath);
+		}
+		TArray<FString> Tools = { TEXT("/opt/homebrew/bin/pdftotext"), TEXT("/usr/local/bin/pdftotext"), TEXT("/usr/bin/pdftotext") };
+		const FString Out = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cinemafy") / (FPaths::GetBaseFilename(FilePath) + TEXT(".txt")));
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(Out), true);
+		const FString Args = FString::Printf(TEXT("-layout -enc UTF-8 \"%s\" \"%s\""), *FilePath, *Out);
+		int32 Code = -1;
+		FString StdOut, StdErr;
+		for (const FString& Tool : Tools)
+		{
+			if (FPaths::FileExists(Tool) && FPlatformProcess::ExecProcess(*Tool, *Args, &Code, &StdOut, &StdErr) && Code == 0)
+			{
+				break;
+			}
+		}
+		if (Code != 0)
+		{
+			// Last try: whatever pdftotext is on the PATH.
+			FPlatformProcess::ExecProcess(TEXT("pdftotext"), *Args, &Code, &StdOut, &StdErr);
+		}
+		if (Code != 0 || !FFileHelper::LoadFileToString(OutText, *Out))
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't read the PDF %s. Install poppler for pdftotext (Mac: brew install poppler), or export the screenplay as Fountain or Final Draft (.fdx)."), *FilePath);
+			return false;
+		}
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: read the PDF screenplay %s (text kept at %s)."), *FilePath, *Out);
+		return true;
+	}
+
 	/** An actor in the level for a script name: label equal, then a character whose label contains the name (or its last word). */
 	AActor* FindActorForName(UWorld* World, const FString& ScriptName)
 	{
@@ -3272,7 +3319,7 @@ namespace CinemafyScriptEditor
 UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptFile(const FString& FilePath, const FString& Name)
 {
 	FString Text;
-	if (!FFileHelper::LoadFileToString(Text, *FilePath))
+	if (!CinemafyScriptEditor::LoadScriptText(FilePath, Text))
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't read a script from %s."), *FilePath);
 		return nullptr;
@@ -3289,7 +3336,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptFile(const FString& 
 bool UCinemafyEditorLibrary::ReimportScriptProject(UCinemafyScriptProject* Project)
 {
 	FString Text;
-	if (!Project || !FFileHelper::LoadFileToString(Text, *Project->ScriptFile.FilePath))
+	if (!Project || !CinemafyScriptEditor::LoadScriptText(Project->ScriptFile.FilePath, Text))
 	{
 		return false;
 	}
@@ -3309,7 +3356,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptWithDialog()
 	TArray<FString> Files;
 	const void* Parent = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 	if (!Desktop->OpenFileDialog(Parent, TEXT("Import a script"), FPaths::ProjectDir(), FString(),
-		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md)|*.fountain;*.fdx;*.txt;*.md"), EFileDialogFlags::None, Files) || Files.Num() == 0)
+		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md;*.json;*.pdf)|*.fountain;*.fdx;*.txt;*.md;*.json;*.pdf"), EFileDialogFlags::None, Files) || Files.Num() == 0)
 	{
 		return nullptr;
 	}
@@ -3416,6 +3463,191 @@ int32 UCinemafyEditorLibrary::MapScriptScenesInLevel(UCinemafyScriptProject* Pro
 	return Mapped;
 }
 
+namespace CinemafyScriptEditor
+{
+	/** Who or what a camera direction names: one of the scene's characters ("THANE", "KADE'S HAND"), else a prop by label. */
+	AActor* FindShotSubject(UWorld* World, const FCinemafyScriptScene& Scene, const FString& Subject)
+	{
+		FString Clean = Subject.ToUpper().TrimStartAndEnd();
+		if (Clean.StartsWith(TEXT("THE ")))
+		{
+			Clean = Clean.Mid(4);
+		}
+		if (Clean.IsEmpty())
+		{
+			return nullptr;
+		}
+		const int32 Possessive = Clean.Find(TEXT("'S"));
+		const FString Owner = Possessive != INDEX_NONE ? Clean.Left(Possessive).TrimEnd() : Clean;
+		TArray<FString> OwnerWords;
+		Owner.ParseIntoArrayWS(OwnerWords);
+		for (const FString& Character : Scene.Characters)
+		{
+			TArray<FString> Words;
+			Character.ParseIntoArrayWS(Words);
+			if (Character == Owner || (OwnerWords.Num() > 0 && Words.Contains(OwnerWords.Last())))
+			{
+				if (AActor* Actor = FindActorForName(World, Character))
+				{
+					return Actor;
+				}
+			}
+		}
+		// A prop or piece of the set, by its label ("Prop_datapad", "Console").
+		const FString Wanted = Clean.ToLower();
+		const FString LastWord = OwnerWords.Num() > 0 ? OwnerWords.Last().ToLower() : Wanted;
+		AActor* Partial = nullptr;
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->IsA<APawn>() || It->IsA<ACinemafySceneDirector>())
+			{
+				continue;
+			}
+			const FString Label = It->GetActorLabel().ToLower().Replace(TEXT("_"), TEXT(" "));
+			if (Label.Contains(Wanted))
+			{
+				return *It;
+			}
+			if (!Partial && LastWord.Len() >= 4 && Label.Contains(LastWord))
+			{
+				Partial = *It;
+			}
+		}
+		return Partial ? Partial : FindActorForName(World, Owner);
+	}
+
+	/** The director's lines for a script scene: speakers matched to actor labels, delivery read from the parentheticals,
+	 * camera directions ("CLOSE ON THANE", "KADE'S POV", "SLOW PUSH IN", "HANDHELD") on the line they come before, and
+	 * the scene's transition in on its first line. */
+	TArray<FCinemafyLine> BuildDirectorLines(UWorld* World, const FCinemafyScriptScene& Scene, TArray<AActor*>& OutPerformers, int32& OutUnmatched)
+	{
+		TArray<FCinemafyLine> Lines;
+		FString PreviousSpeaker;
+		AActor* PreviousActor = nullptr;
+		FCinemafyShotCall PendingShot;
+		FString PendingWords;
+		bool bPendingShot = false;
+		bool bFeel = false;
+		ECinemafyCameraFeel Feel = ECinemafyCameraFeel::Handheld;
+		for (const FCinemafyScriptLine& ScriptLine : Scene.Lines)
+		{
+			if (ScriptLine.Kind == ECinemafyScriptLineKind::Shot)
+			{
+				const FCinemafyShotCall& Call = ScriptLine.Shot;
+				if (Call.bFeel)
+				{
+					bFeel = true;
+					Feel = Call.Feel;
+				}
+				if (Call.bBackToScene && !Call.bFraming)
+				{
+					bPendingShot = false;
+					continue;
+				}
+				if (Call.bFraming || Call.bMove)
+				{
+					// The last framing called before a line wins; a move called on its own rides along with it.
+					const bool bKeepMove = PendingShot.bMove && !Call.bMove;
+					const ECinemafyCameraMove KeptMove = PendingShot.Move;
+					PendingShot = Call;
+					if (bKeepMove)
+					{
+						PendingShot.bMove = true;
+						PendingShot.Move = KeptMove;
+					}
+					PendingWords = bPendingShot && !PendingWords.IsEmpty() ? PendingWords + TEXT(" / ") + ScriptLine.Text : ScriptLine.Text;
+					bPendingShot = true;
+				}
+				continue;
+			}
+			if (ScriptLine.Kind != ECinemafyScriptLineKind::Dialogue)
+			{
+				continue;
+			}
+			FCinemafyLine& Line = Lines.AddDefaulted_GetRef();
+			Line.Speaker = FindActorForName(World, ScriptLine.Speaker);
+			Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
+			Line.Text = FText::FromString(ScriptLine.Text);
+			Line.Audio = ScriptLine.Audio.LoadSynchronous();
+			// A face performance made from this audio (MetaHuman lip-sync) plays instead of the Talk curves.
+			Line.FaceAnimation = ScriptLine.HasCurrentFace() ? ScriptLine.FaceAnimation.LoadSynchronous() : nullptr;
+			// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
+			if (Delivery.bHasEmotion)
+			{
+				Line.bSetEmotion = true;
+				Line.Emotion = Delivery.Emotion;
+			}
+			if (!Delivery.Cue.IsEmpty())
+			{
+				Line.Intensity = Delivery.Intensity;
+				Line.bAutoIntensity = false;
+			}
+			// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
+			Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
+			Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene.Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));
+
+			// The page's camera.
+			if (Lines.Num() == 1 && Scene.bTransitionIn)
+			{
+				Line.bOverrideTransition = true;
+				Line.Transition = Scene.TransitionIn;
+			}
+			if (bFeel)
+			{
+				Line.bForceFeel = true;
+				Line.ForcedFeel = Feel;
+			}
+			if (bPendingShot)
+			{
+				Line.bForceShot = true;
+				Line.ForcedShot = PendingShot.ShotType;
+				Line.ShotCall = PendingWords;
+				AActor* On = FindShotSubject(World, Scene, PendingShot.Subject);
+				if (PendingShot.bOverShoulderOfSubject && On)
+				{
+					// Over their shoulder: the shot is on whoever they face.
+					On = On == Line.Speaker ? Line.Listener.Get() : Line.Speaker.Get();
+				}
+				Line.ShotOn = On;
+				if (PendingShot.bMove)
+				{
+					Line.bForceMove = true;
+					Line.ForcedMove = PendingShot.Move;
+				}
+				bPendingShot = false;
+				PendingShot = FCinemafyShotCall();
+				PendingWords.Reset();
+			}
+			TArray<FString> Words;
+			ScriptLine.Text.ParseIntoArrayWS(Words);
+			Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
+			OutUnmatched += Line.Speaker ? 0 : 1;
+			if (Line.Speaker)
+			{
+				OutPerformers.AddUnique(Line.Speaker);
+			}
+			if (PreviousSpeaker != ScriptLine.Speaker)
+			{
+				PreviousSpeaker = ScriptLine.Speaker;
+				PreviousActor = Line.Speaker;
+			}
+		}
+		if (Lines.Num() > 1 && !Lines[0].Listener)
+		{
+			for (int32 Index = 1; Index < Lines.Num(); ++Index)
+			{
+				if (Lines[Index].Speaker && Lines[Index].Speaker != Lines[0].Speaker)
+				{
+					Lines[0].Listener = Lines[Index].Speaker;
+					break;
+				}
+			}
+		}
+		return Lines;
+	}
+}
+
 ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafyScriptProject* Project, const FString& SceneId)
 {
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
@@ -3427,49 +3659,13 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 
 	const FScopedTransaction Transaction(LOCTEXT("DirectorForScene", "Cinemafy: Director for Scene"));
 	TArray<AActor*> Performers;
-	TArray<FCinemafyLine> Lines;
-	FString PreviousSpeaker;
-	AActor* PreviousActor = nullptr;
 	int32 Unmatched = 0;
-	for (const FCinemafyScriptLine& ScriptLine : Scene->Lines)
-	{
-		if (ScriptLine.Kind != ECinemafyScriptLineKind::Dialogue)
-		{
-			continue;
-		}
-		FCinemafyLine& Line = Lines.AddDefaulted_GetRef();
-		Line.Speaker = CinemafyScriptEditor::FindActorForName(World, ScriptLine.Speaker);
-		Line.SpeakerName = FText::FromString(ScriptLine.Speaker);
-		Line.Text = FText::FromString(ScriptLine.Text);
-		Line.Audio = ScriptLine.Audio.LoadSynchronous();
-		// Said to whoever spoke last (the usual back-and-forth); the first line goes to the next speaker.
-		Line.Listener = PreviousSpeaker != ScriptLine.Speaker ? PreviousActor : nullptr;
-		Line.Note = FString::Printf(TEXT("%s %d. %s: %s"), *Scene->Id, Lines.Num(), *ScriptLine.Speaker, *ScriptLine.Text.Left(40));
-		TArray<FString> Words;
-		ScriptLine.Text.ParseIntoArrayWS(Words);
-		Line.Duration = FMath::Max(1.f, Words.Num() / 2.6f + 0.4f);
-		Unmatched += Line.Speaker ? 0 : 1;
-		if (Line.Speaker)
-		{
-			Performers.AddUnique(Line.Speaker);
-		}
-		if (PreviousSpeaker != ScriptLine.Speaker)
-		{
-			PreviousSpeaker = ScriptLine.Speaker;
-			PreviousActor = Line.Speaker;
-		}
-	}
-	if (Lines.Num() > 1 && !Lines[0].Listener)
-	{
-		for (int32 Index = 1; Index < Lines.Num(); ++Index)
-		{
-			if (Lines[Index].Speaker && Lines[Index].Speaker != Lines[0].Speaker)
-			{
-				Lines[0].Listener = Lines[Index].Speaker;
-				break;
-			}
-		}
-	}
+	// "<scene>#<n>": a director for one insert of a gameplay bridge (its lines only).
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
+	const bool bInsert = Project->FindInsert(SceneId) != nullptr;
+	const FString TargetId = bInsert ? FString::Printf(TEXT("%s#%d"), *Scene->Id, InsertIndex) : Scene->Id;
+	const TArray<FCinemafyLine> Lines = CinemafyScriptEditor::BuildDirectorLines(World, UCinemafyScriptLibrary::SceneForInsert(*Scene, bInsert ? InsertIndex : 0), Performers, Unmatched);
 
 	FVector Location = FVector::ZeroVector;
 	for (AActor* Member : Performers)
@@ -3482,15 +3678,19 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 	{
 		return nullptr;
 	}
-	Director->SetActorLabel(FString::Printf(TEXT("Director_%s"), *Scene->Id.Replace(TEXT("."), TEXT("_"))));
+	Director->SetActorLabel(FString::Printf(TEXT("Director_%s"), *TargetId.Replace(TEXT("."), TEXT("_")).Replace(TEXT("#"), TEXT("_I"))));
 	Director->Lines = Lines;
 	Director->ScriptProject = Project;
-	Director->ScriptSceneId = Scene->Id;
+	Director->ScriptSceneId = TargetId;
 
 	Project->Modify();
-	Scene->DirectorLabel = Director->GetActorLabel();
+	if (!bInsert)
+	{
+		Scene->DirectorLabel = Director->GetActorLabel();
+	}
 	Scene->Level = World;
 	Scene->MatchScore = 1.f;
+	Scene->StagedHash = Scene->ContentHash;
 	if (Scene->Status == ECinemafySceneStatus::NotStarted)
 	{
 		Scene->Status = ECinemafySceneStatus::Blocking;
@@ -3502,6 +3702,82 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateDirectorForScene(UCinemafy
 	GEditor->SelectNone(false, true);
 	GEditor->SelectActor(Director, true, true);
 	return Director;
+}
+
+int32 UCinemafyEditorLibrary::RefreshDirectorFromScript(ACinemafySceneDirector* Director)
+{
+	UCinemafyScriptProject* Project = Director ? Director->ScriptProject.Get() : nullptr;
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(Director->ScriptSceneId) : nullptr;
+	if (!Scene || !Director->GetWorld())
+	{
+		return -1;
+	}
+	TArray<AActor*> Performers;
+	int32 Unmatched = 0;
+	int32 InsertIndex = 0;
+	UCinemafyScriptLibrary::SplitInsertId(Director->ScriptSceneId, InsertIndex);
+	TArray<FCinemafyLine> Fresh = CinemafyScriptEditor::BuildDirectorLines(Director->GetWorld(), UCinemafyScriptLibrary::SceneForInsert(*Scene, InsertIndex), Performers, Unmatched);
+
+	// Unchanged words keep the line as it was tuned (first unused match, so repeated lines pair up in order).
+	TArray<bool> Used;
+	Used.Init(false, Director->Lines.Num());
+	int32 Changed = 0;
+	for (FCinemafyLine& Line : Fresh)
+	{
+		const FString Words = Line.Text.ToString();
+		int32 Found = INDEX_NONE;
+		for (int32 Index = 0; Index < Director->Lines.Num(); ++Index)
+		{
+			if (!Used[Index] && Director->Lines[Index].Text.ToString().Equals(Words, ESearchCase::IgnoreCase))
+			{
+				Found = Index;
+				break;
+			}
+		}
+		if (Found != INDEX_NONE)
+		{
+			Used[Found] = true;
+			const FCinemafyLine FromScript = Line;
+			Line = Director->Lines[Found];
+			Line.Note = FromScript.Note;
+			// The page's camera directions are the script's to change: they follow it.
+			if (FromScript.bForceShot || !Line.ShotCall.IsEmpty())
+			{
+				Line.bForceShot = FromScript.bForceShot;
+				Line.ForcedShot = FromScript.ForcedShot;
+				Line.ShotOn = FromScript.ShotOn;
+				Line.ShotCall = FromScript.ShotCall;
+				Line.bForceMove = FromScript.bForceMove;
+				Line.ForcedMove = FromScript.ForcedMove;
+			}
+			if (FromScript.FaceAnimation || FromScript.Audio != Line.Audio)
+			{
+				Line.FaceAnimation = FromScript.FaceAnimation;
+			}
+			Line.bForceFeel = FromScript.bForceFeel || Line.bForceFeel;
+			Line.ForcedFeel = FromScript.bForceFeel ? FromScript.ForcedFeel : Line.ForcedFeel;
+			if (FromScript.bOverrideTransition)
+			{
+				Line.bOverrideTransition = true;
+				Line.Transition = FromScript.Transition;
+			}
+		}
+		else
+		{
+			++Changed;
+		}
+	}
+	for (bool bUsed : Used)
+	{
+		Changed += bUsed ? 0 : 1;
+	}
+	const FScopedTransaction Transaction(LOCTEXT("RefreshDirector", "Cinemafy: Refresh Director from Script"));
+	Director->Modify();
+	Director->Lines = MoveTemp(Fresh);
+	Project->Modify();
+	Scene->StagedHash = Scene->ContentHash;
+	Project->MarkPackageDirty();
+	return Changed;
 }
 
 bool UCinemafyEditorLibrary::SetScriptSceneStatus(UCinemafyScriptProject* Project, const FString& SceneId, ECinemafySceneStatus Status)

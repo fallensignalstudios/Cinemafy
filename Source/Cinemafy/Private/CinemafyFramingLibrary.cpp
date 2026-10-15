@@ -35,6 +35,8 @@ namespace
 		case ECinemafyShotType::GroupShot:       return { 230.f, 0.f, 10.f, 200.f };
 		case ECinemafyShotType::TrackingLead:    return { 120.f, 10.f, -5.f, 80.f };
 		case ECinemafyShotType::TrackingFollow:  return { 100.f, 0.f, 5.f, 0.f };
+		case ECinemafyShotType::POV:             return { 90.f, 0.f, 0.f, 0.f };
+		case ECinemafyShotType::Insert:          return { 30.f, 20.f, 0.f, 0.f };
 		}
 		return { 60.f, 18.f, 0.f, 0.f };
 	}
@@ -69,6 +71,8 @@ ECinemafyPrime UCinemafyFramingLibrary::GetRecommendedPrime(ECinemafyShotType Sh
 	case ECinemafyShotType::GroupShot:       return ECinemafyPrime::Prime24;
 	case ECinemafyShotType::TrackingLead:    return ECinemafyPrime::Prime35;
 	case ECinemafyShotType::TrackingFollow:  return ECinemafyPrime::Prime35;
+	case ECinemafyShotType::POV:             return ECinemafyPrime::Prime35;
+	case ECinemafyShotType::Insert:          return ECinemafyPrime::Prime85;
 	}
 	return ECinemafyPrime::Prime50;
 }
@@ -77,7 +81,8 @@ bool UCinemafyFramingLibrary::ShotNeedsCounterpart(ECinemafyShotType ShotType)
 {
 	return ShotType == ECinemafyShotType::WideTwoShot
 		|| ShotType == ECinemafyShotType::MediumTwoShot
-		|| ShotType == ECinemafyShotType::OverTheShoulder;
+		|| ShotType == ECinemafyShotType::OverTheShoulder
+		|| ShotType == ECinemafyShotType::POV;
 }
 
 FVector UCinemafyFramingLibrary::GetEyePoint(const AActor* Actor)
@@ -274,6 +279,51 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCi
 		break;
 	}
 
+	case ECinemafyShotType::POV:
+	{
+		// Through the counterpart's eyes: just in front of their face, looking at the subject.
+		const FVector Toward = (SubjectEye - OtherEye).GetSafeNormal();
+		CamPos = OtherEye + (Toward.IsNearlyZero() ? LookDir : Toward) * 12.f + Up * Request.HeightOffset;
+		AimPoint = SubjectEye - Up * 8.f;
+		FocusPoint = SubjectEye;
+		break;
+	}
+
+	case ECinemafyShotType::Insert:
+	{
+		// Tight on a thing: a character's hand, or a prop's bounds, seen from above at an angle from the viewer's side.
+		FVector Center;
+		float Size = Spec.FrameHeight;
+		const USkeletalMeshComponent* Hands = nullptr;
+		TInlineComponentArray<USkeletalMeshComponent*> Meshes(Subject);
+		for (const USkeletalMeshComponent* Mesh : Meshes)
+		{
+			if (Mesh->GetBoneIndex(Cinemafy::RightHandBone) != INDEX_NONE)
+			{
+				Hands = Mesh;
+				break;
+			}
+		}
+		if (Hands)
+		{
+			Center = Hands->GetSocketLocation(Cinemafy::RightHandBone);
+		}
+		else
+		{
+			FVector Extent;
+			Subject->GetActorBounds(true, Center, Extent);
+			Size = FMath::Max(Spec.FrameHeight, static_cast<float>(Extent.Size()) * 2.2f);
+		}
+		const FVector Side = Counterpart ? (OtherEye - Center).GetSafeNormal2D() : Subject->GetActorForwardVector().GetSafeNormal2D();
+		const FVector Flat = (Side.IsNearlyZero() ? FVector::ForwardVector : Side).RotateAngleAxis((Spec.SideAngleDeg + Request.AngleOffset) * (Request.bFlipSide ? -1.f : 1.f), Up);
+		const float Elevation = FMath::DegreesToRadians(35.f);
+		const FVector Dir = (Flat * FMath::Cos(Elevation) + Up * FMath::Sin(Elevation)).GetSafeNormal();
+		CamPos = Center + Dir * DistanceForFrame(Size, Focal, SensorH) + Up * Request.HeightOffset;
+		AimPoint = Center;
+		FocusPoint = Center;
+		break;
+	}
+
 	case ECinemafyShotType::OverTheShoulder:
 	{
 		// Sit just behind the counterpart's shoulder (camera side of the line) and look back at the subject.
@@ -369,7 +419,8 @@ bool UCinemafyFramingLibrary::IsShotClear(const UWorld* World, const FCinemafySh
 
 	// The counterpart is ignored by the traces above (it's meant to be in an OTS), so check it separately:
 	// a shoulder in the foreground is framing, a shoulder over the subject's face is a ruined shot.
-	if (Request.Subject && Request.Counterpart && Request.ShotType != ECinemafyShotType::GroupShot)
+	if (Request.Subject && Request.Counterpart && Request.ShotType != ECinemafyShotType::GroupShot
+		&& Request.ShotType != ECinemafyShotType::POV && Request.ShotType != ECinemafyShotType::Insert)
 	{
 		if (IsFaceCoveredByForeground(Camera, GetEyePoint(Request.Subject), GetEyePoint(Request.Counterpart), Request.Counterpart->GetActorRightVector()))
 		{

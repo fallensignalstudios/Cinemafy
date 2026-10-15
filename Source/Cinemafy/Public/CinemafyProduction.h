@@ -8,6 +8,7 @@
 
 class ACharacter;
 class UStaticMesh;
+class USkeletalMesh;
 class UMaterialInterface;
 class USoundBase;
 class UBillboardComponent;
@@ -131,6 +132,52 @@ struct CINEMAFY_API FCinemafyCastMember
 	/** How continuity shows on them (props, materials, tags), matched against each scene's carry-ins. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast", meta = (TitleProperty = "{Category} {FactContains}"))
 	TArray<FCinemafyContinuityLook> Looks;
+
+	/** The face to solve lip-sync for (empty = the face mesh of their actor in the level, the one with eye bones). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast", AdvancedDisplay)
+	TSoftObjectPtr<USkeletalMesh> FaceMesh;
+};
+
+/** What a thing the script mentions is to the production. */
+UENUM(BlueprintType)
+enum class ECinemafyDressingKind : uint8
+{
+	/** Furniture and fixtures: the console, the cargo crate, the weapons rack. Placed by Dress the Set. */
+	SetPiece  UMETA(DisplayName = "Set Piece"),
+	/** Handled by a character: the saber, the datapad. */
+	HandProp  UMETA(DisplayName = "Hand Prop"),
+	/** Worn: the dress uniform. */
+	Wardrobe  UMETA(DisplayName = "Wardrobe")
+};
+
+/** A prop, set piece or costume the script mentions. */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafySetPiece
+{
+	GENERATED_BODY()
+
+	/** As the script says it ("cargo crate"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dressing")
+	FString Name;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dressing")
+	ECinemafyDressingKind Kind = ECinemafyDressingKind::SetPiece;
+
+	/** Scenes it's in. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dressing")
+	TArray<FString> Scenes;
+
+	/** Who handles or wears it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dressing")
+	TArray<FString> UsedBy;
+
+	/** The sentence it was found in (first mention). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Dressing")
+	FString Source;
+
+	/** The real mesh, once art has one: Dress the Set places it instead of a placeholder block. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dressing")
+	TSoftObjectPtr<UStaticMesh> Mesh;
 };
 
 /** One location of the script, built. */
@@ -154,6 +201,10 @@ struct CINEMAFY_API FCinemafySet
 	/** Marks placed for it (filled when Cast & Sets is refreshed in its level). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Set")
 	TArray<FString> Marks;
+
+	/** Set pieces, hand props and wardrobe its scenes mention (filled by Cast & Sets). Give a set piece a Mesh to dress with it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Set")
+	TArray<FCinemafySetPiece> Dressing;
 };
 
 UINTERFACE(BlueprintType, MinimalAPI)

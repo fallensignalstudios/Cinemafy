@@ -1,5 +1,134 @@
 # Changelog
 
+## 0.17.0: "Printed pages"
+- **PDF screenplays:**
+  - Import Script takes a `.pdf`. Its text comes from `pdftotext` (poppler: `brew install poppler` on a Mac), and
+    a copy is kept in `Saved/Cinemafy`.
+  - Text from a printed screenplay is cleaned before reading:
+    - page numbers and `(MORE)` / `CONTINUED` are dropped, and `(CONT'D)` speeches rejoin across the page
+    - scene numbers on either side of a heading are removed, and headings wrapped onto a second line are joined
+    - paragraphs broken by the page join back up
+    - a title page without `Title:` gives its first line as the title
+- **Scene ids in screenplays:** a tag on the line under a heading (`SCOR-01-CS01`) becomes the scene's permanent
+  id, as in a script bible.
+- **Coded chapter headers:** `SCOR 01   THE MANTLE` is a chapter with id `SCOR-01` and title "The Mantle".
+- **Bookend prologues:** a `PROLOGUE` (teaser, cold open) no longer runs on to the epilogue; the story starts at
+  the next chapter after it.
+- **Acts from the bible:** a screenplay whose scenes carry a bible's ids takes its acts from the bible's scene
+  map (`GroupActsByMap`; found beside the screenplay, or set **Act Map File**).
+- **Compare Scripts:** cross-checks two versions by scene id: scenes only in one, order, spoken words, speakers.
+  Use it for a screenplay against its bible, or one draft against another (`compare_scripts` over MCP).
+- Script bibles: `SELENE — INTERNAL` reads as Selene with an "(INTERNAL)" direction, and curly and straight
+  apostrophes in names are the same.
+- New sample: `Docs/samples/PrintedScreenplay_Sample.txt`.
+- New test: `Cinemafy.Script.ReadsPrintedScreenplays`. The golden bible test also checks a screenplay (`.fountain`
+  or `.txt`) in `CINEMAFY_BIBLE_DIR` against the bible.
+
+## 0.16.0: "The bible"
+- **Game script bibles:**
+  - A game's cutscene bible imports directly: the JSON companion, or the Markdown it's written in.
+  - Scenes keep the bible's ids (`SCOR-01-CS03`), which are never renumbered and are matched on re-import.
+  - Missions become chapters. Acts and mission titles come from the bible's scene map; a JSON bible finds
+    the Markdown beside it (or set **Act Map File**).
+  - Lines keep their origin (`M` manuscript / `A` adapted) and source chapter, and the voice-over CSVs gain an
+    Origin column.
+  - `ON-SCREEN DISPLAY` lines are on-screen text, not a character: they get `OSD_` line ids and go into the
+    localization table.
+  - `(RECORD)` cues are a direction on the speaker.
+  - Camera intent is read from the camera notes and the staging prose: two-shots, extreme close, someone's
+    point of view, push in, handheld.
+- **The game contract on every scene:**
+  - what it carries: presentation (locked, staged dialogue, gameplay bridge, record, montage, radio/holo),
+    trigger, entry state, control before and after, exit state, beats, handoff, camera and continuity notes,
+    planned length, skippable
+  - the Story Board shows it on each card and in its tooltip
+  - `Scene_Contracts.csv` in the paperwork, and the `scene_contract` MCP tool
+- **Gameplay-bridge inserts:**
+  - Bridges split where the script hands control to the player. Any scene id can name an insert as
+    `<scene>#<n>`.
+  - Previs, Open and a Scene Director all work on one insert, with its own `SC_<scene>_I<n>` sequence.
+- **Story Player for games:**
+  - plays a bridge insert by insert, returning control between them (`OnControlReturned`) until
+    `ContinueScene` or a Scene Trigger set to `<scene>#<n>`
+  - binds the player's pawn to the character they control going in
+  - respects unskippable scenes
+  - sets a flag of the scene's id when it commits, played or skipped
+  - tells the game who has control afterwards (`OnControlHandoff`)
+- New samples: `Docs/samples/ScriptBible_Sample.md` / `.json`.
+- New tests:
+  - `Cinemafy.Script.ReadsScriptBibles`
+  - `Cinemafy.Golden.ReadsTheGameBible`: point `CINEMAFY_BIBLE_DIR` at your own bible
+
+## 0.15.0: "Off the page"
+- **Camera language from the page:**
+  - Screenplay camera directions now drive the director. They can sit on their own line, or open an action
+    paragraph ("CLOSE ON KADE'S HAND. It trembles."). It reads:
+    - framings: CLOSE ON, EXTREME CLOSE-UP, WIDE, TWO SHOT, OVER KADE'S SHOULDER, LOW ANGLE, ANGLE ON
+    - POV and INSERT shots
+    - moves: SLOW PUSH IN, PULL BACK TO REVEAL, CRANE UP, ARC AROUND, CRASH ZOOM
+    - the camera's feel: HANDHELD, LOCKED OFF
+    - BACK TO SCENE, which hands the camera back to the director
+  - Each direction applies to the next line spoken. The director plays that framing on that subject, with
+    that move, and never folds it into a held two-shot.
+  - New **POV** and **Insert** shot types: through a character's eyes, and tight on a prop or a hand.
+  - Transitions set how the next scene comes in: SMASH CUT (a hard cut whatever the style), MATCH CUT,
+    DISSOLVE, FADE, WIPE and WHIP PAN.
+  - Final Draft "Shot" paragraphs are read too.
+- **Set dressing from the script:**
+  - The action tells the art department what it needs:
+    - set pieces where things happen ("vaults a cargo crate", "from the weapons rack")
+    - hand props ("picks up a saber", "grabs the DATAPAD")
+    - wardrobe ("wears his dress uniform")
+  - Cast & Sets keeps a **Dressing** list per set, where art assigns real meshes.
+  - **Dress the Set** places every missing set piece, labelled so Previs finds it:
+    - in front of its mark, or in a row across the set
+    - as the assigned mesh, or a placeholder block of a believable size
+  - Previs walks up to a prop's near edge instead of into it.
+  - Pre-flight offers **Dress the set**, the paperwork adds `Props_and_Dressing.md/.csv`, and there is a
+    `dress_set` MCP tool.
+- **Real lip-sync:**
+  - **Lip-Sync** solves a face performance for each voiced line with MetaHuman's audio-driven animation. It
+    runs in the background, one line at a time.
+  - Each face is stored on its line with the audio it was made from: it follows the line across re-imports,
+    goes stale with a new recording, and replaces the Talk curves when the scene is directed again.
+  - It needs the MetaHuman plugin and the Python Editor Script Plugin. Without them, faces keep the Talk
+    curves.
+  - MCP tools: `generate_lip_sync` and `lip_sync_status`.
+- New tests:
+  - `Cinemafy.Script.CameraLanguageFromThePage`
+  - set dressing checks in the golden sample test
+  - lip-sync staleness checks in the revision test
+
+## 0.14.0: "Rewrites and delivery"
+- **Parentheticals drive the performance:** `(furious)`, `(whispering)`, `(through tears)`, `(coldly)` and friends set
+  each line's emotion and intensity. That in turn drives the face, the body casting and the cut, and the
+  scratch voice's pace, volume and whisper.
+- **Script revisions:**
+  - Re-importing a revised script fingerprints every scene and reports what was rewritten, added and removed
+    (`Revision Report` on the project).
+  - Rewritten lines that had recorded voice-over are flagged **re-record**, with the old words for the booth.
+    The paperwork lists them, and Assign Recorded Voices clears the flag.
+  - Scenes staged from older pages show **Out of date** on the Story Board.
+  - **Update Changed** re-stages them. Choreographies you edited by hand are kept as `Edited_...`, and
+    directors keep the tweaks on lines whose words didn't change.
+- **Pre-flight check:**
+  - Before Previs, the board says what it will change in the level and checks the scene: the cast on set
+    or castable, marks or props for the places the script names, start marks, a nav mesh, voices, the
+    right level, and stale pages.
+  - Fix buttons place the marks, add a nav mesh, read scratch voices, cast a template character, build Cast
+    & Sets or open the right level. **Fix All** does the lot.
+  - A project-wide **Pre-flight** button, and the `check_scene` MCP tool.
+- **Final Render:**
+  - The delivery render for a scene, an act or the film: 1080p or 4K, cinematic quality, temporal
+    anti-aliasing, PNG (or EXR) frames and the mixed audio as WAV.
+  - Optionally a movie through the command-line encoder.
+  - Output in `Saved/Cinemafy/Final`, and the `render_final` MCP tool.
+- **Confirmations:** Previs, Dailies, Final Render and Light the set say what they'll change before they do
+  it, in the editor UI. MCP tools never ask.
+- **Golden test:** `Cinemafy.Golden.StagesTheSampleScript` breaks down and stages the tutorial's sample script
+  end to end.
+- New MCP tools: `script_revision`, `update_changed_scenes`, `check_scene`, `render_final`.
+
 ## 0.13.0: "Storytellers"
 The whole workflow is in [STORYTELLING](Docs/STORYTELLING.md).
 

@@ -818,6 +818,192 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def script_revision(project: unreal.CinemafyScriptProject) -> str:
+        """What the last re-import of a revised script changed, and which staged scenes are now out of date.
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            The revision report (rewritten / new / removed scenes, lines to re-record) and the out-of-date scene ids.
+        """
+        stale = []
+        for act in project.get_editor_property('acts'):
+            for chapter in act.get_editor_property('chapters'):
+                for scene in chapter.get_editor_property('scenes'):
+                    staged = scene.get_editor_property('staged_hash')
+                    if staged and staged != scene.get_editor_property('content_hash'):
+                        stale.append(f"{scene.get_editor_property('id')} {scene.get_editor_property('heading')}")
+        report = project.get_editor_property('revision_report') or 'No revision yet (first import).'
+        return report + '\nOut of date: ' + (', '.join(stale) if stale else 'none')
+
+    @_tool
+    @staticmethod
+    def update_changed_scenes(project: unreal.CinemafyScriptProject) -> str:
+        """After re-importing a revised script, brings every out-of-date scene in the open level up to the new pages:
+        previs'd scenes are re-staged without recording (hand-edited choreographies are kept as Edited_...),
+        directed-only scenes get their lines refilled (unchanged lines keep their tweaks).
+
+        Args:
+            project: The Script Project asset.
+
+        Returns:
+            What was updated, what needs another level open, and lines that need re-recording.
+        """
+        return unreal.CinemafyStoryLibrary.update_changed_scenes(project)
+
+    @_tool
+    @staticmethod
+    def check_scene(project: unreal.CinemafyScriptProject, scene_id: str = '', fix: bool = False) -> str:
+        """Pre-flight check: what a scene (or, with no scene id, the whole project) is missing before Previs: cast on
+        set or castable, marks for the places the script names, a nav mesh, voices, the right level, revisions.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: One scene ("1.1.1"), or empty for the whole project.
+            fix: Run every fix that needs no decision (build cast & sets, place marks, add a nav mesh, scratch
+                voices, cast template characters, update changed scenes), then check again.
+
+        Returns:
+            The findings, worst first ([BLOCKER] / [warning] / [info], with the fix each one has).
+        """
+        def run():
+            if scene_id:
+                return unreal.CinemafyPreflightLibrary.check_scene(project, scene_id)
+            return unreal.CinemafyPreflightLibrary.check_project(project)
+        checks = run()
+        prefix = ''
+        if fix:
+            fixed = unreal.CinemafyPreflightLibrary.fix_all(project, checks)
+            prefix = f'Ran {fixed} fix(es).\n'
+            checks = run()
+        return prefix + unreal.CinemafyPreflightLibrary.format_checks(checks)
+
+    @_tool
+    @staticmethod
+    def render_final(project: unreal.CinemafyScriptProject, what: str = '', uhd: bool = False, exr: bool = False,
+                     temporal_samples: int = 8, encode_movie: bool = False) -> str:
+        """The delivery render through Movie Render Queue: cinematic quality, temporal anti-aliasing, PNG (or EXR)
+        frames and the mixed audio as WAV, to Saved/Cinemafy/Final. Replaces the jobs in the editor's render queue
+        and renders in play-in-editor (finishes on its own).
+
+        Args:
+            project: The Script Project asset.
+            what: A scene id ("1.2.3"), "act:<id>" for an act's master, or empty for the whole film.
+            uhd: 3840x2160 instead of 1920x1080.
+            exr: EXR frames instead of PNG (when the engine has EXR output).
+            temporal_samples: Temporal samples per frame (motion blur and anti-aliasing quality).
+            encode_movie: Also encode a movie with the command-line encoder (ffmpeg set up in Project Settings).
+
+        Returns:
+            What is rendering and where it goes, or why it wasn't rendered.
+        """
+        return unreal.CinemafyStoryLibrary.render_final(project, what, uhd, exr, temporal_samples, encode_movie)
+
+    @_tool
+    @staticmethod
+    def dress_set(project: unreal.CinemafyScriptProject, scene_or_location: str) -> str:
+        """Dresses a set from the script: every set piece its scenes mention (the console, the cargo crate, the
+        weapons rack) that isn't in the level yet is placed, in front of the mark with its name or in a row in front
+        of the camera. Set pieces with a Mesh on the set's Dressing list use it; the rest get a placeholder block of a
+        believable size, labelled so Previs finds it. Also lists hand props and wardrobe to source.
+
+        Args:
+            project: The Script Project asset.
+            scene_or_location: A scene id ("1.2.3"), or a location as the script writes it ("HANGAR DECK").
+
+        Returns:
+            What was placed, what was already there, and the hand props and wardrobe the set's scenes need.
+        """
+        return unreal.CinemafyStoryLibrary.dress_set(project, scene_or_location)
+
+    @_tool
+    @staticmethod
+    def generate_lip_sync(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing: bool = False) -> str:
+        """Real lip-sync: MetaHuman's audio-driven animation solves a face performance for every voiced line (scratch or
+        recorded) whose speaker has a MetaHuman face in the level (or a Face Mesh on their cast entry). Solves run one
+        at a time in the background; each finished face is attached to its line and to the directors that speak it,
+        and replaces the Talk curves when the scene is directed again. Needs the MetaHuman plugin.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: One scene ("1.1.1"), or empty for the whole script.
+            replace_existing: Solve lines that already have a face from their current audio again.
+
+        Returns:
+            What was queued, or why nothing was. Check progress with lip_sync_status.
+        """
+        import cinemafy_lipsync  # pylint: disable=import-outside-toplevel
+        return cinemafy_lipsync.generate(project, scene_id, replace_existing)
+
+    @_tool
+    @staticmethod
+    def lip_sync_status() -> str:
+        """How the background lip-sync solves are doing: queued, done, failed (with why).
+
+        Returns:
+            The lip-sync queue's state.
+        """
+        import cinemafy_lipsync  # pylint: disable=import-outside-toplevel
+        return cinemafy_lipsync.status()
+
+    @_tool
+    @staticmethod
+    def scene_contract(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
+        """A game scene's contract from its script bible: presentation, trigger, entry state, who has control before
+        and after, what it commits, the handoff, camera notes, and its gameplay-bridge inserts (address one as
+        "<scene>#<n>" with previs_scene, open_scene_sequence or create_director_for_scene).
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("SCOR-01-CS03").
+
+        Returns:
+            The contract and inserts, as text.
+        """
+        for act in project.get_editor_property('acts'):
+            for chapter in act.get_editor_property('chapters'):
+                for scene in chapter.get_editor_property('scenes'):
+                    if scene.get_editor_property('id') != scene_id:
+                        continue
+                    game = scene.get_editor_property('game')
+                    lines = scene.get_editor_property('lines')
+                    out = [f"{scene_id} {scene.get_editor_property('heading')} ({act.get_editor_property('title')} / {chapter.get_editor_property('title')})",
+                           f"Presentation: {game.get_editor_property('presentation')}, ~{int(game.get_editor_property('target_seconds'))} s,"
+                           f" skippable: {game.get_editor_property('skippable')}",
+                           f"Control: {game.get_editor_property('control_before')} -> {game.get_editor_property('control_after')}",
+                           f"Trigger: {game.get_editor_property('trigger')}",
+                           f"Entry: {game.get_editor_property('entry_state')}"]
+                    out += [f"Commits: {state}" for state in game.get_editor_property('exit_state')]
+                    out.append(f"Then: {game.get_editor_property('handoff')}")
+                    out.append(f"Camera: {game.get_editor_property('camera_notes')}")
+                    for index, insert in enumerate(scene.get_editor_property('inserts'), 1):
+                        first, last = insert.get_editor_property('first_line'), insert.get_editor_property('last_line')
+                        seq = insert.get_editor_property('sequence')
+                        out.append(f"Insert {scene_id}#{index}: lines {first}-{last}"
+                                   f"{' (sequence ready)' if seq else ''}; control after: {insert.get_editor_property('hands_control')[:90]}")
+                    out.append(f"{len(lines)} script line(s).")
+                    return '\n'.join(out)
+        return f'No scene {scene_id}.'
+
+    @_tool
+    @staticmethod
+    def compare_scripts(first: unreal.CinemafyScriptProject, second: unreal.CinemafyScriptProject) -> str:
+        """Cross-checks two versions of a story by scene id: a screenplay and its script bible, or two drafts. Reports
+        scenes only in one, scenes out of order, and scenes whose spoken words or speakers differ.
+
+        Args:
+            first: One Script Project (e.g. the screenplay).
+            second: The other (e.g. the script bible).
+
+        Returns:
+            The comparison report.
+        """
+        report, _matching = unreal.CinemafyScriptLibrary.compare_scripts(first.get_editor_property('acts'), second.get_editor_property('acts'))
+        return report
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

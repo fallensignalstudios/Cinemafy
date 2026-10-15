@@ -10,6 +10,41 @@ class ACinemafyMark;
 class ACinemafySceneDirector;
 class ACinemafyChoreography;
 class ULevelSequence;
+class UAnimSequenceBase;
+
+/** One line to give a real face: its audio and the face to solve it for (filled by GetLipSyncJobs, for the lip-sync script). */
+USTRUCT(BlueprintType)
+struct CINEMAFYEDITOR_API FCinemafyLipSyncJob
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString LineId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString SceneId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString Speaker;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString Text;
+
+	/** The line's sound wave (object path). */
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString AudioPath;
+
+	/** The face skeletal mesh to solve for (object path). */
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString FaceMeshPath;
+
+	/** Where the animation goes: package folder and asset name. */
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString PackagePath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Lip Sync")
+	FString AssetName;
+};
 
 /**
  * The storyteller's tools: casting and sets, staging a scene straight from the script, the story board,
@@ -35,6 +70,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static ACinemafyMark* PlaceMark(const FString& MarkName, const FString& SetName);
 
+	/**
+	 * Dresses a set from the script: every set piece its scenes mention (the console, the cargo crate, the weapons
+	 * rack) that isn't in the level yet goes in, in front of the mark with its name or in a row in front of the camera.
+	 * Pieces with a Mesh on the set's Dressing list use it; the rest get a placeholder block of a believable size,
+	 * labelled with its name so Previs finds it. SceneIdOrLocation: a scene id, or a location as the script writes it.
+	 * Returns a report (with the hand props and wardrobe to source).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString DressSet(UCinemafyScriptProject* Project, const FString& SceneIdOrLocation);
+
 	/** Puts each cast member in the scene in the state the script says they arrive in (props, injuries, costume). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 ApplySceneContinuity(UCinemafyScriptProject* Project, const FString& SceneId);
@@ -49,6 +94,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static FString PrevisScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bRecord = true);
+
+	/**
+	 * After a script revision: brings every out-of-date scene in the open level up to the new pages. Previs'd
+	 * scenes are re-staged (without recording; hand-edited choreographies are kept as Edited_...), directed-only
+	 * scenes get their lines refilled (unchanged lines keep their tweaks). Scenes on other levels are listed.
+	 * Returns a report, including lines that need re-recording.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString UpdateChangedScenes(UCinemafyScriptProject* Project);
 
 	/** The scene's Level Sequence (/Game/Cinemafy/Scenes/SC_<id>_<place>), made if it doesn't exist yet, opened in Sequencer. */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
@@ -100,7 +154,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 AssignRecordedVoices(UCinemafyScriptProject* Project, const FString& ContentFolder);
 
-	/** Keys Cinemafy Face's Talk / Talk Narrow on each speaker from their lines' audio, where the director laid it. */
+	/**
+	 * Real lip-sync: MetaHuman's audio-driven animation solves a face performance from each voiced line (scratch or
+	 * recorded) in the background, one line at a time, and the director lays it on the speaker's face instead of
+	 * Cinemafy's Talk curves. Needs the MetaHuman plugin (MetaHuman Animator) and the Python Editor Script Plugin;
+	 * without them, faces keep the Talk curves. SceneId empty = the whole script. Returns what was started.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString GenerateLipSync(UCinemafyScriptProject* Project, const FString& SceneId, bool bReplaceExisting = false);
+
+	/** The voiced lines that need a face performance, each with its audio and the speaker's face mesh. Lines with no face mesh are skipped (logged). */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static TArray<FCinemafyLipSyncJob> GetLipSyncJobs(UCinemafyScriptProject* Project, const FString& SceneId, bool bReplaceExisting = false);
+
+	/** Gives a line its face performance (made from its current audio), and the matching lines of directors in the open level. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static bool AssignLipSync(UCinemafyScriptProject* Project, const FString& LineId, UAnimSequenceBase* Animation);
+
+	/** MetaHuman's audio-driven animation is installed and enabled. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
+	static bool IsLipSyncAvailable();
+
+	/** Keys Cinemafy Face's Talk / Talk Narrow on each speaker from their lines' audio, where the director laid it (lines with a face performance are left to it). */
 	static void BakeTalkCurves(ULevelSequence* Sequence, const TArray<FCinemafyLine>& Lines, FFrameNumber SceneStart);
 
 	// --- Mood and sound -------------------------------------------------------------------------------------------
@@ -125,6 +200,16 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 RenderDailies(UCinemafyScriptProject* Project, const FString& SceneId);
+
+	/**
+	 * The delivery render: full quality through Movie Render Queue (cinematic game settings, temporal anti-aliasing),
+	 * PNG frames (or EXR when the engine has it), the mixed audio as WAV, and optionally a movie through the
+	 * command-line encoder (set up ffmpeg under Project Settings > Movie Pipeline CLI Encoder).
+	 * What: a scene id ("1.2.3"), "act:<id>" (an act's master), or empty for the whole film (masters are built if
+	 * missing). Output in Saved/Cinemafy/Final. Replaces the jobs in the editor's render queue. Returns a report.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString RenderFinal(UCinemafyScriptProject* Project, const FString& What, bool b4K = false, bool bEXR = false, int32 TemporalSamples = 8, bool bEncodeMovie = false);
 
 	/** Adds a review note to a scene (from you, now). AtSeconds = where in the scene (-1 = the whole scene). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")

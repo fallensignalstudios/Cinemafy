@@ -33,6 +33,10 @@ struct CINEMAFY_API FCinemafyStagedBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	FString Line;
 
+	/** How it's said, as the script writes it ("(coldly)"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
+	FString LineDirection;
+
 	/** The line's audio (scratch or recorded), if the script has it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	TSoftObjectPtr<USoundBase> LineAudio;
@@ -64,4 +68,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Previs")
 	static TArray<FCinemafyStagedBeat> StageScene(const FCinemafyScriptScene& Scene, TArray<FString>& OutNotStaged);
+
+	/**
+	 * What the scene's action mentions, for the art department: set pieces where things happen ("vaults a cargo crate",
+	 * "from the weapons rack", "looks at the empty command chair"), hand props ("picks up a saber", "draws her pistol",
+	 * "grabs the DATAPAD") and wardrobe ("wears his dress uniform"). Walls, floors, body parts and the location itself
+	 * are left out.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Previs")
+	static TArray<FCinemafySetPiece> FindSetDressing(const FCinemafyScriptScene& Scene);
 };

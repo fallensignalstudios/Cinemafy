@@ -21,10 +21,14 @@ loads. In short:
 2. Open the **Story Board**: every scene as a card.
 3. Fill **Cast & Sets** and place **Marks** named the way your script talks.
 4. Add **Scratch Voices**.
-5. Hit **Previs** on a scene: the cast takes their marks, acts the scene out, says their lines on cue, and
-   the director shoots and cuts it.
-6. Refine anything.
-7. **Cut Together** for the whole story, then render **Dailies** and the **Paperwork**.
+5. Hit **Previs** on a scene. A pre-flight check fixes what's missing (marks, a nav mesh, voices, cast), then
+   the cast takes their marks, acts the scene out and says their lines on cue (played the way the
+   parentheticals say), and the director shoots and cuts it.
+6. Refine anything. Write the camera into the script (`CLOSE ON`, `POV`, `INSERT`, `SLOW PUSH IN`) and the
+   director shoots it. **Dress the Set** blocks out the props the script mentions, and **Lip-Sync** gives
+   MetaHuman faces real lip-sync. When the script is revised, re-import it: changed scenes are flagged, and
+   **Update Changed** brings them up to the new pages without losing your edits.
+7. **Cut Together** for the whole story, render **Dailies** and the **Paperwork**, then the **Final Render**.
 
 For games, the same script can branch and play in game. The full walk-through is in
 [STORYTELLING](Docs/STORYTELLING.md).

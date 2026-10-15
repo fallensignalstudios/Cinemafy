@@ -1,5 +1,6 @@
 #include "CinemafyStoryLibrary.h"
 #include "CinemafyModule.h"
+#include "CinemafyPrevis.h"
 #include "CinemafySceneDirector.h"
 #include "CinemafyTypes.h"
 #include "CineCameraActor.h"
@@ -17,7 +18,9 @@
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "MoviePipelineAntiAliasingSetting.h"
 #include "MoviePipelineDeferredPasses.h"
+#include "MoviePipelineGameOverrideSetting.h"
 #include "MoviePipelineImageSequenceOutput.h"
 #include "MoviePipelineOutputSetting.h"
 #include "MoviePipelinePIEExecutor.h"
@@ -151,6 +154,155 @@ int32 UCinemafyStoryLibrary::RenderDailies(UCinemafyScriptProject* Project, cons
 	return Jobs;
 }
 
+namespace CinemafyFinalRender
+{
+	/** A pipeline setting by class path, for the ones that live in optional modules (EXR, WAV, the encoder). */
+	UMoviePipelineSetting* AddByPath(UMoviePipelinePrimaryConfig* Config, const TArray<const TCHAR*>& Paths)
+	{
+		for (const TCHAR* Path : Paths)
+		{
+			UClass* Class = FindObject<UClass>(nullptr, Path);
+			if (!Class)
+			{
+				Class = LoadObject<UClass>(nullptr, Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+			}
+			if (Class && Class->IsChildOf(UMoviePipelineSetting::StaticClass()))
+			{
+				return Config->FindOrAddSettingByClass(Class);
+			}
+		}
+		return nullptr;
+	}
+}
+
+FString UCinemafyStoryLibrary::RenderFinal(UCinemafyScriptProject* Project, const FString& What, bool b4K, bool bEXR, int32 TemporalSamples, bool bEncodeMovie)
+{
+	using namespace CinemafyFinalRender;
+	UMoviePipelineQueueSubsystem* Queues = GEditor ? GEditor->GetEditorSubsystem<UMoviePipelineQueueSubsystem>() : nullptr;
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!Project || !Queues || !World)
+	{
+		return TEXT("Not rendered: no script project, render queue or level.");
+	}
+	if (Queues->IsRendering())
+	{
+		return TEXT("Not rendered: a render is already running.");
+	}
+
+	// What to render: a scene, an act's master, or the film.
+	ULevelSequence* Sequence = nullptr;
+	FSoftObjectPath Map(World);
+	FString Name;
+	TArray<FString> Report;
+	if (What.StartsWith(TEXT("act:")))
+	{
+		const FString ActId = What.Mid(4).TrimStartAndEnd();
+		FCinemafyScriptAct* Act = Project->Acts.FindByPredicate([&ActId](const FCinemafyScriptAct& A) { return A.Id == ActId; });
+		if (!Act)
+		{
+			return FString::Printf(TEXT("Not rendered: no act %s."), *ActId);
+		}
+		if (Act->MasterSequence.IsNull())
+		{
+			BuildMasterSequences(Project);
+		}
+		Sequence = Act->MasterSequence.LoadSynchronous();
+		Name = FString::Printf(TEXT("Act%s"), *ActId);
+	}
+	else if (What.IsEmpty() || What.Equals(TEXT("film"), ESearchCase::IgnoreCase))
+	{
+		if (Project->FilmSequence.IsNull())
+		{
+			BuildMasterSequences(Project);
+		}
+		Sequence = Project->FilmSequence.LoadSynchronous();
+		Name = TEXT("Film");
+	}
+	else if (FCinemafyScriptScene* Scene = Project->FindScene(What))
+	{
+		Sequence = Scene->Sequence.LoadSynchronous();
+		if (!Scene->Level.IsNull())
+		{
+			Map = Scene->Level.ToSoftObjectPath();
+		}
+		Name = Scene->Id.Replace(TEXT("."), TEXT("_"));
+	}
+	if (!Sequence)
+	{
+		return FString::Printf(TEXT("Not rendered: \"%s\" has no sequence yet (Previs or Direct it, or Cut Together for acts and the film)."), *What);
+	}
+	if (!What.IsEmpty() && !Project->FindScene(What))
+	{
+		// Masters play every scene in one level: the first staged scene's.
+		for (const FCinemafyScriptScene* Scene : Project->GetAllScenes())
+		{
+			if (!Scene->Level.IsNull())
+			{
+				Map = Scene->Level.ToSoftObjectPath();
+				break;
+			}
+		}
+	}
+
+	UMoviePipelineQueue* Queue = Queues->GetQueue();
+	Queue->DeleteAllJobs();
+	UMoviePipelineExecutorJob* Job = Queue->AllocateNewJob(UMoviePipelineExecutorJob::StaticClass());
+	Job->JobName = FString::Printf(TEXT("Final %s"), *Name);
+	Job->Sequence = FSoftObjectPath(Sequence);
+	Job->Map = Map;
+
+	UMoviePipelinePrimaryConfig* Config = Job->GetConfiguration();
+	Config->FindOrAddSettingByClass(UMoviePipelineDeferredPassBase::StaticClass());
+	if (UMoviePipelineAntiAliasingSetting* AntiAliasing = Cast<UMoviePipelineAntiAliasingSetting>(Config->FindOrAddSettingByClass(UMoviePipelineAntiAliasingSetting::StaticClass())))
+	{
+		AntiAliasing->SpatialSampleCount = 1;
+		AntiAliasing->TemporalSampleCount = FMath::Clamp(TemporalSamples, 1, 64);
+		AntiAliasing->bOverrideAntiAliasing = true;
+		AntiAliasing->AntiAliasingMethod = EAntiAliasingMethod::AAM_None;
+		AntiAliasing->EngineWarmUpCount = 32;
+	}
+	Config->FindOrAddSettingByClass(UMoviePipelineGameOverrideSetting::StaticClass());
+
+	bool bExrFrames = false;
+	if (bEXR)
+	{
+		bExrFrames = AddByPath(Config, { TEXT("/Script/MovieRenderPipelineRenderPasses.MoviePipelineImageSequenceOutput_EXR") }) != nullptr;
+		if (!bExrFrames)
+		{
+			Report.Add(TEXT("EXR output isn't available in this engine: rendering PNG."));
+		}
+	}
+	if (!bExrFrames)
+	{
+		Config->FindOrAddSettingByClass(UMoviePipelineImageSequenceOutput_PNG::StaticClass());
+	}
+	const bool bAudio = AddByPath(Config, { TEXT("/Script/MovieRenderPipelineCore.MoviePipelineWaveOutput"), TEXT("/Script/MovieRenderPipelineRenderPasses.MoviePipelineWaveOutput") }) != nullptr;
+	if (!bAudio)
+	{
+		Report.Add(TEXT("WAV output isn't available in this engine: no audio mixdown."));
+	}
+	if (bEncodeMovie && !AddByPath(Config, { TEXT("/Script/MovieRenderPipelineCore.MoviePipelineCommandLineEncoder"), TEXT("/Script/MovieRenderPipelineRenderPasses.MoviePipelineCommandLineEncoder") }))
+	{
+		Report.Add(TEXT("The command-line encoder isn't available: frames and audio only."));
+	}
+
+	const FString Folder = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cinemafy") / TEXT("Final") / CinemafyPaperwork::ProjectFolderName(Project) / Name);
+	const FIntPoint Resolution = b4K ? FIntPoint(3840, 2160) : FIntPoint(1920, 1080);
+	if (UMoviePipelineOutputSetting* Output = Cast<UMoviePipelineOutputSetting>(Config->FindOrAddSettingByClass(UMoviePipelineOutputSetting::StaticClass())))
+	{
+		Output->OutputDirectory.Path = Folder;
+		Output->OutputResolution = Resolution;
+		Output->FileNameFormat = TEXT("{sequence_name}.{frame_number}");
+	}
+	Queues->RenderQueueWithExecutor(UMoviePipelinePIEExecutor::StaticClass());
+
+	Report.Insert(FString::Printf(TEXT("Rendering %s (%s) at %dx%d, %d temporal samples, %s frames%s%s, to %s."), *Name, *Sequence->GetName(), Resolution.X, Resolution.Y,
+		FMath::Clamp(TemporalSamples, 1, 64), bExrFrames ? TEXT("EXR") : TEXT("PNG"), bAudio ? TEXT(" + WAV audio") : TEXT(""), bEncodeMovie ? TEXT(" + a movie") : TEXT(""), *Folder), 0);
+	const FString Text = FString::Join(Report, TEXT("\n"));
+	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: %s"), *Text);
+	return Text;
+}
+
 bool UCinemafyStoryLibrary::AddReviewNote(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Text, float AtSeconds)
 {
 	FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
@@ -201,13 +353,14 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 				Script.Add(FString::Printf(TEXT("# %s: voice-over script for %s\n"), *Title, *Line.Speaker));
 				Script.Add(TEXT("| File | Scene | Cue (what it answers) | Direction | Line |"));
 				Script.Add(TEXT("| --- | --- | --- | --- | --- |"));
-				BoothCsv.FindOrAdd(Line.Speaker).Add(TEXT("File,Scene,LineNumber,Cue,Direction,Line,Status"));
+				BoothCsv.FindOrAdd(Line.Speaker).Add(TEXT("File,Scene,LineNumber,Cue,Direction,Line,Status,Origin"));
 			}
 			const FString File = Line.LineId + TEXT(".wav");
 			Script.Add(FString::Printf(TEXT("| %s | %s %s | %s | %s | %s |"), *File, *Scene->Id, *Scene->Heading.Replace(TEXT("|"), TEXT("/")),
-				*Cue.Replace(TEXT("|"), TEXT("/")), *Line.Direction, *Line.Text.Replace(TEXT("|"), TEXT("/"))));
-			BoothCsv.FindOrAdd(Line.Speaker).Add(FString::Printf(TEXT("%s,%s,%d,%s,%s,%s,%s"), *Csv(File), *Csv(Scene->Id), Number, *Csv(Cue), *Csv(Line.Direction), *Csv(Line.Text),
-				*Csv(Line.Audio.IsNull() ? TEXT("to record") : (Line.bScratchAudio ? TEXT("scratch only") : TEXT("recorded")))));
+				*Cue.Replace(TEXT("|"), TEXT("/")), *Line.Direction, *(Line.bNeedsRerecord ? TEXT("**RE-RECORD** ") + Line.Text.Replace(TEXT("|"), TEXT("/")) + TEXT(" (was: ") + Line.PreviousText.Replace(TEXT("|"), TEXT("/")) + TEXT(")") : Line.Text.Replace(TEXT("|"), TEXT("/")))));
+			BoothCsv.FindOrAdd(Line.Speaker).Add(FString::Printf(TEXT("%s,%s,%d,%s,%s,%s,%s,%s"), *Csv(File), *Csv(Scene->Id), Number, *Csv(Cue), *Csv(Line.Direction), *Csv(Line.Text),
+				*Csv(Line.bNeedsRerecord ? TEXT("re-record (rewritten)") : Line.Audio.IsNull() ? TEXT("to record") : (Line.bScratchAudio ? TEXT("scratch only") : TEXT("recorded"))),
+				*Csv(Line.Origin.IsEmpty() ? FString() : Line.Origin + (Line.SourceRef.IsEmpty() ? FString() : TEXT(" ") + Line.SourceRef))));
 			Cue = FString::Printf(TEXT("%s: %s"), *Line.Speaker, *Line.Text.Left(60));
 		}
 	}
@@ -216,6 +369,116 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 		const FString Name = FPaths::MakeValidFileName(Pair.Key).Replace(TEXT(" "), TEXT("_"));
 		FFileHelper::SaveStringToFile(FString::Join(Pair.Value, TEXT("\n")), *(Folder / FString::Printf(TEXT("VO_%s.md"), *Name)), FFileHelper::EEncodingOptions::ForceUTF8);
 		FFileHelper::SaveStringToFile(FString::Join(BoothCsv[Pair.Key], TEXT("\n")), *(Folder / FString::Printf(TEXT("VO_%s.csv"), *Name)), FFileHelper::EEncodingOptions::ForceUTF8);
+	}
+
+	// The implementation sheet (script bibles): every scene's game contract and where its production stands.
+	{
+		TArray<FString> Rows = { TEXT("Scene,Act,Mission,Title,Presentation,TargetSeconds,Trigger,EntryState,ControlBefore,ControlAfter,Skippable,Inserts,InsertSequences,Status,Sequence,Commits,Handoff") };
+		const UEnum* Presentations = StaticEnum<ECinemafyPresentation>();
+		const UEnum* Statuses = StaticEnum<ECinemafySceneStatus>();
+		int32 GameScenes = 0;
+		for (const FCinemafyScriptAct& Act : Project->Acts)
+		{
+			for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+			{
+				for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+				{
+					const FCinemafyGameContract& Game = Scene.Game;
+					if (Game.Presentation == ECinemafyPresentation::Screenplay)
+					{
+						continue;
+					}
+					++GameScenes;
+					int32 Ready = 0;
+					for (const FCinemafySceneInsert& Insert : Scene.Inserts)
+					{
+						Ready += Insert.Sequence.IsNull() ? 0 : 1;
+					}
+					Rows.Add(FString::Printf(TEXT("%s,%s,%s,%s,%s,%d,%s,%s,%s,%s,%s,%d,%d,%s,%s,%s,%s"), *Csv(Scene.Id), *Csv(Act.Title), *Csv(Chapter.Title), *Csv(Scene.Heading),
+						*Csv(Presentations->GetDisplayNameTextByValue(static_cast<int64>(Game.Presentation)).ToString()), FMath::RoundToInt(Game.TargetSeconds),
+						*Csv(Game.Trigger), *Csv(Game.EntryState), *Csv(Game.ControlBefore), *Csv(Game.ControlAfter), Game.bSkippable ? TEXT("yes") : TEXT("no"),
+						Scene.Inserts.Num(), Ready, *Csv(Statuses->GetDisplayNameTextByValue(static_cast<int64>(Scene.Status)).ToString()),
+						*Csv(Scene.Sequence.IsNull() ? FString() : Scene.Sequence.GetAssetName()), *Csv(FString::Join(Game.ExitState, TEXT(" | "))), *Csv(Game.Handoff)));
+				}
+			}
+		}
+		if (GameScenes > 0)
+		{
+			FFileHelper::SaveStringToFile(FString::Join(Rows, TEXT("\n")), *(Folder / TEXT("Scene_Contracts.csv")), FFileHelper::EEncodingOptions::ForceUTF8);
+		}
+	}
+
+	// Props, set dressing and wardrobe, set by set: what the art department builds, sources and fits.
+	{
+		struct FEntry { FCinemafySetPiece Piece; FString Location; };
+		TArray<FEntry> Entries;
+		for (const FCinemafyScriptScene* Scene : Scenes)
+		{
+			if (Scene->Status == ECinemafySceneStatus::Cut)
+			{
+				continue;
+			}
+			for (const FCinemafySetPiece& Found : UCinemafyPrevisLibrary::FindSetDressing(*Scene))
+			{
+				// Hand props and wardrobe travel with the character; set pieces belong to their set.
+				const FString Where = Found.Kind == ECinemafyDressingKind::SetPiece ? Scene->Location : FString();
+				FEntry* Entry = Entries.FindByPredicate([&Found, &Where](const FEntry& E) { return E.Piece.Name == Found.Name && E.Location == Where && E.Piece.Kind == Found.Kind; });
+				if (!Entry)
+				{
+					Entry = &Entries.Add_GetRef(FEntry{ Found, Where });
+				}
+				else
+				{
+					Entry->Piece.Scenes.AddUnique(Scene->Id);
+					for (const FString& Who : Found.UsedBy)
+					{
+						Entry->Piece.UsedBy.AddUnique(Who);
+					}
+				}
+			}
+		}
+		TArray<FString> Md;
+		TArray<FString> Rows;
+		Md.Add(FString::Printf(TEXT("# %s: props, set dressing and wardrobe\n"), *Title));
+		Rows.Add(TEXT("Kind,Item,Set,UsedBy,Scenes,Mesh,FirstMention"));
+		const UEnum* Kinds = StaticEnum<ECinemafyDressingKind>();
+		for (const ECinemafyDressingKind Kind : { ECinemafyDressingKind::SetPiece, ECinemafyDressingKind::HandProp, ECinemafyDressingKind::Wardrobe })
+		{
+			const FString KindName = Kinds->GetDisplayNameTextByValue(static_cast<int64>(Kind)).ToString();
+			Md.Add(FString::Printf(TEXT("\n## %ss\n"), *KindName));
+			Md.Add(Kind == ECinemafyDressingKind::SetPiece ? TEXT("| Set | Item | Scenes | Mesh | First mention |") : TEXT("| Item | Who | Scenes | First mention |"));
+			Md.Add(Kind == ECinemafyDressingKind::SetPiece ? TEXT("| --- | --- | --- | --- | --- |") : TEXT("| --- | --- | --- | --- |"));
+			int32 Count = 0;
+			for (const FEntry& Entry : Entries)
+			{
+				if (Entry.Piece.Kind != Kind)
+				{
+					continue;
+				}
+				++Count;
+				FString Mesh;
+				if (const FCinemafySet* Set = Project->FindSet(Entry.Location))
+				{
+					if (const FCinemafySetPiece* Known = Set->Dressing.FindByPredicate([&Entry](const FCinemafySetPiece& P) { return P.Name.Equals(Entry.Piece.Name, ESearchCase::IgnoreCase); }))
+					{
+						Mesh = Known->Mesh.IsNull() ? FString() : Known->Mesh.GetAssetName();
+					}
+				}
+				const FString Scenes2 = FString::Join(Entry.Piece.Scenes, TEXT(" "));
+				const FString Who = FString::Join(Entry.Piece.UsedBy, TEXT(", "));
+				const FString Source = Entry.Piece.Source.Replace(TEXT("|"), TEXT("/"));
+				Md.Add(Kind == ECinemafyDressingKind::SetPiece
+					? FString::Printf(TEXT("| %s | %s | %s | %s | %s |"), *Entry.Location, *Entry.Piece.Name, *Scenes2, Mesh.IsEmpty() ? TEXT("placeholder") : *Mesh, *Source)
+					: FString::Printf(TEXT("| %s | %s | %s | %s |"), *Entry.Piece.Name, *Who, *Scenes2, *Source));
+				Rows.Add(FString::Printf(TEXT("%s,%s,%s,%s,%s,%s,%s"), *Csv(KindName), *Csv(Entry.Piece.Name), *Csv(Entry.Location), *Csv(Who), *Csv(Scenes2), *Csv(Mesh), *Csv(Entry.Piece.Source)));
+			}
+			if (Count == 0)
+			{
+				Md.Add(TEXT("| (none found) |"));
+			}
+		}
+		FFileHelper::SaveStringToFile(FString::Join(Md, TEXT("\n")), *(Folder / TEXT("Props_and_Dressing.md")), FFileHelper::EEncodingOptions::ForceUTF8);
+		FFileHelper::SaveStringToFile(FString::Join(Rows, TEXT("\n")), *(Folder / TEXT("Props_and_Dressing.csv")), FFileHelper::EEncodingOptions::ForceUTF8);
 	}
 
 	// 2) Subtitles for the whole story, scene after scene (timed by audio where there is some, else estimated).
@@ -256,6 +519,11 @@ FString UCinemafyStoryLibrary::ExportPaperwork(UCinemafyScriptProject* Project)
 				{
 					Rows.Add(FString::Printf(TEXT("%s,%s,%s"), *Csv(Line.LineId), *Csv(Line.Text),
 						*Csv(FString::Printf(TEXT("%s | %s | %s %s"), *Line.Speaker, *Scene->Id, *Scene->Heading, *Line.Direction))));
+				}
+				else if (Line.Kind == ECinemafyScriptLineKind::Display && !Line.LineId.IsEmpty())
+				{
+					// On-screen text is localized too.
+					Rows.Add(FString::Printf(TEXT("%s,%s,%s"), *Csv(Line.LineId), *Csv(Line.Text), *Csv(FString::Printf(TEXT("On-screen display | %s | %s"), *Scene->Id, *Scene->Heading))));
 				}
 			}
 			for (const FCinemafyScriptChoice& Choice : Scene->Choices)
