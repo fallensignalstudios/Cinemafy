@@ -8,6 +8,7 @@
 #include "GameFramework/Character.h"
 #include "CinemafyModule.h"
 #include "CinemafySequencerUtils.h"
+#include "CinemafyMood.h"
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
@@ -708,13 +709,50 @@ namespace
 			}
 		}
 
+		// Cuts to Cinemafy cameras ("CAM_...") that no longer exist: an earlier staging's director made them and its
+		// cameras are gone. Left in, they pile up under the new cut and drop the view to the player wherever they win.
+		UMovieScene* MovieScene = Sequence->GetMovieScene();
+		const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer();
+		const bool bCanResolve = Sequencer.IsValid() && CinemafySequencer::GetOpenSequence() == Sequence;
+		TSet<FGuid> DeadCameras;
+		auto IsDeadCamera = [&](const FGuid& Guid)
+		{
+			if (!bCanResolve || !MovieScene)
+			{
+				return false;
+			}
+			const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(Guid);
+			if (!Possessable || !Possessable->GetName().StartsWith(TEXT("CAM_")))
+			{
+				return false;
+			}
+			for (const TWeakObjectPtr<UObject>& Bound : Sequencer->FindBoundObjects(Guid, MovieSceneSequenceID::Root))
+			{
+				if (Bound.IsValid())
+				{
+					return false;
+				}
+			}
+			return true;
+		};
+
 		TArray<UMovieSceneSection*> ToRemove;
 		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
 		{
 			const UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
-			if (Cut && DirectorBindings.Contains(Cut->GetCameraBindingID().GetGuid()))
+			if (!Cut)
+			{
+				continue;
+			}
+			const FGuid Guid = Cut->GetCameraBindingID().GetGuid();
+			if (DirectorBindings.Contains(Guid))
 			{
 				ToRemove.Add(Section);
+			}
+			else if (IsDeadCamera(Guid))
+			{
+				ToRemove.Add(Section);
+				DeadCameras.Add(Guid);
 			}
 		}
 
@@ -722,6 +760,31 @@ namespace
 		for (UMovieSceneSection* Section : ToRemove)
 		{
 			CutTrack->RemoveSection(*Section);
+		}
+		if (DeadCameras.Num() > 0)
+		{
+			Sequence->Modify();
+			MovieScene->Modify();
+			for (const FGuid& Guid : DeadCameras)
+			{
+				// The camera's components and tracks go with it.
+				TArray<FGuid> Children;
+				for (int32 Index = 0; Index < MovieScene->GetPossessableCount(); ++Index)
+				{
+					if (MovieScene->GetPossessable(Index).GetParent() == Guid)
+					{
+						Children.Add(MovieScene->GetPossessable(Index).GetGuid());
+					}
+				}
+				for (const FGuid& Child : Children)
+				{
+					Sequence->UnbindPossessableObjects(Child);
+					MovieScene->RemovePossessable(Child);
+				}
+				Sequence->UnbindPossessableObjects(Guid);
+				MovieScene->RemovePossessable(Guid);
+			}
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: dropped %d camera cut(s) to %d deleted camera(s) from earlier stagings."), ToRemove.Num(), DeadCameras.Num());
 		}
 		return ToRemove.Num();
 	}
@@ -3589,6 +3652,8 @@ namespace CinemafyScriptEditor
 	 * the scene's transition in on its first line. */
 	TArray<FCinemafyLine> BuildDirectorLines(UWorld* World, const FCinemafyScriptScene& Scene, TArray<AActor*>& OutPerformers, int32& OutUnmatched)
 	{
+		// With no parenthetical, a line plays its own words, else the scene's mood (a love scene isn't Neutral).
+		const FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(Scene, ECinemafyTimeOfDay::Unknown).Mood;
 		TArray<FCinemafyLine> Lines;
 		FString PreviousSpeaker;
 		AActor* PreviousActor = nullptr;
@@ -3640,7 +3705,7 @@ namespace CinemafyScriptEditor
 			// A face performance made from this audio (MetaHuman lip-sync) plays instead of the Talk curves.
 			Line.FaceAnimation = ScriptLine.HasCurrentFace() ? ScriptLine.FaceAnimation.LoadSynchronous() : nullptr;
 			// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
-			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDeliveryInMood(ScriptLine.Direction, ScriptLine.Text, SceneMood);
 			if (Delivery.bHasEmotion)
 			{
 				Line.bSetEmotion = true;

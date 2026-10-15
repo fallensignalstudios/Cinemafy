@@ -435,6 +435,9 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		}
 	}
 
+	// The scene's mood, for lines the page gives no direction.
+	const FString MoodDirection = UCinemafyScriptLibrary::MoodDirection(UCinemafyMoodLibrary::ReadSceneMood(*Scene, ECinemafyTimeOfDay::Unknown).Mood);
+
 	// The staging, from the script (one insert of a gameplay bridge: just its lines).
 	int32 InsertIndex = 0;
 	UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex);
@@ -657,6 +660,11 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 				Added.Dialogue = FText::FromString(Beat.Line);
 				Added.DialogueAudio = Beat.LineAudio.LoadSynchronous();
 				Added.LineDirection = Beat.LineDirection;
+				// No direction and nothing in the words: the take plays the scene's mood ("(tender)" in a love scene).
+				if (Added.LineDirection.IsEmpty() && UCinemafyScriptLibrary::ReadDelivery(FString(), Beat.Line).Cue.IsEmpty() && !MoodDirection.IsEmpty())
+				{
+					Added.LineDirection = FString::Printf(TEXT("(%s)"), *MoodDirection);
+				}
 				Added.Listener = Target;
 				Added.HeardFrom = Beat.HeardFrom;
 			}
@@ -1122,6 +1130,7 @@ int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Proje
 		{
 			continue;
 		}
+		const FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(*Scene, ECinemafyTimeOfDay::Unknown).Mood;
 		for (FCinemafyScriptLine& Line : Scene->Lines)
 		{
 			const bool bHasReal = !Line.Audio.IsNull() && !Line.bScratchAudio;
@@ -1133,7 +1142,7 @@ int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Proje
 			const FCinemafyCastMember* Member = Project->FindCastMember(Line.Speaker);
 			const FString Wav = Folder / (Line.LineId + TEXT(".wav"));
 			// Read the way the script directs it: "(whispering)" quiet and slow, "(shouting)" loud and quick.
-			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(Line.Direction, Line.Text);
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDeliveryInMood(Line.Direction, Line.Text, SceneMood);
 			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), (Member ? Member->ScratchRate : 1.f) * Delivery.Rate,
 				Delivery.Volume, Delivery.bWhisper, Wav))
 			{

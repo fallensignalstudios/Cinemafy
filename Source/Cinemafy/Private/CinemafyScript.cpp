@@ -2764,6 +2764,8 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 			ECinemafyEmotion::Worried, true, 0.45f, 0.95f, 0.8f, false },
 		{ { TEXT("determined"), TEXT("firmly"), TEXT("firm"), TEXT("resolute"), TEXT("steely"), TEXT("commanding"), TEXT("defiant") },
 			ECinemafyEmotion::Determined, true, 0.7f, 0.95f, 1.f, false },
+		{ { TEXT("tender"), TEXT("lovingly"), TEXT("fondly"), TEXT("gently"), TEXT("intimate"), TEXT("romantic"), TEXT("adoring") },
+			ECinemafyEmotion::Happy, true, 0.5f, 0.9f, 0.7f, false },
 	};
 	if (!Words.IsEmpty())
 	{
@@ -2800,8 +2802,74 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 		Delivery.Intensity = 0.9f;
 		Delivery.Rate = 1.1f;
 		Delivery.Cue = TEXT("shouted");
+		return Delivery;
+	}
+
+	// No direction: the line's own words, played gentler than a written direction would ask.
+	struct FWords
+	{
+		TArray<const TCHAR*> Phrases;
+		ECinemafyEmotion Emotion;
+		float Intensity;
+	};
+	static const FWords Said[] = {
+		{ { TEXT("i love you"), TEXT("love you"), TEXT("my love"), TEXT("darling"), TEXT("beloved"), TEXT("my heart"), TEXT("kiss me"), TEXT("i missed you") },
+			ECinemafyEmotion::Happy, 0.55f },
+		{ { TEXT("afraid"), TEXT("scared"), TEXT("fear"), TEXT("terrified"), TEXT("frightened") }, ECinemafyEmotion::Worried, 0.55f },
+		{ { TEXT("i m sorry"), TEXT("im sorry"), TEXT("forgive me"), TEXT("goodbye"), TEXT("i miss"), TEXT("they re gone"), TEXT("is dead"), TEXT("are dead") },
+			ECinemafyEmotion::Sad, 0.5f },
+		{ { TEXT("i hate"), TEXT("how dare"), TEXT("damn you"), TEXT("i ll kill"), TEXT("traitor") }, ECinemafyEmotion::Angry, 0.65f },
+		{ { TEXT("i am serious"), TEXT("i m serious"), TEXT("i swear"), TEXT("i promise"), TEXT("i will"), TEXT("never again"), TEXT("we must"), TEXT("i must") },
+			ECinemafyEmotion::Determined, 0.55f },
+	};
+	const FString Spoken = TEXT(" ") + CinemafyScriptText::Normalize(Text) + TEXT(" ");
+	for (const FWords& Entry : Said)
+	{
+		for (const TCHAR* Phrase : Entry.Phrases)
+		{
+			if (Spoken.Contains(FString::Printf(TEXT(" %s "), Phrase)))
+			{
+				Delivery.bHasEmotion = true;
+				Delivery.Emotion = Entry.Emotion;
+				Delivery.Intensity = Entry.Intensity;
+				Delivery.Cue = FString::Printf(TEXT("says \"%s\""), Phrase);
+				return Delivery;
+			}
+		}
 	}
 	return Delivery;
+}
+
+FString UCinemafyScriptLibrary::MoodDirection(const FString& Mood)
+{
+	return Mood == TEXT("romantic") ? TEXT("tender")
+		: Mood == TEXT("sad") ? TEXT("sadly")
+		: Mood == TEXT("tense") || Mood == TEXT("eerie") ? TEXT("uneasy")
+		: Mood == TEXT("alarm") ? TEXT("anxious")
+		: Mood == TEXT("action") ? TEXT("firmly")
+		: Mood == TEXT("warm") || Mood == TEXT("triumphant") ? TEXT("warmly")
+		: TEXT("");
+}
+
+FCinemafyDelivery UCinemafyScriptLibrary::ReadDeliveryInMood(const FString& Direction, const FString& Text, const FString& Mood)
+{
+	const FCinemafyDelivery Read = ReadDelivery(Direction, Text);
+	if (!Read.Cue.IsEmpty() || !Direction.TrimStartAndEnd().IsEmpty())
+	{
+		return Read;
+	}
+	// The scene's mood, as the direction a writer might have given, a notch softer.
+	const FString AsDirection = MoodDirection(Mood);
+	if (AsDirection.IsEmpty())
+	{
+		return Read;
+	}
+	FCinemafyDelivery FromMood = ReadDelivery(AsDirection, Text);
+	FromMood.Intensity = FMath::Min(FromMood.Intensity, 0.5f);
+	FromMood.Rate = FMath::Lerp(1.f, FromMood.Rate, 0.5f);
+	FromMood.Volume = FMath::Lerp(1.f, FromMood.Volume, 0.5f);
+	FromMood.Cue = FString::Printf(TEXT("%s scene"), *Mood);
+	return FromMood;
 }
 
 FString UCinemafyScriptLibrary::ComputeContentHash(const FCinemafyScriptScene& Scene)

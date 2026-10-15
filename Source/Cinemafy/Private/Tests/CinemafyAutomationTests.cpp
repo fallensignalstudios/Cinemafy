@@ -1225,6 +1225,17 @@ bool FCinemafyDeliveryTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A line in capitals is shouted"), Caps.bHasEmotion && Caps.Emotion == ECinemafyEmotion::Angry);
 	TestFalse(TEXT("A plain line has no direction"), Script::ReadDelivery(FString(), TEXT("Stand down, Admiral.")).bHasEmotion);
 	TestFalse(TEXT("V.O. isn't a feeling"), Script::ReadDelivery(TEXT("(V.O.)"), TEXT("You always did hesitate.")).bHasEmotion);
+
+	// No direction: the words, then the scene's mood. A written direction always wins.
+	const FCinemafyDelivery Love = Script::ReadDelivery(FString(), TEXT("I love you."));
+	TestTrue(TEXT("\"I love you\" isn't Neutral"), Love.bHasEmotion && Love.Emotion == ECinemafyEmotion::Happy && Love.Intensity < 0.7f);
+	TestEqual(TEXT("\"You are afraid\" is worried"), Script::ReadDelivery(FString(), TEXT("You are afraid.")).Emotion, ECinemafyEmotion::Worried);
+	TestEqual(TEXT("\"I am serious\" is determined"), Script::ReadDelivery(FString(), TEXT("I am serious.")).Emotion, ECinemafyEmotion::Determined);
+	const FCinemafyDelivery Quiet = Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("romantic"));
+	TestTrue(TEXT("A plain line in a romantic scene plays tender and soft"), Quiet.bHasEmotion && Quiet.Emotion == ECinemafyEmotion::Happy && Quiet.Intensity <= 0.5f && Quiet.Volume < 1.f);
+	TestFalse(TEXT("...a calm scene leaves it alone"), Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("calm")).bHasEmotion);
+	TestEqual(TEXT("...and a direction beats the mood"), Script::ReadDeliveryInMood(TEXT("(coldly)"), TEXT("Stay."), TEXT("romantic")).Emotion, ECinemafyEmotion::Contempt);
+	TestEqual(TEXT("...and so do the words"), Script::ReadDeliveryInMood(FString(), TEXT("I am serious."), TEXT("romantic")).Emotion, ECinemafyEmotion::Determined);
 	return true;
 }
 

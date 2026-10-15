@@ -741,6 +741,18 @@ public:
 	static FCinemafyDelivery ReadDelivery(const FString& Direction, const FString& Text);
 
 	/**
+	 * ReadDelivery, and when the page gives no direction and the words settle nothing ("I love you" does; "Yes." doesn't),
+	 * the scene's mood sets a gentle baseline: a romantic scene plays tender, a sad one sad, a tense one uneasy.
+	 * Mood is a Scene Mood's word (calm, tense, action, sad, warm, romantic, triumphant, eerie, alarm).
+	 */
+	/** The direction a scene's mood stands for when a line has none ("romantic" -> "tender"); empty for calm. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FString MoodDirection(const FString& Mood);
+
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FCinemafyDelivery ReadDeliveryInMood(const FString& Direction, const FString& Text, const FString& Mood);
+
+	/**
 	 * Reads a camera direction: framings ("CLOSE ON THANE", "WIDE", "TWO SHOT", "OVER KADE'S SHOULDER", "LOW ANGLE ON",
 	 * "KADE'S POV", "INSERT - THE DATAPAD", "ANGLE ON"), moves ("SLOW PUSH IN ON", "PULL BACK TO REVEAL", "CRANE UP",
 	 * "ARC AROUND", "CRASH ZOOM"), the camera's feel ("HANDHELD", "LOCKED OFF") and "BACK TO SCENE". False when the

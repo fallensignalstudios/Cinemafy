@@ -29,7 +29,7 @@ Fixes from staging a 420-page game screenplay end to end.
 - **The cut is the playback range:** the sequence ends at the last shot instead of playing the take's black tail.
 - **Pre-flight:** warns when the level has no Player Start (the game's pawn would spawn at the origin during the
   take), with a fix that places one off set, on real floor (the farthest point up to 30 m past the set with ground
-  under it).
+  under it, traced from just above the set's floor so a ceiling isn't taken for one).
 - A possessive isn't a death: "kills Selene's Frost" kills the Frost.
 - **Voices in the take:** a voice-only line (an announcement, a radio) is heard by whoever just spoke (else the next to
   speak): it plays unattached with the voice's name on the subtitle, the hearer's lips stay still, it paces the take
@@ -37,6 +37,13 @@ Fixes from staging a 420-page game screenplay end to end.
 - **Group cues on set:** `TARRIK AND SELENE` is played by the first of them.
 - **Casting over recorded takes:** still lines in a recorded take get a performance for their tone too. The take's
   own body animation fades out under the cast clip and back after it, instead of the take skipping casting.
+- **Tone without parentheticals:** a line with no direction plays its own words ("I love you" tender, "You are afraid"
+  worried, "I am serious" determined), and otherwise the scene's mood, a notch softer than a written direction:
+  romantic plays tender, sad plays sad, tense and eerie uneasy, alarm anxious, action firm, warm and triumphant warm.
+  A written direction always wins. Scratch reads, the script's director and recorded takes all follow it
+  (`ReadDeliveryInMood`, `MoodDirection`).
+- **Re-cutting drops dead cameras:** cuts to Cinemafy cameras deleted since an earlier staging (and their bindings)
+  are removed when a director cuts the scene, so they can't pile up under the new cut and drop the view to the player.
 - **No white flash on an opening Dissolve:** the first shot has nothing to dissolve, wipe or whip from, so it fades
   in from black (a dip to white stays a dip).
 - Choreography wiring is logged once per performer, not on every beat.

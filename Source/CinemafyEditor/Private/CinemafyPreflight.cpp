@@ -533,7 +533,13 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 		const float Reach = Set.IsValid ? Set.GetExtent().Size2D() : 0.f;
 		// On real floor, out of the shot: the farthest point past the set's edge (up to 30 m out, in any direction)
 		// that has ground under it. A pawn that falls into the void when the scene hands the view back is no use.
-		FVector Where = Center + FVector(0.f, 0.f, 100.f);
+		// The floor: the lowest mark, else the lowest character's feet.
+		float FloorZ = Set.IsValid ? Set.Min.Z : 0.f;
+		for (TActorIterator<ACinemafyMark> It(World); It; ++It)
+		{
+			FloorZ = FMath::Min(FloorZ, It->GetActorLocation().Z);
+		}
+		FVector Where = FVector(Center.X, Center.Y, FloorZ + 100.f);
 		bool bFloor = false;
 		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyPlayerStart), false);
 		for (const float Out : { 3000.f, 2000.f, 1200.f, 600.f, 300.f })
@@ -541,9 +547,12 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 			for (int32 Side = 0; Side < 8 && !bFloor; ++Side)
 			{
 				const FVector Dir = FRotator(0.f, Side * 45.f - 90.f, 0.f).Vector();
-				const FVector Probe = Center + Dir * (Reach + Out);
+				// From just above the set's floor (marks sit on it), so a ceiling or a roof isn't taken for floor.
+				FVector Probe = Center + Dir * (Reach + Out);
+				Probe.Z = FloorZ;
 				FHitResult Hit;
-				if (World->LineTraceSingleByChannel(Hit, Probe + FVector(0.f, 0.f, 500.f), Probe - FVector(0.f, 0.f, 2000.f), ECC_Visibility, Query) && Hit.ImpactNormal.Z > 0.7f)
+				if (World->LineTraceSingleByChannel(Hit, Probe + FVector(0.f, 0.f, 150.f), Probe - FVector(0.f, 0.f, 1500.f), ECC_Visibility, Query)
+					&& Hit.ImpactNormal.Z > 0.7f && Hit.ImpactPoint.Z < FloorZ + 100.f)
 				{
 					Where = Hit.ImpactPoint + FVector(0.f, 0.f, 100.f);
 					bFloor = true;
