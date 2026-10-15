@@ -33,6 +33,17 @@
   gestures from then on.
 - **The player's pawn sits takes out:** recording a take hides the game's own pawn (spawned at the Player Start) and
   holds it still, unless the player is in the scene.
+- **Cameras follow people who move:** every shot is played through when the scene is cut, and a camera whose
+  subject moves is keyed (a "Cinemafy Camera Track"): walk-and-talk shots ride along at their framed offset; other
+  shots hold their spot and pan and tilt to keep the face where the shot put it (eased, with a small dead zone),
+  and dolly after someone who walks more than a metre or so off. Shots nobody moves in stay locked off.
+  - Movement is read from the body (the hips), not just the actor, so an animation that carries the mesh (root
+    motion on a clip) is followed too: the live follow rig (`GetSubjectTrackPoint`) and the moving-line check use it.
+  - Lines count as moving when the speaker *or* the listener travels more than 1.5 m at any point in the line (and
+    its pause), not just between its two ends.
+  - A reused camera is re-framed when its subject stands somewhere else in the new take (it keeps your hand tweaks
+    when they don't); walk-and-talk rigs re-capture their offset every cut.
+  - A two-shot no longer holds through a walk, and merging lines in a take keeps the walk.
 - New test: `Cinemafy.Previs.ReadsYourBlocking`.
 
 ## 0.18.0: "The fine print"

@@ -208,6 +208,14 @@ take, so you can adjust beats first.
 
 ## 7. Refine
 
+**Cameras follow movement.** When a scene is cut, each shot is played through, and a camera whose subject moves gets
+keys (a *Cinemafy Camera Track* on the camera): walk-and-talk shots ride along; other shots hold their spot and pan
+and tilt to keep the face framed, then dolly after someone who walks off. It follows the body, so an animation that
+carries the mesh away (root motion) is followed too. Shots where nobody moves stay locked off. Re-cut after a new
+take and cameras whose subject now stands elsewhere are re-framed; ones you nudged by hand keep your nudge when the
+subject hasn't moved.
+
+
 Everything Previs builds is ordinary Cinemafy and Unreal:
 
 - **Choreographies:** click beats to change them, or **Choreograph** more ("sword attack", "vault",

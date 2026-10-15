@@ -921,9 +921,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 		FCinemafyPlannedShot& Held = Plan[Index];
 		const FCinemafyPlannedShot& Next = Plan[Index + 1];
 		if (!Next.bLineStart || Next.TransitionIn != ECinemafyTransition::Cut || !IsTwoShot(Held.ShotType)
-			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex) || Lines[Next.LineIndex].bForceShot)
+			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex) || Lines[Next.LineIndex].bForceShot
+			|| Lines[Next.LineIndex].bMoving || (Lines.IsValidIndex(Held.LineIndex) && Lines[Held.LineIndex].bMoving))
 		{
-			continue;
+			continue; // Nor across a walk: the next line's tracking shot would be lost to a two-shot framed before it.
 		}
 
 		const FCinemafyLine& NextLine = Lines[Next.LineIndex];

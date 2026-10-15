@@ -20,6 +20,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Framing")
 	static bool SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution);
 
+	/**
+	 * Where a character's body is on the floor plan: their hips, at the actor's height. Follows an animation that
+	 * carries the mesh away from the actor (root motion on a clip), which the actor's own location doesn't.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static FVector GetSubjectTrackPoint(const AActor* Actor);
+
 	/** The actor's eyes are within 70 cm of their feet: lying down. Shots of them rise to look down at the face. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
 	static bool IsLyingDown(const AActor* Actor);

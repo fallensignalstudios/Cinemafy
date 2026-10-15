@@ -149,6 +149,28 @@ float UCinemafyFramingLibrary::GetSideOfLine(const FVector& Point, const AActor*
 	return FVector::DotProduct(Point - Mid, SideDir);
 }
 
+FVector UCinemafyFramingLibrary::GetSubjectTrackPoint(const AActor* Actor)
+{
+	if (!Actor)
+	{
+		return FVector::ZeroVector;
+	}
+	const FVector Base = Actor->GetActorLocation();
+	TInlineComponentArray<USkeletalMeshComponent*> Meshes(Actor);
+	for (const USkeletalMeshComponent* Mesh : Meshes)
+	{
+		for (const TCHAR* Bone : { TEXT("pelvis"), TEXT("Pelvis"), TEXT("hips"), TEXT("Hips"), TEXT("mixamorig:Hips") })
+		{
+			if (Mesh->GetBoneIndex(Bone) != INDEX_NONE)
+			{
+				const FVector Hips = Mesh->GetBoneLocation(Bone);
+				return FVector(Hips.X, Hips.Y, Base.Z); // Floor-plan position: no bob from the walk.
+			}
+		}
+	}
+	return Base;
+}
+
 bool UCinemafyFramingLibrary::IsLyingDown(const AActor* Actor)
 {
 	if (!Actor)

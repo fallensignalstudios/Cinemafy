@@ -15,6 +15,9 @@
 #include "CinemafyCameraFeelComponent.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyFollowComponent.h"
+#include "Tracks/MovieScene3DTransformTrack.h"
+#include "Sections/MovieScene3DTransformSection.h"
+#include "Channels/MovieSceneDoubleChannel.h"
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
 #include "Animation/AnimSequenceBase.h"
@@ -836,6 +839,210 @@ namespace
 		FFrameNumber End;
 		const FCinemafyPlannedShot* Shot = nullptr;
 	};
+
+	const TCHAR* const CameraTrackName = TEXT("Cinemafy Camera Track");
+
+	/** The camera's own transform tracks (Cinemafy's, or Sequencer's default Transform): the camera's position is keyed by us. */
+	TArray<UMovieScene3DTransformTrack*> CameraTransformTracks(UMovieScene* MovieScene, const FGuid& Binding)
+	{
+		TArray<UMovieScene3DTransformTrack*> Found;
+		const UMovieScene* ConstMovieScene = MovieScene;
+		if (const FMovieSceneBinding* Existing = Binding.IsValid() ? ConstMovieScene->FindBinding(Binding) : nullptr)
+		{
+			for (UMovieSceneTrack* Track : Existing->GetTracks())
+			{
+				if (UMovieScene3DTransformTrack* Transform = Cast<UMovieScene3DTransformTrack>(Track))
+				{
+					Found.Add(Transform);
+				}
+			}
+		}
+		return Found;
+	}
+
+	/**
+	 * Takes a camera off its earlier tracking keys: back to where it was framed (the first key of the last bake, which
+	 * is always the framed position) with the track gone, so it can be reused or re-framed cleanly.
+	 */
+	void ResetCameraTracking(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera)
+	{
+		const FGuid Binding = CinemafySequencer::FindBinding(Sequence, Camera);
+		for (UMovieScene3DTransformTrack* Track : CameraTransformTracks(MovieScene, Binding))
+		{
+			if (Track->GetDisplayName().ToString() != CameraTrackName)
+			{
+				continue;
+			}
+			const TArray<UMovieSceneSection*>& Sections = Track->GetAllSections();
+			if (Sections.Num() > 0)
+			{
+				const TArrayView<FMovieSceneDoubleChannel*> Channels = Sections[0]->GetChannelProxy().GetChannels<FMovieSceneDoubleChannel>();
+				if (Channels.Num() >= 6 && Channels[0]->GetNumKeys() > 0)
+				{
+					auto First = [&Channels](int32 Index) { return Channels[Index]->GetValues()[0].Value; };
+					Camera->Modify();
+					Camera->SetActorLocationAndRotation(FVector(First(0), First(1), First(2)), FRotator(First(4), First(5), First(3)));
+				}
+			}
+			MovieScene->RemoveTrack(*Track);
+		}
+	}
+
+	/**
+	 * Cameras keep people in frame when they move during the shot, whether they walk (the take moves the actor) or an
+	 * animation carries the body (root motion on a clip): the sequence is played through each shot and the camera is
+	 * keyed. Walk-and-talk shots ride along at the offset they were framed at. Other shots hold their spot and pan and
+	 * tilt to keep the face where the shot put it (a small dead zone, eased like an operator would), and dolly after
+	 * someone who walks more than a metre or so away. A shot nobody moves in gets no keys. Returns how many shots moved.
+	 */
+	int32 BakeCameraTracking(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera, const TArray<FCameraShotWindow>& Windows,
+		const TSharedPtr<ISequencer>& Sequencer)
+	{
+		if (!Camera || !Sequencer.IsValid() || Sequencer->GetFocusedMovieSceneSequence() != Sequence || Windows.Num() == 0)
+		{
+			return 0;
+		}
+		const FGuid Binding = CinemafySequencer::FindBinding(Sequence, Camera);
+		if (!Binding.IsValid())
+		{
+			return 0;
+		}
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		const FTransform Rest = Camera->GetActorTransform();
+		const float Step = 0.2f;
+		struct FCameraKey { FFrameNumber Frame; FVector Location; FRotator Rotation; };
+		TArray<FCameraKey> Keys;
+		int32 Moved = 0;
+		TArray<FCameraShotWindow> Sorted = Windows;
+		Sorted.Sort([](const FCameraShotWindow& A, const FCameraShotWindow& B) { return A.Start < B.Start; });
+		for (const FCameraShotWindow& Window : Sorted)
+		{
+			const FCinemafyPlannedShot* Shot = Window.Shot;
+			AActor* Subject = Shot ? Shot->Subject.Get() : nullptr;
+			if (Keys.Num() > 0 && Keys.Last().Frame >= Window.Start)
+			{
+				continue; // Overlapping use of one camera: the earlier shot's keys stand.
+			}
+			Keys.Add({ Window.Start, Rest.GetLocation(), Rest.Rotator() });
+			if (!Subject)
+			{
+				continue;
+			}
+			const bool bTracking = Shot->ShotType == ECinemafyShotType::TrackingLead || Shot->ShotType == ECinemafyShotType::TrackingFollow;
+			const double Ticks = static_cast<double>((Window.End - Window.Start).Value);
+			const int32 Samples = FMath::Clamp(FMath::CeilToInt(TickResolution.AsSeconds(FFrameTime(Window.End - Window.Start)) / Step), 1, 900);
+			FVector Body0 = FVector::ZeroVector;
+			FTransform Offset = FTransform::Identity;
+			FRotator Aim0 = FRotator::ZeroRotator;
+			FVector Carried = FVector::ZeroVector;
+			FVector Location = Rest.GetLocation();
+			FRotator Rotation = Rest.Rotator();
+			bool bShotMoved = false;
+			for (int32 Sample = 0; Sample <= Samples; ++Sample)
+			{
+				const FFrameNumber Frame = Window.Start + FFrameNumber(static_cast<int32>(FMath::RoundToDouble(Ticks * Sample / Samples)));
+				Sequencer->SetLocalTimeDirectly(FFrameTime(Frame));
+				Sequencer->ForceEvaluate();
+				const FVector Body = UCinemafyFramingLibrary::GetSubjectTrackPoint(Subject);
+				const FVector Eye = UCinemafyFramingLibrary::GetEyePoint(Subject);
+				const FTransform SubjectFrame(FRotator(0.f, Subject->GetActorRotation().Yaw, 0.f), Body);
+				if (Sample == 0)
+				{
+					Body0 = Body;
+					Offset = Rest.GetRelativeTransform(SubjectFrame);
+					Aim0 = (Eye - Rest.GetLocation()).Rotation();
+					continue;
+				}
+				FVector WantLocation;
+				FRotator WantRotation;
+				if (bTracking)
+				{
+					// Riding along at the framed offset.
+					const FTransform Along = Offset * SubjectFrame;
+					WantLocation = Along.GetLocation();
+					WantRotation = Along.Rotator();
+				}
+				else
+				{
+					// Dolly after them once they've gone more than 1.2 m from where the shot was framed.
+					const FVector Travel = FVector(Body.X - Body0.X, Body.Y - Body0.Y, 0.f);
+					const float Distance = Travel.Size();
+					const FVector Want = Distance > 120.f ? Travel / Distance * (Distance - 120.f) : FVector::ZeroVector;
+					Carried = FMath::VInterpTo(Carried, Want, Step, 2.5f);
+					WantLocation = Rest.GetLocation() + Carried;
+					// Pan and tilt to keep their eyes where the shot put them, past a 2 degree dead zone.
+					const FRotator Aim = (Eye - WantLocation).Rotation();
+					auto Beyond = [](float Degrees) { return FMath::Abs(Degrees) < 2.f ? 0.f : Degrees - FMath::Sign(Degrees) * 2.f; };
+					WantRotation = Rest.Rotator();
+					WantRotation.Yaw += Beyond(FRotator::NormalizeAxis(Aim.Yaw - Aim0.Yaw));
+					WantRotation.Pitch = FMath::Clamp(WantRotation.Pitch + Beyond(FRotator::NormalizeAxis(Aim.Pitch - Aim0.Pitch)), -85.f, 85.f);
+				}
+				// Eased toward it, like an operator: no snapping on a step.
+				const float Ease = bTracking ? 6.f : 4.f;
+				Location = FMath::VInterpTo(Location, WantLocation, Step, Ease);
+				Rotation = FMath::RInterpTo(Rotation, WantRotation, Step, Ease);
+				bShotMoved |= !Location.Equals(Rest.GetLocation(), 3.f) || !Rotation.Equals(Rest.Rotator(), 0.5f);
+				Keys.Add({ Frame, Location, Rotation });
+			}
+			Moved += bShotMoved ? 1 : 0;
+		}
+		Camera->SetActorTransform(Rest);
+		for (UMovieScene3DTransformTrack* Track : CameraTransformTracks(MovieScene, Binding))
+		{
+			if (Track->GetDisplayName().ToString() == CameraTrackName)
+			{
+				MovieScene->RemoveTrack(*Track);
+			}
+		}
+		if (Moved == 0)
+		{
+			return 0; // Nobody moved: the camera holds where it was framed.
+		}
+
+		// Sequencer's own Transform track would pin it: ours drives the camera now.
+		CinemafySequencer::MuteBindingTracks(MovieScene, Binding, TEXT("MovieScene3DTransformTrack"));
+		UMovieScene3DTransformTrack* Track = MovieScene->AddTrack<UMovieScene3DTransformTrack>(Binding);
+		Track->SetDisplayName(FText::FromString(CameraTrackName));
+		UMovieScene3DTransformSection* Section = Cast<UMovieScene3DTransformSection>(Track->CreateNewSection());
+		if (!Section)
+		{
+			return 0;
+		}
+		Section->SetRange(TRange<FFrameNumber>::All());
+		Track->AddSection(*Section);
+		const TArrayView<FMovieSceneDoubleChannel*> Channels = Section->GetChannelProxy().GetChannels<FMovieSceneDoubleChannel>();
+		if (Channels.Num() < 9)
+		{
+			return 0;
+		}
+		for (int32 Index = 6; Index < 9; ++Index)
+		{
+			Channels[Index]->SetDefault(1.0);
+		}
+		// Unwound angles, so a pan across 180 degrees doesn't spin the long way round between keys.
+		FRotator Previous = Keys[0].Rotation;
+		for (const FCameraKey& Key : Keys)
+		{
+			FRotator Rotation = Key.Rotation;
+			Rotation.Yaw = Previous.Yaw + FRotator::NormalizeAxis(Rotation.Yaw - Previous.Yaw);
+			Rotation.Pitch = Previous.Pitch + FRotator::NormalizeAxis(Rotation.Pitch - Previous.Pitch);
+			Rotation.Roll = Previous.Roll + FRotator::NormalizeAxis(Rotation.Roll - Previous.Roll);
+			Previous = Rotation;
+			Channels[0]->AddCubicKey(Key.Frame, Key.Location.X);
+			Channels[1]->AddCubicKey(Key.Frame, Key.Location.Y);
+			Channels[2]->AddCubicKey(Key.Frame, Key.Location.Z);
+			Channels[3]->AddCubicKey(Key.Frame, Rotation.Roll);
+			Channels[4]->AddCubicKey(Key.Frame, Rotation.Pitch);
+			Channels[5]->AddCubicKey(Key.Frame, Rotation.Yaw);
+		}
+		// The keys drive it now; the live follow rig (for the Story Player's live scenes) would fight them here.
+		if (UCinemafyFollowComponent* Follow = Camera->FindComponentByClass<UCinemafyFollowComponent>())
+		{
+			Follow->Modify();
+			Follow->Weight = 0.f;
+		}
+		return Moved;
+	}
 
 	/** Keys a camera's Move Progress: 0 -> 1 across each moving shot, held at 0 on the others. */
 	void BakeCameraMoves(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera, const TArray<FCameraShotWindow>& Windows)
@@ -1679,7 +1886,9 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 
 	TArray<FCinemafyLine> DirectedLines = Director->GetDirectedLines();
 
-	// Who's walking? Play through the sequence and see how far each speaker travels during their line.
+	// Who's walking? Play through the sequence and see how far the people in each line travel during it: the speaker
+	// and the listener, by their bodies (an animation can carry the mesh away from the actor), sampled all the way
+	// through (a walk out and back, or a walk in the pause after the words, counts).
 	if (const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer())
 	{
 		const FQualifiedFrameTime OriginalTime = Sequencer->GetLocalTime();
@@ -1688,16 +1897,30 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		float Time = 0.f;
 		for (FCinemafyLine& Line : DirectedLines)
 		{
-			if (Line.Speaker && !Line.bMoving)
+			const float Length = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+			if (!Line.bMoving && (Line.Speaker || Line.Listener))
 			{
-				Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time)));
-				Sequencer->ForceEvaluate();
-				const FVector From = Line.Speaker->GetActorLocation();
-				Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time + Line.Duration)));
-				Sequencer->ForceEvaluate();
-				Line.bMoving = FVector::Dist2D(From, Line.Speaker->GetActorLocation()) > 150.f;
+				TMap<AActor*, FVector> From;
+				float Farthest = 0.f;
+				const int32 Samples = FMath::Clamp(FMath::CeilToInt(Length / 0.25f), 1, 120);
+				for (int32 Sample = 0; Sample <= Samples; ++Sample)
+				{
+					Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time + Length * Sample / Samples)));
+					Sequencer->ForceEvaluate();
+					for (AActor* Person : { Line.Speaker.Get(), Line.Listener.Get() })
+					{
+						if (!Person)
+						{
+							continue;
+						}
+						const FVector Here = UCinemafyFramingLibrary::GetSubjectTrackPoint(Person);
+						const FVector& Start = From.FindOrAdd(Person, Here);
+						Farthest = FMath::Max(Farthest, FVector::Dist2D(Start, Here));
+					}
+				}
+				Line.bMoving = Farthest > 150.f;
 			}
-			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+			Time += Length;
 		}
 		Sequencer->SetLocalTimeDirectly(ConvertFrameTime(OriginalTime.Time, OriginalTime.Rate, TickResolution));
 		Sequencer->ForceEvaluate();
@@ -1818,6 +2041,12 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		}
 	}
 
+	// Last cut's tracking keys go first: each camera back where it was framed.
+	for (const TPair<FName, ACineCameraActor*>& Pair : ExistingCameras)
+	{
+		ResetCameraTracking(Sequence, MovieScene, Pair.Value);
+	}
+
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
 	const FFrameNumber SceneStart = bAtLastSceneStart ? FFrameNumber(Director->LastSceneStartTick) : CinemafySequencer::GetPlayheadTick(MovieScene);
 	FFrameNumber SceneEnd = SceneStart;
@@ -1837,21 +2066,49 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 			Shot.Subject ? *Shot.Subject->GetName() : TEXT("-"), Shot.Counterpart ? *Shot.Counterpart->GetName() : TEXT("-"), Director->bFlipSide ? 1 : 0));
 
 		ACineCameraActor* Camera = ExistingCameras.FindRef(ShotTag);
+		if (bFrameAtShotTime)
+		{
+			FramingSequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Shot.StartTime)));
+			FramingSequencer->ForceEvaluate();
+		}
+		FCinemafyShotRequest Request;
+		Request.ShotType = Shot.ShotType;
+		Request.Subject = Shot.Subject;
+		Request.Counterpart = Shot.Counterpart;
+		Request.Group = Shot.Group;
+		Request.bUseRecommendedLens = false;
+		Request.Lens = Shot.Lens;
+		Request.bFlipSide = Director->bFlipSide;
+		// Where the subject stood when the camera was framed: a reused camera is re-framed if they've moved since
+		// (a new take put them elsewhere), and keeps its hand tweaks if they haven't.
+		const FVector SubjectAt = Shot.Subject ? UCinemafyFramingLibrary::GetSubjectTrackPoint(Shot.Subject) : FVector::ZeroVector;
+		const FName AtTag(*FString::Printf(TEXT("Cinemafy.FramedAt.%d_%d_%d"), FMath::RoundToInt(SubjectAt.X), FMath::RoundToInt(SubjectAt.Y), FMath::RoundToInt(SubjectAt.Z)));
+		auto FramedFar = [&SubjectAt](const ACineCameraActor* Existing)
+		{
+			for (const FName& Tag : Existing->Tags)
+			{
+				TArray<FString> Parts;
+				const FString Text = Tag.ToString();
+				if (Text.StartsWith(TEXT("Cinemafy.FramedAt.")) && Text.Mid(18).ParseIntoArray(Parts, TEXT("_"), true) == 3)
+				{
+					return FVector::Dist(SubjectAt, FVector(FCString::Atoi(*Parts[0]), FCString::Atoi(*Parts[1]), FCString::Atoi(*Parts[2]))) > 60.f;
+				}
+			}
+			return true; // Framed before Cinemafy remembered where: frame it again.
+		};
+		if (Camera && bFrameAtShotTime && Shot.Subject && FramedFar(Camera))
+		{
+			FCinemafyShotSolution Solution;
+			bool bClearView = false;
+			if (UCinemafyFramingLibrary::SolveShotAvoidingObstacles(Camera->GetWorld(), Request, Solution, bClearView))
+			{
+				Camera->Modify();
+				Camera->SetActorTransform(Solution.CameraTransform);
+				UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: re-framed %s (its subject moved since it was framed)."), *Camera->GetActorLabel());
+			}
+		}
 		if (!Camera)
 		{
-			if (bFrameAtShotTime)
-			{
-				FramingSequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Shot.StartTime)));
-				FramingSequencer->ForceEvaluate();
-			}
-			FCinemafyShotRequest Request;
-			Request.ShotType = Shot.ShotType;
-			Request.Subject = Shot.Subject;
-			Request.Counterpart = Shot.Counterpart;
-			Request.Group = Shot.Group;
-			Request.bUseRecommendedLens = false;
-			Request.Lens = Shot.Lens;
-			Request.bFlipSide = Director->bFlipSide;
 			Camera = CreateShot(Request, false);
 			if (!Camera)
 			{
@@ -1861,6 +2118,11 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 			Camera->Tags.Add(ShotTag);
 			ExistingCameras.Add(ShotTag, Camera);
 		}
+		if (Shot.Subject)
+		{
+			Camera->Tags.RemoveAll([](const FName& Tag) { return Tag.ToString().StartsWith(TEXT("Cinemafy.FramedAt.")); });
+			Camera->Tags.Add(AtTag);
+		}
 
 		Director->LastPlanCameras[ShotIndex] = Camera;
 
@@ -1868,11 +2130,11 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		if (Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow)
 		{
 			UCinemafyFollowComponent* Follow = FindOrAddComponent<UCinemafyFollowComponent>(Camera, TEXT("CinemafyFollow"));
-			if (!Follow->Target)
-			{
-				Follow->Target = Shot.Subject;
-				Follow->CaptureOffset();
-			}
+			// Captured fresh each cut (the subject may stand somewhere else in this take); baked keys switch it off below.
+			Follow->Modify();
+			Follow->Target = Shot.Subject;
+			Follow->Weight = 1.f;
+			Follow->CaptureOffset();
 		}
 
 		const FCinemafyDirectorStyle& Style = DirectorStyle;
@@ -1905,10 +2167,16 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Shot.Reason);
 	}
 
+	int32 Tracked = 0;
 	for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
 	{
 		BakeCameraMoves(Sequence, MovieScene, Pair.Key, Pair.Value);
 		BakeRackFocus(Sequence, MovieScene, Pair.Key, Pair.Value);
+		Tracked += BakeCameraTracking(Sequence, MovieScene, Pair.Key, Pair.Value, FramingSequencer);
+	}
+	if (Tracked > 0)
+	{
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %d shot(s) follow someone who moves during them."), Tracked);
 	}
 	BakeEmotions(Sequence, MovieScene, EffectiveLines, SceneStart);
 

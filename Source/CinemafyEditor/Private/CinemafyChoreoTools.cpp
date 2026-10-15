@@ -1074,8 +1074,12 @@ namespace CinemafyChoreoTake
 					{
 						Timed[Index].Start = Timed[Index - 1].Start;
 					}
+					// Whoever's walking during it still is: the surviving line keeps the walk (and its tracking shot).
+					const bool bWalking = Timed[Index - 1].Line.bMoving || Timed[Index].Line.bMoving;
 					Timed[Index - 1] = Timed[Index];
+					Timed[Index - 1].Line.bMoving = bWalking;
 				}
+				Timed[Index - 1].Line.bMoving |= Timed[Index].Line.bMoving;
 				Timed.RemoveAt(Index);
 			}
 		}

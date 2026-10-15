@@ -20,7 +20,8 @@ UCinemafyFollowComponent::UCinemafyFollowComponent()
 FTransform UCinemafyFollowComponent::GetTargetFrame() const
 {
 	// Heading only: walking characters bob and lean, the camera shouldn't.
-	return FTransform(FRotator(0.f, Target->GetActorRotation().Yaw, 0.f), Target->GetActorLocation());
+	// The body's position (hips), not just the actor's: a clip with root motion carries the mesh away from the actor.
+	return FTransform(FRotator(0.f, Target->GetActorRotation().Yaw, 0.f), UCinemafyFramingLibrary::GetSubjectTrackPoint(Target));
 }
 
 void UCinemafyFollowComponent::CaptureOffset()
