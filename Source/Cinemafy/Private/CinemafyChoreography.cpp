@@ -1791,6 +1791,13 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 	{
 	case EPhase::Approach:
 	{
+		if (bHoldPose)
+		{
+			// Posed (lying, seated): they act from where they are.
+			Phase = EPhase::Face;
+			PhaseTime = 0.f;
+			return;
+		}
 		// Blocked: report it honestly instead of running into the wall forever (or pretending we arrived).
 		StuckTimer += DeltaSeconds;
 		if (StuckTimer > 1.2f)
@@ -2194,6 +2201,10 @@ bool ACinemafyChoreography::SteerTo(const FVector& Destination, float Radius, fl
 
 bool ACinemafyChoreography::FaceToward(const FVector& Point, float DeltaSeconds)
 {
+	if (bHoldPose)
+	{
+		return true; // Lying on a bed, seated: turning in place would spin them on it.
+	}
 	const FVector Direction = (Point - Performer->GetActorLocation()).GetSafeNormal2D();
 	if (Direction.IsNearlyZero())
 	{

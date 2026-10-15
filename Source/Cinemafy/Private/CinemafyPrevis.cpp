@@ -1,4 +1,8 @@
 #include "CinemafyPrevis.h"
+#include "CinemafySettings.h"
+#include "CinemafyChoreographyLibrary.h"
+#include "Animation/AnimSequenceBase.h"
+#include "Animation/Skeleton.h"
 
 namespace CinemafyStaging
 {
@@ -238,6 +242,13 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 	FCastAliases Aliases;
 	Aliases.Build(Names);
 
+	// People the blocking places (lying on the bunk, seated at the console) hold it: they don't walk or sit down again.
+	TSet<FString> Holding;
+	for (const FCinemafyBlock& Block : BlockScene(Scene))
+	{
+		Holding.Append(Block.Characters);
+	}
+
 	// What each character holds coming in.
 	TMap<FString, FString> InHand;
 	for (const FCinemafyContinuityFact& Fact : Scene.CarriedIn)
@@ -426,6 +437,13 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 				{
 					OutNotStaged.AddUnique(Clause);
 				}
+				continue;
+			}
+			const bool bChangesPlace = Verb->Kind == EVerb::Move || Verb->Kind == EVerb::Traverse || Verb->Kind == EVerb::Dodge
+				|| (Verb->Kind == EVerb::Gesture && (FCString::Strcmp(Verb->Prompt, TEXT("sit")) == 0 || FCString::Strcmp(Verb->Prompt, TEXT("kneel")) == 0));
+			if (bChangesPlace && Holding.Contains(Subject))
+			{
+				OutNotStaged.AddUnique(FString::Printf(TEXT("%s holds the blocking, so not: \"%s\""), *Subject, *Clause));
 				continue;
 			}
 
@@ -772,4 +790,365 @@ TArray<FCinemafySetPiece> UCinemafyPrevisLibrary::FindSetDressing(const FCinemaf
 		}
 	}
 	return Found;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Blocking: the director's own staging, in plain words
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace CinemafyBlocking
+{
+	using namespace CinemafyStaging;
+
+	bool PoseWord(const FString& Word, ECinemafyPose& OutPose)
+	{
+		static const TMap<FString, ECinemafyPose> Words = {
+			{ TEXT("lie"), ECinemafyPose::Lie }, { TEXT("lies"), ECinemafyPose::Lie }, { TEXT("lying"), ECinemafyPose::Lie },
+			{ TEXT("lay"), ECinemafyPose::Lie }, { TEXT("lays"), ECinemafyPose::Lie }, { TEXT("laying"), ECinemafyPose::Lie },
+			{ TEXT("laid"), ECinemafyPose::Lie }, { TEXT("sprawled"), ECinemafyPose::Lie }, { TEXT("sprawls"), ECinemafyPose::Lie },
+			{ TEXT("reclines"), ECinemafyPose::Lie }, { TEXT("reclining"), ECinemafyPose::Lie }, { TEXT("sleeps"), ECinemafyPose::Lie },
+			{ TEXT("sleeping"), ECinemafyPose::Lie }, { TEXT("asleep"), ECinemafyPose::Lie }, { TEXT("cuddle"), ECinemafyPose::Lie },
+			{ TEXT("sit"), ECinemafyPose::Sit }, { TEXT("sits"), ECinemafyPose::Sit }, { TEXT("sitting"), ECinemafyPose::Sit },
+			{ TEXT("seated"), ECinemafyPose::Sit }, { TEXT("sat"), ECinemafyPose::Sit }, { TEXT("perched"), ECinemafyPose::Sit },
+			{ TEXT("perches"), ECinemafyPose::Sit },
+			{ TEXT("kneel"), ECinemafyPose::Kneel }, { TEXT("kneels"), ECinemafyPose::Kneel }, { TEXT("kneeling"), ECinemafyPose::Kneel },
+			{ TEXT("knelt"), ECinemafyPose::Kneel },
+			{ TEXT("lean"), ECinemafyPose::Lean }, { TEXT("leans"), ECinemafyPose::Lean }, { TEXT("leaning"), ECinemafyPose::Lean },
+			{ TEXT("leaned"), ECinemafyPose::Lean }, { TEXT("slumped"), ECinemafyPose::Lean }, { TEXT("slumps"), ECinemafyPose::Lean },
+			{ TEXT("stand"), ECinemafyPose::Stand }, { TEXT("stands"), ECinemafyPose::Stand }, { TEXT("standing"), ECinemafyPose::Stand },
+			{ TEXT("stood"), ECinemafyPose::Stand },
+		};
+		const ECinemafyPose* Found = Words.Find(Word);
+		if (Found)
+		{
+			OutPose = *Found;
+		}
+		return Found != nullptr;
+	}
+
+	/** Close together: "cuddled", "side by side", "in each other's arms". */
+	bool SaysTogether(const TArray<FString>& Words)
+	{
+		static const TSet<FString> Single = { TEXT("cuddle"), TEXT("cuddles"), TEXT("cuddling"), TEXT("cuddled"), TEXT("snuggle"),
+			TEXT("snuggles"), TEXT("snuggled"), TEXT("snuggling"), TEXT("spooning"), TEXT("spooned"), TEXT("embrace"), TEXT("embraces"),
+			TEXT("embracing"), TEXT("embraced"), TEXT("entwined"), TEXT("intertwined"), TEXT("together"), TEXT("huddled"), TEXT("nestled") };
+		const FString Joined = TEXT(" ") + FString::Join(Words, TEXT(" ")) + TEXT(" ");
+		for (const FString& Word : Words)
+		{
+			if (Single.Contains(Word))
+			{
+				return true;
+			}
+		}
+		for (const TCHAR* Phrase : { TEXT(" each other "), TEXT(" side by side "), TEXT(" one another "), TEXT(" in his arms "), TEXT(" in her arms "),
+			TEXT(" in their arms "), TEXT(" arm in arm "), TEXT(" holding hands "), TEXT(" hold hands "), TEXT(" close together ") })
+		{
+			if (Joined.Contains(Phrase))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool IsBedLike(const FString& Place)
+	{
+		for (const TCHAR* Word : { TEXT("bed"), TEXT("bunk"), TEXT("cot"), TEXT("mattress"), TEXT("hammock"), TEXT("berth"), TEXT("futon"),
+			TEXT("bedroll"), TEXT("pallet"), TEXT("blanket"), TEXT("sheets") })
+		{
+			if (Place == Word || Place.EndsWith(FString(TEXT(" ")) + Word))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool IsSeatLike(const FString& Place)
+	{
+		for (const TCHAR* Word : { TEXT("chair"), TEXT("couch"), TEXT("sofa"), TEXT("bench"), TEXT("stool"), TEXT("throne"), TEXT("seat"),
+			TEXT("armchair"), TEXT("booth"), TEXT("pew"), TEXT("settee") })
+		{
+			if (Place == Word || Place.EndsWith(FString(TEXT(" ")) + Word))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The place in a clause: the first thing after "on / in / at / against / by..." that isn't a person or a body. */
+	FString PlaceIn(const TArray<FString>& Words, const FCastAliases& Aliases)
+	{
+		static const TSet<FString> Places = { TEXT("on"), TEXT("in"), TEXT("onto"), TEXT("into"), TEXT("across"), TEXT("against"), TEXT("at"),
+			TEXT("by"), TEXT("beside"), TEXT("near"), TEXT("upon"), TEXT("atop"), TEXT("under"), TEXT("beneath"), TEXT("inside"), TEXT("to") };
+		for (int32 Index = 0; Index + 1 < Words.Num(); ++Index)
+		{
+			if (!Places.Contains(Words[Index]))
+			{
+				continue;
+			}
+			int32 Start = Index + 1;
+			while (Start < Words.Num() && IsDeterminer(Words[Start]))
+			{
+				++Start;
+			}
+			int32 Length = 1;
+			if (Start >= Words.Num() || !Aliases.At(Words, Start, Length).IsEmpty())
+			{
+				continue; // "on Tarrik's chest": a person, not a place.
+			}
+			TArray<FString> Phrase;
+			for (int32 Word = Start; Word < Words.Num() && Phrase.Num() < 3; ++Word)
+			{
+				ECinemafyPose Ignored;
+				if (IsStop(Words[Word]) || IsPreposition(Words[Word]) || Places.Contains(Words[Word]) || PoseWord(Words[Word], Ignored)
+					|| SaysTogether({ Words[Word] }) || IsDeterminer(Words[Word]))
+				{
+					break;
+				}
+				Phrase.Add(Words[Word]);
+			}
+			const FString Place = CinemafyDressing::Thing(FString::Join(Phrase, TEXT(" ")));
+			if (!Place.IsEmpty() && Place != TEXT("whole scene") && Place != TEXT("scene"))
+			{
+				return Place;
+			}
+		}
+		return FString();
+	}
+}
+
+TArray<FCinemafyBlock> UCinemafyPrevisLibrary::ReadBlocking(const FString& Text, const TArray<FString>& CastNames)
+{
+	using namespace CinemafyBlocking;
+	TArray<FCinemafyBlock> Blocks;
+	FCastAliases Aliases;
+	Aliases.Build(CastNames);
+
+	TArray<FString> Sentences;
+	Text.Replace(TEXT(";"), TEXT(".")).Replace(TEXT("!"), TEXT(".")).Replace(TEXT("?"), TEXT(".")).Replace(TEXT("\n"), TEXT(". "))
+		.ParseIntoArray(Sentences, TEXT(". "), true);
+	TArray<FString> LastNamed;
+	for (FString Sentence : Sentences)
+	{
+		Sentence.TrimStartAndEndInline();
+		Sentence.RemoveFromEnd(TEXT("."));
+		TArray<FString> Words;
+		Normalize(Sentence).ParseIntoArrayWS(Words);
+		if (Words.Num() == 0)
+		{
+			continue;
+		}
+		FCinemafyBlock Block;
+		Block.Source = Sentence;
+		TSet<int32> NameWords;
+		for (int32 Index = 0; Index < Words.Num(); ++Index)
+		{
+			int32 Length = 1;
+			const FString Named = Aliases.At(Words, Index, Length);
+			if (!Named.IsEmpty())
+			{
+				Block.Characters.AddUnique(Named);
+				for (int32 Word = Index; Word < Index + Length; ++Word)
+				{
+					NameWords.Add(Word);
+				}
+				Index += Length - 1;
+			}
+		}
+		// "They", "both", "the two": whoever the last sentence named; "she" / "he": the last one of them.
+		const FString Joined = TEXT(" ") + FString::Join(Words, TEXT(" ")) + TEXT(" ");
+		if (Block.Characters.Num() == 0)
+		{
+			if (Joined.Contains(TEXT(" they ")) || Joined.Contains(TEXT(" both ")) || Joined.Contains(TEXT(" the two ")) || Joined.Contains(TEXT(" the pair ")))
+			{
+				Block.Characters = LastNamed;
+			}
+			else if ((Words[0] == TEXT("she") || Words[0] == TEXT("he")) && LastNamed.Num() > 0)
+			{
+				Block.Characters = { LastNamed.Last() };
+			}
+		}
+		if (Block.Characters.Num() == 0)
+		{
+			continue;
+		}
+		LastNamed = Block.Characters;
+
+		for (int32 Index = 0; Index < Words.Num(); ++Index)
+		{
+			if (!NameWords.Contains(Index) && PoseWord(Words[Index], Block.Pose))
+			{
+				Block.bPoseGiven = true;
+				break;
+			}
+		}
+		Block.bTogether = Block.Characters.Num() > 1 && SaysTogether(Words);
+		// The place, clause by clause (commas keep "on the bunk, cuddled" from reading as "bunk cuddled").
+		TArray<FString> Clauses;
+		Sentence.ParseIntoArray(Clauses, TEXT(","), true);
+		for (const FString& Clause : Clauses)
+		{
+			TArray<FString> ClauseWords;
+			Normalize(Clause).ParseIntoArrayWS(ClauseWords);
+			Block.Place = PlaceIn(ClauseWords, Aliases);
+			if (!Block.Place.IsEmpty())
+			{
+				break;
+			}
+		}
+		if (!Block.bPoseGiven && Block.Place.IsEmpty() && !Block.bTogether)
+		{
+			continue; // Names, but no staging.
+		}
+		// "Cuddled on the bunk", "in bed": the place says how.
+		if (!Block.bPoseGiven && (Block.bTogether || Joined.Contains(TEXT(" in bed "))) && IsBedLike(Block.Place.IsEmpty() ? FString(TEXT("bed")) : Block.Place))
+		{
+			Block.Pose = ECinemafyPose::Lie;
+			Block.bPoseGiven = Block.bTogether || Joined.Contains(TEXT(" in bed "));
+			if (Block.Place.IsEmpty())
+			{
+				Block.Place = TEXT("bed");
+			}
+		}
+		else if (!Block.bPoseGiven && Block.bTogether && IsSeatLike(Block.Place))
+		{
+			Block.Pose = ECinemafyPose::Sit;
+			Block.bPoseGiven = true;
+		}
+		Blocks.Add(Block);
+	}
+	// A later sentence about someone wins over an earlier one.
+	for (int32 Index = Blocks.Num() - 1; Index > 0; --Index)
+	{
+		for (int32 Earlier = 0; Earlier < Index; ++Earlier)
+		{
+			for (const FString& Name : Blocks[Index].Characters)
+			{
+				Blocks[Earlier].Characters.Remove(Name);
+			}
+		}
+	}
+	Blocks.RemoveAll([](const FCinemafyBlock& Block) { return Block.Characters.Num() == 0; });
+	return Blocks;
+}
+
+TArray<FCinemafyBlock> UCinemafyPrevisLibrary::BlockScene(const FCinemafyScriptScene& Scene)
+{
+	TArray<FString> People;
+	for (const FString& Name : Scene.Characters)
+	{
+		People.Append(UCinemafyScriptLibrary::PeopleInCue(Name));
+	}
+	FString Opening;
+	bool bSpoken = false;
+	for (const FCinemafyScriptLine& Line : Scene.Lines)
+	{
+		if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+		{
+			People.Append(UCinemafyScriptLibrary::PeopleInCue(Line.Speaker));
+			bSpoken = true;
+		}
+		else if (Line.Kind == ECinemafyScriptLineKind::Action && !bSpoken)
+		{
+			Opening += Line.Text + TEXT(" ");
+		}
+	}
+	People.RemoveAll([](const FString& Name) { return UCinemafyScriptLibrary::IsVoiceOnly(Name, FString()); });
+
+	// The notes: the whole scene, and they win.
+	TArray<FCinemafyBlock> Blocks = ReadBlocking(Scene.Blocking, People);
+	TSet<FString> Blocked;
+	for (FCinemafyBlock& Block : Blocks)
+	{
+		Block.bFromNotes = true;
+		Blocked.Append(Block.Characters);
+	}
+	// The page: a pose the opening action sets before anyone speaks ("Kade sits at the console.").
+	for (FCinemafyBlock& Block : ReadBlocking(Opening, People))
+	{
+		Block.Characters.RemoveAll([&Blocked](const FString& Name) { return Blocked.Contains(Name); });
+		if (Block.Characters.Num() > 0 && Block.bPoseGiven && Block.Pose != ECinemafyPose::Stand)
+		{
+			Blocked.Append(Block.Characters);
+			Blocks.Add(Block);
+		}
+	}
+	return Blocks;
+}
+
+UAnimSequenceBase* UCinemafyPrevisLibrary::FindPoseAnimation(ECinemafyPose Pose, const USkeleton* Skeleton, bool bTogether, int32 Index)
+{
+	if (Pose == ECinemafyPose::Stand)
+	{
+		return nullptr;
+	}
+	const UCinemafySettings* Settings = GetDefault<UCinemafySettings>();
+	// Your clips first: made for two, then for the pose.
+	if (bTogether)
+	{
+		for (const FCinemafyPosePair& Pair : Settings->TogetherAnimations)
+		{
+			if (Pair.Pose == Pose)
+			{
+				if (UAnimSequenceBase* Clip = (Index % 2 == 0 ? Pair.Lead : Pair.Partner).LoadSynchronous())
+				{
+					return Clip;
+				}
+			}
+		}
+	}
+	if (const TSoftObjectPtr<UAnimSequenceBase>* Set = Settings->PoseAnimations.Find(Pose))
+	{
+		if (UAnimSequenceBase* Clip = Set->LoadSynchronous())
+		{
+			return Clip;
+		}
+	}
+	if (!Skeleton)
+	{
+		return nullptr;
+	}
+	// Else by name, for this skeleton: a held loop ("Lying_Idle", "Sitting_Loop"), not a getting-up or sitting-down.
+	TArray<const TCHAR*> Keys;
+	switch (Pose)
+	{
+	case ECinemafyPose::Lie:   Keys = { TEXT("lie"), TEXT("lying"), TEXT("laying"), TEXT("lay"), TEXT("sleep"), TEXT("sleeping"), TEXT("supine"), TEXT("bed") }; break;
+	case ECinemafyPose::Sit:   Keys = { TEXT("sit"), TEXT("sitting"), TEXT("seated"), TEXT("chair") }; break;
+	case ECinemafyPose::Kneel: Keys = { TEXT("kneel"), TEXT("kneeling") }; break;
+	case ECinemafyPose::Lean:  Keys = { TEXT("lean"), TEXT("leaning") }; break;
+	default: break;
+	}
+	static const TSet<FString> Changes = { TEXT("to"), TEXT("getup"), TEXT("standup"), TEXT("start"), TEXT("stop"), TEXT("enter"), TEXT("exit"),
+		TEXT("transition"), TEXT("down"), TEXT("up"), TEXT("death"), TEXT("die"), TEXT("dying"), TEXT("dead") };
+	const TArray<FCinemafyMoveCandidate> Candidates = UCinemafyChoreographyLibrary::GatherCandidates(nullptr, {}, Skeleton);
+	const FCinemafyMoveCandidate* Best = nullptr;
+	float BestScore = 0.f;
+	for (const FCinemafyMoveCandidate& Candidate : Candidates)
+	{
+		bool bPose = false, bChange = false;
+		float Score = Candidate.Bias;
+		for (const FString& Token : Candidate.Tokens)
+		{
+			for (const TCHAR* Key : Keys)
+			{
+				bPose |= Token == Key;
+			}
+			bChange |= Changes.Contains(Token);
+			Score += (Token == TEXT("idle") || Token == TEXT("loop")) ? 2.f : 0.f;
+			Score += bTogether && (Token == TEXT("cuddle") || Token == TEXT("couple") || Token == TEXT("hug") || Token == TEXT("embrace")) ? 3.f : 0.f;
+		}
+		if (!bPose || bChange)
+		{
+			continue;
+		}
+		Score += 1.f;
+		if (!Best || Score > BestScore)
+		{
+			Best = &Candidate;
+			BestScore = Score;
+		}
+	}
+	return Best ? Cast<UAnimSequenceBase>(Best->Path.TryLoad()) : nullptr;
 }

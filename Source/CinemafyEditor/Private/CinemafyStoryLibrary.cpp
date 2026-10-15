@@ -25,6 +25,10 @@
 #include "CinemafyFaceComponent.h"
 #include "CinemafySequencerUtils.h"
 #include "ISequencer.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
+#include "Animation/AnimSequenceBase.h"
 #include "Channels/MovieSceneFloatChannel.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
@@ -241,6 +245,50 @@ ACinemafyMark* UCinemafyStoryLibrary::PlaceMark(const FString& MarkName, const F
 	return Mark;
 }
 
+FString UCinemafyStoryLibrary::SetSceneBlocking(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Blocking)
+{
+	int32 InsertIndex = 0;
+	FCinemafyScriptScene* Scene = Project ? Project->FindScene(UCinemafyScriptLibrary::SplitInsertId(SceneId, InsertIndex)) : nullptr;
+	if (!Scene)
+	{
+		return FString::Printf(TEXT("No scene %s."), *SceneId);
+	}
+	const FScopedTransaction Transaction(LOCTEXT("SetBlocking", "Cinemafy: Set Blocking"));
+	Project->Modify();
+	Scene->Blocking = Blocking.TrimStartAndEnd();
+	Project->MarkPackageDirty();
+	return DescribeBlocking(Project, Scene->Id);
+}
+
+FString UCinemafyStoryLibrary::DescribeBlocking(UCinemafyScriptProject* Project, const FString& SceneId)
+{
+	const FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
+	if (!Scene)
+	{
+		return FString::Printf(TEXT("No scene %s."), *SceneId);
+	}
+	const TArray<FCinemafyBlock> Blocks = UCinemafyPrevisLibrary::BlockScene(*Scene);
+	if (Blocks.Num() == 0)
+	{
+		return Scene->Blocking.IsEmpty()
+			? FString::Printf(TEXT("%s has no blocking: Previs stages it from the action lines."), *Scene->Id)
+			: FString::Printf(TEXT("%s: couldn't find who and where in \"%s\". Name the characters, and how or where they are (\"Kade sits at the console.\")."), *Scene->Id, *Scene->Blocking);
+	}
+	TArray<FString> Out;
+	Out.Add(FString::Printf(TEXT("%s blocking (held for the whole scene):"), *Scene->Id));
+	const UEnum* Poses = StaticEnum<ECinemafyPose>();
+	for (const FCinemafyBlock& Block : Blocks)
+	{
+		Out.Add(FString::Printf(TEXT("  %s: %s%s%s%s  [%s]"), *FString::Join(Block.Characters, TEXT(" and ")),
+			Block.bPoseGiven ? *Poses->GetDisplayNameTextByValue(static_cast<int64>(Block.Pose)).ToString().ToLower() : TEXT("as the mark says"),
+			Block.Place.IsEmpty() ? TEXT("") : *FString::Printf(TEXT(" at the %s"), *Block.Place),
+			Block.bTogether ? TEXT(", together") : TEXT(""),
+			Block.bFromNotes ? TEXT("") : TEXT(" (from the opening action)"),
+			*Block.Source));
+	}
+	return FString::Join(Out, TEXT("\n"));
+}
+
 int32 UCinemafyStoryLibrary::ApplySceneContinuity(UCinemafyScriptProject* Project, const FString& SceneId)
 {
 	UWorld* World = CinemafyStory::EditorWorld();
@@ -327,6 +375,183 @@ namespace CinemafyRevision
 
 namespace CinemafyStory
 {
+	const FName PosedTag(TEXT("Cinemafy.Posed"));
+
+	/** Puts a character back as their class made them: no lying stand-in, gravity and pawn collision on, no pose tags. */
+	void ReleasePose(ACharacter* Character)
+	{
+		if (!Character || !Character->Tags.Contains(PosedTag))
+		{
+			return;
+		}
+		Character->Modify();
+		const ACharacter* Defaults = Character->GetClass()->GetDefaultObject<ACharacter>();
+		if (Defaults && Defaults->GetMesh() && Character->GetMesh())
+		{
+			Character->GetMesh()->Modify();
+			Character->GetMesh()->SetRelativeTransform(Defaults->GetMesh()->GetRelativeTransform());
+		}
+		if (Defaults && Defaults->GetCapsuleComponent() && Character->GetCapsuleComponent())
+		{
+			Character->GetCapsuleComponent()->Modify();
+			Character->GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, Defaults->GetCapsuleComponent()->GetCollisionResponseToChannel(ECC_Pawn));
+		}
+		if (Defaults && Defaults->GetCharacterMovement() && Character->GetCharacterMovement())
+		{
+			Character->GetCharacterMovement()->GravityScale = Defaults->GetCharacterMovement()->GravityScale;
+		}
+		Character->Tags.RemoveAll([](const FName& Tag) { return Tag.ToString().StartsWith(TEXT("Cinemafy.Pose")); });
+	}
+
+	/** A pose's tag ("Cinemafy.Pose.Lie.Together.1"): the director reads it back to lay the pose clip into the cut. */
+	FName PoseTag(ECinemafyPose Pose, bool bTogether, int32 Slot)
+	{
+		const FString Name = StaticEnum<ECinemafyPose>()->GetNameStringByValue(static_cast<int64>(Pose));
+		return FName(*FString::Printf(TEXT("Cinemafy.Pose.%s.%s.%d"), *Name, bTogether ? TEXT("Together") : TEXT("Alone"), Slot));
+	}
+
+	/**
+	 * Where a block puts people: a mark with that name, else a piece of the set with that name (on top of it, along its
+	 * length), else a mark set to that pose. The pose comes from the words, else the mark, else the kind of thing it is.
+	 */
+	bool FindBlockSpot(UWorld* World, const FCinemafyBlock& Block, const FString& SetName, FTransform& OutSpot, ECinemafyPose& OutPose, FString& OutWhat)
+	{
+		OutPose = Block.Pose;
+		auto PoseOfThing = [&Block](const FString& Name, ECinemafyPose Fallback)
+		{
+			if (Block.bPoseGiven)
+			{
+				return Block.Pose;
+			}
+			const FString Lower = Name.ToLower();
+			for (const TCHAR* Bed : { TEXT("bed"), TEXT("bunk"), TEXT("cot"), TEXT("mattress"), TEXT("hammock"), TEXT("berth") })
+			{
+				if (Lower.Contains(Bed)) { return ECinemafyPose::Lie; }
+			}
+			for (const TCHAR* Seat : { TEXT("chair"), TEXT("couch"), TEXT("sofa"), TEXT("bench"), TEXT("stool"), TEXT("throne"), TEXT("seat") })
+			{
+				if (Lower.Contains(Seat)) { return ECinemafyPose::Sit; }
+			}
+			return Fallback;
+		};
+		if (!Block.Place.IsEmpty())
+		{
+			if (ACinemafyMark* Mark = UCinemafyProductionLibrary::FindMark(World, Block.Place, SetName))
+			{
+				OutSpot = Mark->GetActorTransform();
+				OutPose = PoseOfThing(Mark->MarkName, Mark->Pose);
+				OutWhat = FString::Printf(TEXT("the \"%s\" mark"), *Mark->MarkName);
+				return true;
+			}
+			const FString Wanted = Block.Place.ToLower();
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (It->IsA<ACharacter>() || It->IsA<ACinemafyMark>() || It->IsA<ACinemafyChoreography>())
+				{
+					continue;
+				}
+				const FString Label = It->GetActorLabel().ToLower().Replace(TEXT("_"), TEXT(" "));
+				if (Label.Contains(Wanted) || (Wanted.Len() > 4 && Label.Len() >= 4 && Wanted.Contains(Label)))
+				{
+					FVector Center, Extent;
+					It->GetActorBounds(true, Center, Extent);
+					// On top of it, lying along its long side.
+					FRotator Along(0.f, It->GetActorRotation().Yaw, 0.f);
+					const FVector LocalExtent = It->GetActorRotation().UnrotateVector(Extent).GetAbs();
+					if (LocalExtent.Y > LocalExtent.X)
+					{
+						Along.Yaw += 90.f;
+					}
+					OutSpot = FTransform(Along, FVector(Center.X, Center.Y, Center.Z + Extent.Z));
+					OutPose = PoseOfThing(Label, ECinemafyPose::Stand);
+					OutWhat = It->GetActorLabel();
+					return true;
+				}
+			}
+		}
+		if (Block.Pose != ECinemafyPose::Stand)
+		{
+			for (TActorIterator<ACinemafyMark> It(World); It; ++It)
+			{
+				if (It->Pose == Block.Pose && (It->SetName.IsEmpty() || It->SetName.Equals(SetName, ESearchCase::IgnoreCase)))
+				{
+					OutSpot = It->GetActorTransform();
+					OutWhat = FString::Printf(TEXT("the \"%s\" mark"), *It->MarkName);
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Puts a character into a pose at a spot: on the surface there (a bed's top, a seat), side by side with the others
+	 * in the block (close if together), facing along the spot. With a pose clip they stand there and the clip plays
+	 * the pose in the cut; lying without one, they're laid flat as a stand-in. Returns what it did, for the report.
+	 */
+	FString HoldPose(ACharacter* Character, ECinemafyPose Pose, const FTransform& Spot, int32 Slot, int32 Count, bool bTogether)
+	{
+		UWorld* World = Character->GetWorld();
+		UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
+		USkeletalMeshComponent* Mesh = Character->GetMesh();
+		const float Half = Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 90.f;
+		ReleasePose(Character);
+		Character->Modify();
+
+		// Side by side across the spot: close when they're together.
+		const FVector Across = Spot.GetRotation().GetRightVector();
+		const float Gap = bTogether ? 42.f : 90.f;
+		FVector Ground = Spot.GetLocation() + Across * ((Slot - (Count - 1) * 0.5f) * Gap);
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyHoldPose), false);
+		Query.AddIgnoredActor(Character);
+		FHitResult Hit;
+		if (World && World->LineTraceSingleByChannel(Hit, Ground + FVector(0.f, 0.f, 150.f), Ground - FVector(0.f, 0.f, 300.f), ECC_Visibility, Query))
+		{
+			Ground = Hit.ImpactPoint;
+		}
+		FRotator Facing(0.f, Spot.Rotator().Yaw, 0.f);
+		const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+		UAnimSequenceBase* Clip = UCinemafyPrevisLibrary::FindPoseAnimation(Pose, Skeleton, bTogether, Slot);
+		const bool bStandIn = !Clip && Pose == ECinemafyPose::Lie && Mesh;
+		if (bStandIn)
+		{
+			// Laid flat on their back, head toward where the spot points (the pillow), centred on it.
+			Facing.Yaw += 180.f;
+			Mesh->Modify();
+			const FQuat Upright = Mesh->GetRelativeRotation().Quaternion();
+			Mesh->SetRelativeRotation(FRotator(90.f, 0.f, 0.f).Quaternion() * Upright);
+			Mesh->SetRelativeLocation(FVector(90.f, 0.f, -Half + 12.f));
+		}
+		Character->SetActorLocationAndRotation(Ground + FVector(0.f, 0.f, Half + 2.f), Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		if (Capsule)
+		{
+			// Close together on a bed: their capsules mustn't shove each other apart.
+			Capsule->Modify();
+			Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		}
+		if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+		{
+			Movement->GravityScale = 0.f; // Held where they're put, even on a bed without collision.
+		}
+		Character->Tags.AddUnique(PosedTag);
+		Character->Tags.AddUnique(PoseTag(Pose, bTogether, Slot));
+
+		const FString PoseName = StaticEnum<ECinemafyPose>()->GetDisplayNameTextByValue(static_cast<int64>(Pose)).ToString().ToLower();
+		if (Clip)
+		{
+			return FString::Printf(TEXT("%s (%s)"), *PoseName, *Clip->GetName());
+		}
+		if (bStandIn)
+		{
+			return TEXT("lie (laid flat as a stand-in: set Project Settings > Cinemafy > Staging > Pose Animations > Lie for a real lying clip)");
+		}
+		if (Pose == ECinemafyPose::Stand || Pose == ECinemafyPose::Lean)
+		{
+			return PoseName;
+		}
+		return FString::Printf(TEXT("%s, but standing: no %s clip found (set Project Settings > Cinemafy > Staging > Pose Animations)"), *PoseName, *PoseName);
+	}
+
 	int32 DropDeadBindings(ULevelSequence* Sequence)
 	{
 		const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer();
@@ -446,6 +671,9 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	TArray<FString> NotStaged;
 	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(UCinemafyScriptLibrary::SceneForInsert(*Scene, bInsert ? InsertIndex : 0), NotStaged);
 
+	// Your blocking (and poses the opening action sets): who's where, and how, all scene.
+	const TArray<FCinemafyBlock> Blocks = UCinemafyPrevisLibrary::BlockScene(UCinemafyScriptLibrary::SceneForInsert(*Scene, bInsert ? InsertIndex : 0));
+
 	// The cast on set: who's here, who has to be brought in.
 	TArray<FString> Characters;
 	for (const FCinemafyStagedBeat& Beat : Staged)
@@ -454,6 +682,13 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		if (!Beat.Target.IsEmpty())
 		{
 			Characters.AddUnique(Beat.Target);
+		}
+	}
+	for (const FCinemafyBlock& Block : Blocks)
+	{
+		for (const FString& Name : Block.Characters)
+		{
+			Characters.AddUnique(Name); // On the bed even if they never move or speak.
 		}
 	}
 	TArray<ACinemafyMark*> StartMarks;
@@ -509,6 +744,52 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 			Report.Add(FString::Printf(TEXT("Not on set: %s (put them in the level, or give their Cast entry a Character Class)."), *Name));
 		}
 	}
+	// Into place: each block's people at its spot, in its pose. They hold it (no walking, no turning).
+	TSet<FString> Holding;
+	for (const FCinemafyBlock& Block : Blocks)
+	{
+		TArray<ACharacter*> People;
+		TArray<FString> PeopleNames;
+		for (const FString& Name : Block.Characters)
+		{
+			AActor* const* Found = Actors.Find(Name);
+			if (ACharacter* Character = Found ? Cast<ACharacter>(*Found) : nullptr)
+			{
+				People.Add(Character);
+				PeopleNames.Add(Name);
+			}
+		}
+		if (People.Num() == 0)
+		{
+			continue;
+		}
+		FTransform Spot;
+		ECinemafyPose Pose = Block.Pose;
+		FString What;
+		if (!CinemafyStory::FindBlockSpot(World, Block, Scene->Location, Spot, Pose, What))
+		{
+			Report.Add(Block.Place.IsEmpty()
+				? FString::Printf(TEXT("Blocking \"%s\": no mark set to that pose. Place a Cinemafy Mark (set its Pose) where it happens."), *Block.Source)
+				: FString::Printf(TEXT("Blocking \"%s\": nothing called \"%s\" on set. Place a Cinemafy Mark named \"%s\" there%s."), *Block.Source, *Block.Place, *Block.Place,
+					Block.Pose == ECinemafyPose::Lie ? TEXT(" (on the bed, arrow toward the pillow)") : TEXT("")));
+			continue;
+		}
+		for (int32 Slot = 0; Slot < People.Num(); ++Slot)
+		{
+			const FString Did = CinemafyStory::HoldPose(People[Slot], Pose, Spot, Slot, People.Num(), Block.bTogether);
+			Holding.Add(PeopleNames[Slot]);
+			Report.Add(FString::Printf(TEXT("Blocking: %s %s at %s%s."), *PeopleNames[Slot], *Did, *What, Block.bTogether ? TEXT(", together") : TEXT("")));
+		}
+	}
+	// Posed by an earlier staging, not by this one: back on their feet.
+	for (const TPair<FString, AActor*>& Pair : Actors)
+	{
+		if (!Holding.Contains(Pair.Key))
+		{
+			CinemafyStory::ReleasePose(Cast<ACharacter>(Pair.Value));
+		}
+	}
+
 	ApplySceneContinuity(Project, SceneId);
 
 	// Last pass's previs for this scene goes; the new one is built fresh. Choreographies changed by hand since
@@ -557,6 +838,10 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	auto PlaceFor = [&](const FCinemafyStagedBeat& Beat, AActor* Performer, AActor* Target, bool& bOutResolved) -> FVector
 	{
 		bOutResolved = true;
+		if (Holding.Contains(Beat.Character))
+		{
+			return Performer->GetActorLocation(); // Held by the blocking: everything happens from there.
+		}
 		if (!Beat.Place.IsEmpty())
 		{
 			if (ACinemafyMark* Mark = UCinemafyProductionLibrary::FindMark(World, Beat.Place, Scene->Location))
@@ -623,6 +908,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 			Choreo->SetActorLabel(Prefix + Beat.Character.Replace(TEXT(" "), TEXT("_")));
 			Choreo->Performer = Performer;
 			Choreo->bIncludeInTakes = true;
+			Choreo->bHoldPose = Holding.Contains(Beat.Character);
 			if (const FCinemafyCastMember* Member = Project->FindCastMember(Beat.Character))
 			{
 				Choreo->Profile = Member->Profile.LoadSynchronous();

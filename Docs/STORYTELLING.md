@@ -106,7 +106,55 @@ face performance for every voiced line with MetaHuman's audio-driven animation:
 `<scene>_<line>` (`2_1_3_04`). Then **Assign Recorded Voices** swaps them in. Re-Direct a scene and the cut
 re-times to the real performances.
 
-## 5. Pre-flight and Previs
+## 5. Blocking: how you see it
+
+The script says what happens; **blocking** says how you see it staged. Write it per scene in plain words, kept apart
+from the script's text (so your screenplay stays as written, and it survives re-imports):
+
+> Tarrik and Lyessa lie on the bunk, cuddled, for the whole scene.
+> Kade sits at the console; Thane leans against the window.
+
+Where to write it:
+
+- **Story Board:** a scene's **...** menu > **Blocking: how you see it staged...** (it shows how Cinemafy read it).
+- **In the script:** a Fountain note under the heading, `[[BLOCKING: Tarrik and Lyessa lie on the bunk, cuddled.]]`
+  (`[[STAGING: ...]]` works too). Notes are otherwise ignored, so the page reads the same.
+- **In a script bible:** a `blocking` (or `staging`) field on the scene, or `**Blocking:**` in the Markdown.
+- **Over MCP:** `set_blocking` / `describe_blocking`.
+
+What it reads:
+
+- **Who:** names from the cast; "they", "both", "the two" are whoever the last sentence named.
+- **How:** *lie / lies / lying*, *sit / seated*, *kneel*, *lean*, *stand* (and *sleeping*, *sprawled*, *perched*...).
+- **Together:** *cuddled*, *embracing*, *side by side*, *in each other's arms*, *together*: close, not a step apart.
+- **Where:** the place after *on / in / at / against / by*: "the bunk", "the console". A Cinemafy Mark with that name,
+  else a piece of the set with it in its label (people go on top of it, along its length).
+
+Previs puts each block's people at its place in its pose, and **they hold it for the whole scene**: no walking off,
+no turning on the spot (their choreography is set to **Hold Pose**). They still say their lines, and the cut covers
+them. Walks the page gives them are left out (the report says so). Without notes, a pose the opening action sets
+before anyone speaks ("Kade sits in the command chair.") holds the same way.
+
+**Marks and poses.** A Cinemafy Mark has a **Pose** (Stand, Sit, Lie, Kneel, Lean). Blocking that names the place but
+not the pose takes the mark's; a bed, bunk or cot reads as Lie, a chair, couch or bench as Sit. For lying, put the
+mark on the bed with its arrow toward the pillow: people blocked there together lie side by side. Pre-flight finds
+blocking with no place on set and offers to place a mark (already posed).
+
+**Pose clips.** Project Settings > Cinemafy > Staging:
+
+- **Pose Animations:** the clip each pose holds (a lying idle, a seated idle). Empty = found by name ("lie",
+  "lying", "sleep"; "sit", "seated"; "kneel"; "lean"), skipping getting-up and sitting-down clips.
+- **Together Animations:** clips made for two (a couple cuddled on a bed): the lead plays on the first person
+  named, the partner on the second.
+
+The clip plays across the whole scene in the cut (a recorded take's own body animation steps aside for it), and
+posed people don't get standing gesture clips. With no lying clip, people lying down are **laid flat as a stand-in**
+so the shot still reads; sitting or kneeling without a clip stays standing (the report says which to set).
+
+**The camera** sees people lying down from above, an operator standing at the bed rather than at eye level across
+the sheets: any shot of someone whose eyes are near the bed rises to look down at the face.
+
+## 6. Pre-flight and Previs
 
 **Previs** on a card first says what it will change in the level, and runs the **pre-flight check**:
 
@@ -148,7 +196,7 @@ The report lists what it staged and what it couldn't: a sentence it didn't under
 character not on set. **Stage without recording** (in the card's **...** menu) builds everything but the
 take, so you can adjust beats first.
 
-## 6. Refine
+## 7. Refine
 
 Everything Previs builds is ordinary Cinemafy and Unreal:
 
@@ -184,7 +232,7 @@ furious in the face, the body and the cut, and `(whispering)` whispers in the sc
 **Foley:** set sounds for impact, takeoff, land, draw, holster, roll and body_fall under **Project Settings
 > Cinemafy > Foley Sounds**. Directed takes then get a **Cinemafy Foley** track at those moments.
 
-## 7. Cut together, review, paperwork
+## 8. Cut together, review, paperwork
 
 - **Cut Together:** a master sequence per act, plus one for the whole story, scenes back to back
   (`/Game/Cinemafy/Masters`).
@@ -215,7 +263,7 @@ furious in the face, the body and the cut, and `(whispering)` whispers in the sc
   - props, set dressing and wardrobe, by set (Markdown + CSV)
 - **Checklist:** progress, carry-ins, warnings and notes, per act, chapter and scene.
 
-## 8. Games: the Story Player
+## 9. Games: the Story Player
 
 Scripts can branch:
 

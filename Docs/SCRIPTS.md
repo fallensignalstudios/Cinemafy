@@ -18,7 +18,7 @@ Try it with [samples/TheBridge.fountain](samples/TheBridge.fountain).
 
 | Script style | What Cinemafy picks up |
 | --- | --- |
-| Screenplay / Fountain | Scene headings (`INT.`, `EXT.`, `INT./EXT.`, `I/E`, forced `.HEADING`), character cues (`KADE`, `THANE (V.O.)`, `@Name`), parentheticals, transitions (`CUT TO:`, `FADE OUT.`), `# act` / `## chapter` sections, `=` synopses, the title page. It ignores boneyard and `[[notes]]`. |
+| Screenplay / Fountain | Scene headings (`INT.`, `EXT.`, `INT./EXT.`, `I/E`, forced `.HEADING`), character cues (`KADE`, `THANE (V.O.)`, `@Name`), parentheticals, transitions (`CUT TO:`, `FADE OUT.`), `# act` / `## chapter` sections, `=` synopses, the title page. It ignores boneyard and `[[notes]]`, except `[[BLOCKING: ...]]`, your staging for the scene (see [Blocking](STORYTELLING.md#5-blocking-how-you-see-it)). |
 | Final Draft (`.fdx`) | Scene Heading, Character, Parenthetical, Dialogue, Action and Transition paragraphs, and act breaks. |
 | Game scripts | `KADE: line` dialogue, `[Scene: Hangar]` / `SCENE 12: Hangar` markers, and `MISSION 3: Blackout`, `CHAPTER 2`, `LEVEL`, `QUEST` or `EPISODE` markers, even with no blank lines. A chapter marker carries a number (`MISSION 3`, `CHAPTER ONE`, `PART IV`). |
 | Act markers | `ACT ONE`, `ACT 2`, `PART III`, `PROLOGUE`, `EPILOGUE`, `COLD OPEN`, or `#` sections. |
@@ -106,7 +106,7 @@ Choices, diverts and flags go right in the script:
 - `-> target` to divert
 - `~ flag` to set a flag, and `? flag` to make a scene conditional
 
-They are played in game by the Story Player. See [STORYTELLING](STORYTELLING.md#8-games-the-story-player)
+They are played in game by the Story Player. See [STORYTELLING](STORYTELLING.md#9-games-the-story-player)
 and `samples/Mutiny_Branching.txt`.
 
 ## Line ids and voice-over

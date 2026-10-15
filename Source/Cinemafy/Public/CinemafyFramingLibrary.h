@@ -20,6 +20,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Framing")
 	static bool SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution);
 
+	/** The actor's eyes are within 70 cm of their feet: lying down. Shots of them rise to look down at the face. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static bool IsLyingDown(const AActor* Actor);
+
 	/**
 	 * Like SolveShot, but checks the real world: if the camera would sit inside geometry or something
 	 * blocks the view of the subject, it tries nearby alternatives (swing the angle, step closer on a

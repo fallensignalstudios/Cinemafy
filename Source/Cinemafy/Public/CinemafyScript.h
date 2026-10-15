@@ -421,6 +421,14 @@ struct CINEMAFY_API FCinemafyScriptScene
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene", meta = (MultiLine = true))
 	FString Synopsis;
 
+	/**
+	 * Your staging, in plain words, kept apart from the script's text: "Tarrik and Lyessa lie on the bunk, cuddled,
+	 * for the whole scene." Previs puts people where and how it says (it wins over the action lines). From a Fountain
+	 * note ([[BLOCKING: ...]]), a bible's staging field, or the Story Board; kept across re-imports.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene", meta = (MultiLine = true))
+	FString Blocking;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FCinemafyScriptLine> Lines;
 

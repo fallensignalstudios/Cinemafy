@@ -281,6 +281,18 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("The script mentions set pieces the level doesn't have: %s."), *FString::Join(Undressed, TEXT(", "))),
 			ECinemafyFix::DressSet, FString(), TEXT("Dress the set")));
 	}
+	// The blocking's places: a mark (or set piece) for each, posed for it.
+	for (const FCinemafyBlock& Block : UCinemafyPrevisLibrary::BlockScene(*Scene))
+	{
+		if (!Block.Place.IsEmpty() && !PlaceExists(World, Block.Place, Scene->Location))
+		{
+			const FString PoseName = StaticEnum<ECinemafyPose>()->GetNameStringByValue(static_cast<int64>(Block.Pose));
+			Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("The blocking puts %s at the %s, but there's no mark or set piece called that%s."),
+				*FString::Join(Block.Characters, TEXT(" and ")), *Block.Place, Block.Pose == ECinemafyPose::Lie ? TEXT(" (put the mark on the bed, arrow toward the pillow)") : TEXT("")),
+				ECinemafyFix::PlaceMark, FString::Printf(TEXT("%s:1:%s"), *Block.Place, *PoseName), FString::Printf(TEXT("Place \"%s\""), *Block.Place)));
+			Places.Remove(Block.Place);
+		}
+	}
 	for (const FString& Place : Places)
 	{
 		if (!PlaceExists(World, Place, Scene->Location) && !Undressed.Contains(Place))
@@ -474,12 +486,12 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 	case ECinemafyFix::PlaceMark:
 	{
 		// "start:3" places three start marks: one for each character who'll be brought in.
-		FString MarkName = Check.FixArg, CountText;
-		int32 Count = 1;
-		if (Check.FixArg.Split(TEXT(":"), &MarkName, &CountText))
-		{
-			Count = FMath::Clamp(FCString::Atoi(*CountText), 1, 16);
-		}
+		// "start:3" places three start marks; "bunk:1:Lie" one mark posed for lying on.
+		TArray<FString> Parts;
+		Check.FixArg.ParseIntoArray(Parts, TEXT(":"), false);
+		const FString MarkName = Parts.Num() > 0 ? Parts[0] : Check.FixArg;
+		const int32 Count = Parts.Num() > 1 ? FMath::Clamp(FCString::Atoi(*Parts[1]), 1, 16) : 1;
+		const int64 PoseValue = Parts.Num() > 2 ? StaticEnum<ECinemafyPose>()->GetValueByNameString(Parts[2]) : INDEX_NONE;
 		const bool bStart = MarkName == TEXT("start");
 		int32 Placed = 0;
 		for (int32 Each = 0; Each < Count; ++Each)
@@ -507,6 +519,10 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 			{
 				Mark->bStartMark = true;
 				Mark->RerunConstructionScripts();
+			}
+			if (PoseValue != INDEX_NONE)
+			{
+				Mark->Pose = static_cast<ECinemafyPose>(PoseValue);
 			}
 			++Placed;
 		}

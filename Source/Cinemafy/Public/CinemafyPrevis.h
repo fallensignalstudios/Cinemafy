@@ -6,6 +6,41 @@
 #include "CinemafyPrevis.generated.h"
 
 class USoundBase;
+class USkeleton;
+class UAnimSequenceBase;
+
+/** One piece of blocking: who, where, and how ("Tarrik and Lyessa lie on the bunk, cuddled"). */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyBlock
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	TArray<FString> Characters;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	ECinemafyPose Pose = ECinemafyPose::Stand;
+
+	/** The words named a pose (else the place's mark decides). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	bool bPoseGiven = false;
+
+	/** Where ("bunk", "window"): a mark or a piece of the set with that name. Empty = their start mark. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	FString Place;
+
+	/** Close together (cuddled, side by side, in each other's arms). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	bool bTogether = false;
+
+	/** From the blocking notes (whole scene) rather than the action lines. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	bool bFromNotes = false;
+
+	/** The words it came from. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blocking")
+	FString Source;
+};
 
 /** One beat staged from the script: who does what, where, to whom, and what they wait for. */
 USTRUCT(BlueprintType)
@@ -81,4 +116,24 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Previs")
 	static TArray<FCinemafySetPiece> FindSetDressing(const FCinemafyScriptScene& Scene);
+
+	/**
+	 * Reads staging in plain words: "Tarrik and Lyessa lie on the bunk, cuddled." / "Kade sits at the console; Thane
+	 * leans against the window." CastNames = the names to look for. One block per sentence that says who, and how or where.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Previs")
+	static TArray<FCinemafyBlock> ReadBlocking(const FString& Text, const TArray<FString>& CastNames);
+
+	/**
+	 * A scene's blocking: its Blocking notes (whole scene, they win), plus poses its opening action gives the others
+	 * ("Kade sits at the console." before anyone speaks). Those people hold their pose: they don't walk.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Previs")
+	static TArray<FCinemafyBlock> BlockScene(const FCinemafyScriptScene& Scene);
+
+	/**
+	 * The clip for holding a pose on this skeleton: Project Settings' Together Animations (for two people together;
+	 * Index 0 = the lead, 1 = the partner), then Pose Animations, then one found by name. Null = none.
+	 */
+	static UAnimSequenceBase* FindPoseAnimation(ECinemafyPose Pose, const USkeleton* Skeleton, bool bTogether, int32 Index);
 };

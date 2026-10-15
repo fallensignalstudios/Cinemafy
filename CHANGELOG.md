@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.19.0: "How you see it"
+- **Blocking:** your staging per scene, in plain words, kept apart from the script and across re-imports: "Tarrik and
+  Lyessa lie on the bunk, cuddled, for the whole scene." Write it in the Story Board (**Blocking: how you see it
+  staged...**), as a Fountain note `[[BLOCKING: ...]]`, as a bible's `blocking` / `staging` field, or over MCP
+  (`set_blocking`, `describe_blocking`). Without notes, a pose the opening action sets ("Kade sits in the command
+  chair.") counts too.
+- **Poses:** Stand, Sit, Lie, Kneel, Lean. Previs puts each block's people at its place (a mark, or a set piece by
+  name) in its pose, side by side, close when they're together, and they hold it all scene: their choreography's new
+  **Hold Pose** keeps them from walking or turning, and walks the page gives them are left out (and reported).
+- **Marks have a Pose:** blocking that names a place takes the mark's pose; beds read as lying, chairs as sitting.
+  Pre-flight finds blocking with no place on set and places a mark, already posed.
+- **Pose clips:** Project Settings > Cinemafy > Staging > Pose Animations (one per pose) and Together Animations
+  (pairs made for two), else found by name. The clip plays across the scene in the cut, a recorded take's body
+  steps aside for it, and posed people don't get standing gesture clips. Lying with no clip: laid flat as a stand-in.
+- **The camera looks down at people lying down:** shots of anyone whose eyes are near the bed rise above them
+  (`IsLyingDown`).
+- New test: `Cinemafy.Previs.ReadsYourBlocking`.
+
 ## 0.18.0: "The fine print"
 Fixes from staging a 420-page game screenplay end to end.
 - **Reading:**

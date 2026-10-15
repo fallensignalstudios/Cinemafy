@@ -127,6 +127,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Animation", meta = (ContentDir))
 	TArray<FDirectoryPath> SearchFolders;
 
+	/**
+	 * The performer holds the pose they were placed in (lying on a bed, seated): they never turn or walk, they only
+	 * say their lines and play their gestures in place. Previs sets it for characters the blocking poses.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography")
+	bool bHoldPose = false;
+
 	/** Include this performer when Perform & Record is pressed on any choreography (multi-character scenes). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Take")
 	bool bIncludeInTakes = true;

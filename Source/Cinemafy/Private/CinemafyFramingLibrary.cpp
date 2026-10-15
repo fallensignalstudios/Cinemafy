@@ -1,4 +1,5 @@
 #include "CinemafyFramingLibrary.h"
+#include "Components/CapsuleComponent.h"
 #include "CinemafyCameraLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
@@ -148,8 +149,35 @@ float UCinemafyFramingLibrary::GetSideOfLine(const FVector& Point, const AActor*
 	return FVector::DotProduct(Point - Mid, SideDir);
 }
 
-bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution)
+bool UCinemafyFramingLibrary::IsLyingDown(const AActor* Actor)
 {
+	if (!Actor)
+	{
+		return false;
+	}
+	// Eyes within 70 cm of the feet: lying on a bed, a floor, a couch.
+	float Feet = Actor->GetActorLocation().Z;
+	if (const UCapsuleComponent* Capsule = Actor->FindComponentByClass<UCapsuleComponent>())
+	{
+		Feet -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+	else
+	{
+		FVector Origin, Extent;
+		Actor->GetActorBounds(true, Origin, Extent);
+		Feet = Origin.Z - Extent.Z;
+	}
+	return GetEyePoint(Actor).Z - Feet < 70.f;
+}
+
+bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& InRequest, FCinemafyShotSolution& OutSolution)
+{
+	// People lying down are seen from above (an operator standing at the bed), not from eye level across the sheets.
+	FCinemafyShotRequest Request = InRequest;
+	if (IsLyingDown(Request.Subject) && Request.ShotType != ECinemafyShotType::POV)
+	{
+		Request.HeightOffset += 100.f;
+	}
 	const AActor* Subject = Request.Subject;
 	const AActor* Counterpart = (Request.Counterpart != Request.Subject) ? Request.Counterpart.Get() : nullptr;
 	if (!Subject || (ShotNeedsCounterpart(Request.ShotType) && !Counterpart))

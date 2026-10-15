@@ -9,6 +9,7 @@
 #include "CinemafyModule.h"
 #include "CinemafySequencerUtils.h"
 #include "CinemafyMood.h"
+#include "CinemafyPrevis.h"
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
@@ -1154,8 +1155,13 @@ namespace
 		TMap<const USkeleton*, TArray<FCinemafyMoveCandidate>> CandidatesBySkeleton;
 		TMap<AActor*, bool> Recorded;
 		TMap<USkeletalMeshComponent*, TArray<FSoftObjectPath>> Recent;
+		static const FName PosedTag(TEXT("Cinemafy.Posed"));
 		auto CastClip = [&](AActor* Actor, const FCinemafyLine& Line, int32 LineIndex, bool bSpeaking, float From, float To)
 		{
+			if (Actor && Actor->Tags.Contains(PosedTag))
+			{
+				return; // Lying on the bed, seated: a standing gesture would pull them out of the pose.
+			}
 			USkeletalMeshComponent* Mesh = FindBodyMesh(Actor);
 			const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
 			if (!Skeleton)
@@ -1253,6 +1259,51 @@ namespace
 				}
 			}
 			Time += Length;
+		}
+
+		// People the blocking posed hold their pose clip the whole scene (Previs tagged them "Cinemafy.Pose.Lie.Together.0").
+		TSet<AActor*> Posed;
+		for (const FCinemafyLine& Line : Lines)
+		{
+			for (AActor* Actor : { Line.Speaker.Get(), Line.Listener.Get() })
+			{
+				if (Actor && Actor->Tags.Contains(PosedTag))
+				{
+					Posed.Add(Actor);
+				}
+			}
+		}
+		for (AActor* Actor : Posed)
+		{
+			for (const FName& Tag : Actor->Tags)
+			{
+				TArray<FString> Parts;
+				Tag.ToString().ParseIntoArray(Parts, TEXT("."), true);
+				if (Parts.Num() != 5 || Parts[1] != TEXT("Pose"))
+				{
+					continue;
+				}
+				const int64 PoseValue = StaticEnum<ECinemafyPose>()->GetValueByNameString(Parts[2]);
+				USkeletalMeshComponent* Mesh = FindBodyMesh(Actor);
+				const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+				UAnimSequenceBase* Clip = PoseValue == INDEX_NONE ? nullptr
+					: UCinemafyPrevisLibrary::FindPoseAnimation(static_cast<ECinemafyPose>(PoseValue), Skeleton, Parts[3] == TEXT("Together"), FCString::Atoi(*Parts[4]));
+				if (!Clip || !Mesh)
+				{
+					continue; // A lying stand-in is laid flat on the actor itself; standing needs nothing.
+				}
+				const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(FMath::Max(Time, 0.2f));
+				Placements.Add({ Mesh, Clip, SceneStart, End });
+				bool* bRecorded = Recorded.Find(Actor);
+				if (!bRecorded)
+				{
+					bRecorded = &Recorded.Add(Actor, HasChoreographyTake(Sequence, MovieScene, Actor));
+				}
+				if (*bRecorded)
+				{
+					OverTake.FindOrAdd(Mesh).Add(TRange<FFrameNumber>(SceneStart, End));
+				}
+			}
 		}
 
 		TMap<USkeletalMeshComponent*, UMovieSceneSkeletalAnimationTrack*> Tracks;

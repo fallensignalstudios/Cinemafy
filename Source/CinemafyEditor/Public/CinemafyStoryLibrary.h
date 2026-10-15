@@ -80,6 +80,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static FString DressSet(UCinemafyScriptProject* Project, const FString& SceneIdOrLocation);
 
+	/**
+	 * Sets a scene's blocking, your staging in plain words ("Tarrik and Lyessa lie on the bunk, cuddled, for the whole
+	 * scene."). Kept across re-imports; Previs puts people where and how it says. Returns how Cinemafy reads it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString SetSceneBlocking(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Blocking);
+
+	/** How Cinemafy reads a scene's blocking: who goes where, in what pose, from the notes or the opening action. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
+	static FString DescribeBlocking(UCinemafyScriptProject* Project, const FString& SceneId);
+
 	/** Puts each cast member in the scene in the state the script says they arrive in (props, injuries, costume). */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static int32 ApplySceneContinuity(UCinemafyScriptProject* Project, const FString& SceneId);

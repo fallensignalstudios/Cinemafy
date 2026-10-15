@@ -586,7 +586,10 @@ namespace CinemafyScriptText
 		return true;
 	}
 
-	/** Strips Fountain boneyard (slash-star ... star-slash) and notes ([[ ]]). */
+	/** Starts the line a [[BLOCKING: ...]] note leaves behind for the reader. */
+	const TCHAR* const BlockingMarker = TEXT("\x02") TEXT("BLOCKING ");  // (split: "\x02B" would read as one hex escape)
+
+	/** Strips Fountain boneyard (slash-star ... star-slash) and notes ([[ ]]), keeping [[BLOCKING: ...]] notes. */
 	FString StripComments(const FString& Text)
 	{
 		FString Out;
@@ -603,6 +606,16 @@ namespace CinemafyScriptText
 			if (Text[Index] == TEXT('[') && Index + 1 < Text.Len() && Text[Index + 1] == TEXT('['))
 			{
 				const int32 End = Text.Find(TEXT("]]"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Index + 2);
+				// [[BLOCKING: ...]] / [[STAGING: ...]] is the writer's staging for the scene: kept, on a line of its own.
+				const FString Note = Text.Mid(Index + 2, (End == INDEX_NONE ? Text.Len() : End) - Index - 2).TrimStartAndEnd();
+				for (const TCHAR* Tag : { TEXT("BLOCKING:"), TEXT("STAGING:"), TEXT("BLOCK:") })
+				{
+					if (Note.StartsWith(Tag, ESearchCase::IgnoreCase))
+					{
+						Out += TEXT("\n") + FString(BlockingMarker) + Note.Mid(FCString::Strlen(Tag)).Replace(TEXT("\n"), TEXT(" ")).TrimStartAndEnd() + TEXT("\n");
+						break;
+					}
+				}
 				Index = End == INDEX_NONE ? Text.Len() : End + 2;
 				continue;
 			}
@@ -992,6 +1005,14 @@ namespace CinemafyScriptBreakdown
 				bBlankBefore = true;
 				bOnScreen = false;
 				OpenAction = nullptr;
+				continue;
+			}
+			if (Trim.StartsWith(BlockingMarker))
+			{
+				// The writer's staging: it belongs to the scene it sits in (or the next one, before any heading).
+				const FString Note = Trim.Mid(FCString::Strlen(BlockingMarker)).TrimStartAndEnd();
+				FString& Blocking = P.CurrentOrNew().Data.Blocking;
+				Blocking += (Blocking.IsEmpty() ? TEXT("") : TEXT(" ")) + Note;
 				continue;
 			}
 			const bool bWasBlank = bBlankBefore;
@@ -2415,6 +2436,11 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		Scene->DirectorLabel = Old.DirectorLabel;
 		Scene->MatchScore = Old.MatchScore;
 		Scene->Notes = Old.Notes;
+		// Blocking written in the editor stays; blocking the new script carries (a note, a bible field) replaces it.
+		if (Scene->Blocking.IsEmpty())
+		{
+			Scene->Blocking = Old.Blocking;
+		}
 		Scene->Takes = Old.Takes;
 		Scene->ReviewNotes = Old.ReviewNotes;
 		Scene->DailiesFolder = Old.DailiesFolder;
@@ -3424,6 +3450,11 @@ namespace CinemafyBible
 			Game.ControlBefore = Str(Object, TEXT("control_before"));
 			Game.ControlAfter = Str(Object, TEXT("control_after"));
 			Game.CameraNotes = Str(Object, TEXT("camera_staging"));
+			Scene.Blocking = Str(Object, TEXT("blocking"));
+			if (Scene.Blocking.IsEmpty())
+			{
+				Scene.Blocking = Str(Object, TEXT("staging"));
+			}
 			Game.RequiredBeats = Strings(Object, TEXT("required_beats"));
 			Game.ExitState = Strings(Object, TEXT("exit_state"));
 			Game.Handoff = Str(Object, TEXT("handoff"));
@@ -3578,6 +3609,7 @@ namespace CinemafyBible
 					}
 				}
 				else if (Key.StartsWith(TEXT("Camera"))) { Game.CameraNotes = Value; }
+				else if (Key == TEXT("Blocking") || Key == TEXT("Staging")) { Scene.Blocking = Value; }
 				else if (Key.StartsWith(TEXT("Required"))) { Value.ParseIntoArray(Game.RequiredBeats, TEXT(";"), true); for (FString& Beat : Game.RequiredBeats) { Beat.TrimStartAndEndInline(); Beat.RemoveFromEnd(TEXT(".")); } }
 				else if (Key.StartsWith(TEXT("Return to play"))) { Game.Handoff = Value; bInScript = false; }
 				else if (Key.StartsWith(TEXT("Continuity"))) { Game.ContinuityNotes = Value; bInScript = false; }

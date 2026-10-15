@@ -2,12 +2,30 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "CinemafyProduction.h"
 #include "CinemafySettings.generated.h"
 
 class UCinemafyMoveLibrary;
 class UCinemafyPerformerProfile;
 class ACharacter;
 class USoundBase;
+class UAnimSequenceBase;
+
+/** Two clips made to play together: a couple lying cuddled, an embrace. The lead plays on the first person named. */
+USTRUCT(BlueprintType)
+struct CINEMAFY_API FCinemafyPosePair
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	ECinemafyPose Pose = ECinemafyPose::Lie;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	TSoftObjectPtr<UAnimSequenceBase> Lead;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
+	TSoftObjectPtr<UAnimSequenceBase> Partner;
+};
 
 /** Project-wide Cinemafy settings (Project Settings > Plugins > Cinemafy). */
 UCLASS(config = Game, defaultconfig, meta = (DisplayName = "Cinemafy"))
@@ -51,6 +69,18 @@ public:
 	 */
 	UPROPERTY(config, EditAnywhere, Category = "Story")
 	TMap<FString, TSoftObjectPtr<USoundBase>> FoleySounds;
+
+	/**
+	 * The clip a character holds for each pose the blocking asks for (a lying idle, a seated idle). Empty = Cinemafy
+	 * looks for one by name ("lie", "lying", "sleep"; "sit", "seated"; "kneel"; "lean"). With none, people lying down
+	 * are laid flat as a stand-in, and the rest stay on their feet (the report says which).
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Staging")
+	TMap<ECinemafyPose, TSoftObjectPtr<UAnimSequenceBase>> PoseAnimations;
+
+	/** Clips made for two people at once (cuddling on a bed, an embrace): used when blocking puts two people together. */
+	UPROPERTY(config, EditAnywhere, Category = "Staging")
+	TArray<FCinemafyPosePair> TogetherAnimations;
 
 	/** The FolderBias for a package path ("/Game/Pack/Anim"): 0 when no folder matches. */
 	static float GetFolderBias(const FString& PackagePath);

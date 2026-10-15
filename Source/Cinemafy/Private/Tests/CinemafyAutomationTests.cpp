@@ -1803,6 +1803,65 @@ bool FCinemafyScreenplayFinePrintTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyBlockingTest, "Cinemafy.Previs.ReadsYourBlocking", CinemafyTests::Flags)
+bool FCinemafyBlockingTest::RunTest(const FString& Parameters)
+{
+	using Previs = UCinemafyPrevisLibrary;
+	// Your staging, in plain words.
+	TArray<FCinemafyBlock> Blocks = Previs::ReadBlocking(TEXT("Tarrik and Lyessa lie on the bunk, cuddled, for the whole scene."), { TEXT("TARRIK"), TEXT("LYESSA") });
+	if (TestEqual(TEXT("One piece of blocking"), Blocks.Num(), 1))
+	{
+		const FCinemafyBlock& Bunk = Blocks[0];
+		TestEqual(TEXT("...for both of them"), Bunk.Characters.Num(), 2);
+		TestTrue(TEXT("...lying"), Bunk.bPoseGiven && Bunk.Pose == ECinemafyPose::Lie);
+		TestEqual(TEXT("...on the bunk"), Bunk.Place, FString(TEXT("bunk")));
+		TestTrue(TEXT("...cuddled: together"), Bunk.bTogether);
+	}
+	Blocks = Previs::ReadBlocking(TEXT("Kade sits at the console; Thane leans against the window. Her head on his chest."), { TEXT("KADE"), TEXT("ADMIRAL THANE") });
+	if (TestEqual(TEXT("Two people, two places (and a body part isn't a place)"), Blocks.Num(), 2))
+	{
+		TestTrue(TEXT("Kade sits at the console"), Blocks[0].Characters == TArray<FString>{ TEXT("KADE") } && Blocks[0].Pose == ECinemafyPose::Sit && Blocks[0].Place == TEXT("console"));
+		TestTrue(TEXT("Thane leans against the window"), Blocks[1].Characters == TArray<FString>{ TEXT("ADMIRAL THANE") } && Blocks[1].Pose == ECinemafyPose::Lean && Blocks[1].Place == TEXT("window"));
+	}
+	Blocks = Previs::ReadBlocking(TEXT("Mara finds Oren. They cuddle in bed."), { TEXT("MARA"), TEXT("OREN") });
+	TestTrue(TEXT("\"They\" are the last ones named, and \"in bed\" is lying in a bed"),
+		Blocks.Num() == 1 && Blocks[0].Characters.Num() == 2 && Blocks[0].Pose == ECinemafyPose::Lie && Blocks[0].bTogether && Blocks[0].Place == TEXT("bed"));
+
+	// From a Fountain note, held all scene: Mara doesn't walk off the bed.
+	const FString Script = TEXT(
+		"INT. DORM - NIGHT\n\n"
+		"[[BLOCKING: Mara and Oren lie on the bed together.]]\n\n"
+		"Mara walks to the door.\n\n"
+		"MARA\nStay.\n\n"
+		"OREN\nAlways.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = UCinemafyScriptLibrary::BreakDownScript(Script, true, 5, Title, Report);
+	if (!TestTrue(TEXT("One scene"), Acts.Num() == 1 && Acts[0].Chapters.Num() == 1 && Acts[0].Chapters[0].Scenes.Num() == 1))
+	{
+		return true;
+	}
+	const FCinemafyScriptScene& Dorm = Acts[0].Chapters[0].Scenes[0];
+	TestEqual(TEXT("The note is the scene's blocking"), Dorm.Blocking, FString(TEXT("Mara and Oren lie on the bed together.")));
+	TestFalse(TEXT("...and never reads as action"), Dorm.Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Text.Contains(TEXT("BLOCKING")) || L.Text.Contains(TEXT("lie on the bed")); }));
+	const TArray<FCinemafyBlock> Scene = Previs::BlockScene(Dorm);
+	TestTrue(TEXT("Both on the bed, lying, together"), Scene.Num() == 1 && Scene[0].Characters.Num() == 2 && Scene[0].Pose == ECinemafyPose::Lie && Scene[0].bTogether && Scene[0].bFromNotes);
+	TArray<FString> NotStaged;
+	const TArray<FCinemafyStagedBeat> Beats = Previs::StageScene(Dorm, NotStaged);
+	TestFalse(TEXT("Held by the blocking: no walk to the door"), Beats.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("MARA") && B.Prompt == TEXT("walk"); }));
+	TestTrue(TEXT("...and the report says so"), NotStaged.ContainsByPredicate([](const FString& Note) { return Note.Contains(TEXT("holds the blocking")); }));
+	TestTrue(TEXT("...but they still talk"), Beats.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("OREN") && B.Prompt == TEXT("say"); }));
+
+	// A pose the opening action sets, before anyone speaks.
+	FCinemafyScriptScene Bridge;
+	Bridge.Characters = { TEXT("KADE") };
+	FCinemafyScriptLine& Opening = Bridge.Lines.AddDefaulted_GetRef();
+	Opening.Kind = ECinemafyScriptLineKind::Action;
+	Opening.Text = TEXT("Kade sits in the command chair.");
+	const TArray<FCinemafyBlock> FromPage = Previs::BlockScene(Bridge);
+	TestTrue(TEXT("The opening action can pose someone too"), FromPage.Num() == 1 && FromPage[0].Pose == ECinemafyPose::Sit && FromPage[0].Place == TEXT("command chair") && !FromPage[0].bFromNotes);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGameBibleTest, "Cinemafy.Golden.ReadsTheGameBible", CinemafyTests::Flags)
 bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 {

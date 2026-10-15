@@ -949,6 +949,40 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def set_blocking(project: unreal.CinemafyScriptProject, scene_id: str, blocking: str) -> str:
+        """Sets a scene's blocking: the director's staging in plain words, kept apart from the script's text and across
+        re-imports. Previs puts people where and how it says, for the whole scene, and they hold it (no walking).
+        Poses: lie / sit / kneel / lean / stand; "together" (cuddled, side by side, in each other's arms) puts them
+        close. Places are Cinemafy Marks or set pieces by name ("the bunk"); a mark's Pose fills in when the words
+        don't say. Example: "Tarrik and Lyessa lie on the bunk, cuddled, for the whole scene."
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("SCOR-03-CS01").
+            blocking: The staging in plain words. Empty clears it (Previs goes back to the action lines).
+
+        Returns:
+            How Cinemafy reads it: who, where, what pose, together or not.
+        """
+        return unreal.CinemafyStoryLibrary.set_scene_blocking(project, scene_id, blocking)
+
+    @_tool
+    @staticmethod
+    def describe_blocking(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
+        """How Cinemafy reads a scene's blocking (its notes, plus poses its opening action sets): who goes where, in
+        what pose, together or not. Use it to check blocking before previs_scene.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id.
+
+        Returns:
+            The blocking as Cinemafy reads it.
+        """
+        return unreal.CinemafyStoryLibrary.describe_blocking(project, scene_id)
+
+    @_tool
+    @staticmethod
     def scene_contract(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
         """A game scene's contract from its script bible: presentation, trigger, entry state, who has control before
         and after, what it commits, the handoff, camera notes, and its gameplay-bridge inserts (address one as
