@@ -778,6 +778,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
 	static TArray<FCinemafyScriptAct> BreakDownScriptBible(const FString& Text, const FString& ActMapText, FString& OutTitle, FString& OutReport);
 
+	/**
+	 * Regroups a breakdown's scenes into the acts of a script bible's scene map (the Markdown's "### Act N: ..."
+	 * tables), by scene id; chapters stay as they were. For a screenplay whose scenes carry the bible's ids.
+	 * False (nothing changed) when the map has no acts or names none of the scenes.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static bool GroupActsByMap(UPARAM(ref) TArray<FCinemafyScriptAct>& Acts, const FString& ActMapText);
+
+	/**
+	 * Cross-checks two versions of a story by scene id (a screenplay and its script bible, or two drafts): scenes only
+	 * in one, scenes out of order, and scenes whose spoken words or speakers differ. Returns a report; OutMatching
+	 * counts the scenes that agree.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
+	static FString CompareScripts(const TArray<FCinemafyScriptAct>& A, const TArray<FCinemafyScriptAct>& B, int32& OutMatching);
+
 	/** "SCOR-01-CS01#2" -> "SCOR-01-CS01" and 2 (1-based); a plain id -> itself and 0. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static FString SplitInsertId(const FString& SceneId, int32& OutInsert);

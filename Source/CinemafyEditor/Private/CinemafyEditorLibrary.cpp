@@ -46,6 +46,8 @@
 #include "IAssetTools.h"
 #include "SCinemafyShotBrowser.h"
 #include "EngineUtils.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformProcess.h"
 #include "Sections/MovieSceneCameraCutSection.h"
 #include "Sections/MovieSceneByteSection.h"
 #include "Sections/MovieSceneFloatSection.h"
@@ -3246,6 +3248,43 @@ namespace CinemafyScriptEditor
 		return Project;
 	}
 
+	/**
+	 * A script file's text. A PDF (a printed screenplay) goes through pdftotext, from poppler (Homebrew's
+	 * "brew install poppler" on a Mac, "poppler-utils" on Linux, or on the PATH on Windows).
+	 */
+	bool LoadScriptText(const FString& FilePath, FString& OutText)
+	{
+		if (!FPaths::GetExtension(FilePath).Equals(TEXT("pdf"), ESearchCase::IgnoreCase))
+		{
+			return FFileHelper::LoadFileToString(OutText, *FilePath);
+		}
+		TArray<FString> Tools = { TEXT("/opt/homebrew/bin/pdftotext"), TEXT("/usr/local/bin/pdftotext"), TEXT("/usr/bin/pdftotext") };
+		const FString Out = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Cinemafy") / (FPaths::GetBaseFilename(FilePath) + TEXT(".txt")));
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(Out), true);
+		const FString Args = FString::Printf(TEXT("-layout -enc UTF-8 \"%s\" \"%s\""), *FilePath, *Out);
+		int32 Code = -1;
+		FString StdOut, StdErr;
+		for (const FString& Tool : Tools)
+		{
+			if (FPaths::FileExists(Tool) && FPlatformProcess::ExecProcess(*Tool, *Args, &Code, &StdOut, &StdErr) && Code == 0)
+			{
+				break;
+			}
+		}
+		if (Code != 0)
+		{
+			// Last try: whatever pdftotext is on the PATH.
+			FPlatformProcess::ExecProcess(TEXT("pdftotext"), *Args, &Code, &StdOut, &StdErr);
+		}
+		if (Code != 0 || !FFileHelper::LoadFileToString(OutText, *Out))
+		{
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't read the PDF %s. Install poppler for pdftotext (Mac: brew install poppler), or export the screenplay as Fountain or Final Draft (.fdx)."), *FilePath);
+			return false;
+		}
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy: read the PDF screenplay %s (text kept at %s)."), *FilePath, *Out);
+		return true;
+	}
+
 	/** An actor in the level for a script name: label equal, then a character whose label contains the name (or its last word). */
 	AActor* FindActorForName(UWorld* World, const FString& ScriptName)
 	{
@@ -3280,7 +3319,7 @@ namespace CinemafyScriptEditor
 UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptFile(const FString& FilePath, const FString& Name)
 {
 	FString Text;
-	if (!FFileHelper::LoadFileToString(Text, *FilePath))
+	if (!CinemafyScriptEditor::LoadScriptText(FilePath, Text))
 	{
 		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't read a script from %s."), *FilePath);
 		return nullptr;
@@ -3297,7 +3336,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptFile(const FString& 
 bool UCinemafyEditorLibrary::ReimportScriptProject(UCinemafyScriptProject* Project)
 {
 	FString Text;
-	if (!Project || !FFileHelper::LoadFileToString(Text, *Project->ScriptFile.FilePath))
+	if (!Project || !CinemafyScriptEditor::LoadScriptText(Project->ScriptFile.FilePath, Text))
 	{
 		return false;
 	}
@@ -3317,7 +3356,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptWithDialog()
 	TArray<FString> Files;
 	const void* Parent = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 	if (!Desktop->OpenFileDialog(Parent, TEXT("Import a script"), FPaths::ProjectDir(), FString(),
-		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md;*.json)|*.fountain;*.fdx;*.txt;*.md;*.json"), EFileDialogFlags::None, Files) || Files.Num() == 0)
+		TEXT("Scripts (*.fountain;*.fdx;*.txt;*.md;*.json;*.pdf)|*.fountain;*.fdx;*.txt;*.md;*.json;*.pdf"), EFileDialogFlags::None, Files) || Files.Num() == 0)
 	{
 		return nullptr;
 	}

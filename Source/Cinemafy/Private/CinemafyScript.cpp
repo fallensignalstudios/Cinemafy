@@ -217,6 +217,240 @@ namespace CinemafyScriptText
 		return true;
 	}
 
+	/** A coded chapter header: "SCOR 01   THE MANTLE", "EP 3 - THE LONG NIGHT" -> code "SCOR-01" and title "The Mantle". */
+	bool IsSceneTag(const FString& Trim);
+
+	bool IsCodedChapterMarker(const FString& Trim, FString& OutCode, FString& OutTitle)
+	{
+		if (Trim.Len() > 80 || !IsAllCaps(Trim) || IsSceneTag(Trim))
+		{
+			return false;
+		}
+		int32 At = 0;
+		while (At < Trim.Len() && FChar::IsAlpha(Trim[At]))
+		{
+			++At;
+		}
+		if (At < 2 || At > 12 || At >= Trim.Len() || !(Trim[At] == TEXT(' ') || Trim[At] == TEXT('-')))
+		{
+			return false;
+		}
+		int32 Digits = At + 1;
+		while (Digits < Trim.Len() && FChar::IsDigit(Trim[Digits]))
+		{
+			++Digits;
+		}
+		if (Digits == At + 1 || Digits - At - 1 > 3)
+		{
+			return false;
+		}
+		const FString Rest = Trim.Mid(Digits);
+		FString Title = Rest.TrimStartAndEnd();
+		while (Title.StartsWith(TEXT(":")) || Title.StartsWith(TEXT("-")) || Title.StartsWith(TEXT(".")))
+		{
+			Title = Title.Mid(1).TrimStart();
+		}
+		// The title is set off by a gap or a separator, so "ROOM 12 IS EMPTY" isn't a chapter.
+		if (!Rest.IsEmpty() && !(Rest.StartsWith(TEXT("  ")) || Rest.TrimStart().StartsWith(TEXT(":")) || Rest.TrimStart().StartsWith(TEXT("-")) || Rest.TrimStart().StartsWith(TEXT("."))))
+		{
+			return false;
+		}
+		OutCode = Trim.Left(At) + TEXT("-") + Trim.Mid(At + 1, Digits - At - 1);
+		OutTitle = Title.IsEmpty() ? OutCode : TitleCase(Title);
+		return true;
+	}
+
+	/** A scene's own id on the line under its heading: "SCOR-01-CS01", "M3-S12". */
+	bool IsSceneTag(const FString& Trim)
+	{
+		if (Trim.Len() < 4 || Trim.Len() > 40 || !FChar::IsAlpha(Trim[0]) || !Trim.Contains(TEXT("-")))
+		{
+			return false;
+		}
+		bool bDigit = false;
+		for (const TCHAR C : Trim)
+		{
+			if (!(FChar::IsUpper(C) || FChar::IsDigit(C) || C == TEXT('-') || C == TEXT('_')))
+			{
+				return false;
+			}
+			bDigit |= FChar::IsDigit(C);
+		}
+		return bDigit;
+	}
+
+	/** "12." or "12" alone on a line: a printed page number. */
+	bool IsPageNumberLine(const FString& Line)
+	{
+		FString Trim = Line.TrimStartAndEnd();
+		Trim.RemoveFromEnd(TEXT("."));
+		return !Trim.IsEmpty() && Trim.Len() <= 4 && Trim.IsNumeric();
+	}
+
+	/**
+	 * Text pulled from a printed screenplay (a PDF): page numbers, (MORE) / (CONT'D) / CONTINUED, scene numbers either
+	 * side of headings, headings wrapped onto a second line, and a title page without "Title:". Other text passes through.
+	 */
+	FString CleanPrintedPages(const FString& Text)
+	{
+		TArray<FString> Lines;
+		Text.ParseIntoArray(Lines, TEXT("\n"), false);
+		int32 PageNumbers = 0;
+		for (const FString& Line : Lines)
+		{
+			PageNumbers += IsPageNumberLine(Line) ? 1 : 0;
+		}
+		auto StripSceneNumber = [](const FString& Trim, FString& OutHeading)
+		{
+			// "12   INT. BRIDGE - NIGHT   12", "12A INT. ..." -> "INT. BRIDGE - NIGHT".
+			FString Work = Trim;
+			int32 Lead = 0;
+			while (Lead < Work.Len() && FChar::IsDigit(Work[Lead]))
+			{
+				++Lead;
+			}
+			if (Lead > 0 && Lead < Work.Len() && FChar::IsAlpha(Work[Lead]) && Lead + 1 < Work.Len() && Work[Lead + 1] == TEXT(' '))
+			{
+				++Lead;
+			}
+			if (Lead > 0)
+			{
+				Work = Work.Mid(Lead).TrimStart();
+			}
+			// A number at the end is a scene number only when the heading opens with one too ("INT. HOUSE - DAY 2" keeps its 2).
+			int32 Tail = Lead > 0 ? Work.Len() : 0;
+			while (Tail > 0 && (FChar::IsDigit(Work[Tail - 1]) || (Tail == Work.Len() && FChar::IsUpper(Work[Tail - 1]) && Tail >= 2 && FChar::IsDigit(Work[Tail - 2]))))
+			{
+				--Tail;
+			}
+			if (Tail < Work.Len() && Tail > 0 && Work[Tail - 1] == TEXT(' '))
+			{
+				Work = Work.Left(Tail).TrimEnd();
+			}
+			FString Setting, Location, Time;
+			if (Work != Trim && UCinemafyScriptLibrary::ParseHeading(Work, Setting, Location, Time))
+			{
+				OutHeading = Work;
+				return true;
+			}
+			return false;
+		};
+		bool bNumberedHeadings = false;
+		for (const FString& Line : Lines)
+		{
+			FString Heading;
+			if (StripSceneNumber(Line.TrimStartAndEnd(), Heading))
+			{
+				bNumberedHeadings = true;
+				break;
+			}
+		}
+		if (PageNumbers < 3 && !bNumberedHeadings)
+		{
+			return Text;
+		}
+
+		TArray<FString> Out;
+		int32 Index = 0;
+		// A title page with no "Title:": what comes before the first page number (or heading), when nothing in it is the script.
+		if (!Text.TrimStart().StartsWith(TEXT("Title:"), ESearchCase::IgnoreCase) && PageNumbers >= 3)
+		{
+			int32 FirstPage = INDEX_NONE;
+			bool bScript = false;
+			for (int32 Line = 0; Line < Lines.Num() && FirstPage == INDEX_NONE; ++Line)
+			{
+				FString Setting, Location, Time, Heading, Marker;
+				const FString Trim = Lines[Line].TrimStartAndEnd();
+				if (IsPageNumberLine(Lines[Line]))
+				{
+					FirstPage = Line;
+				}
+				else if (UCinemafyScriptLibrary::ParseHeading(Trim, Setting, Location, Time) || StripSceneNumber(Trim, Heading) || IsActMarker(Trim, Marker))
+				{
+					bScript = true;
+					break;
+				}
+			}
+			if (FirstPage != INDEX_NONE && !bScript)
+			{
+				for (int32 Line = 0; Line < FirstPage; ++Line)
+				{
+					const FString Trim = Lines[Line].TrimStartAndEnd();
+					if (!Trim.IsEmpty())
+					{
+						Out.Add(TEXT("Title: ") + Trim);
+						Out.Add(FString());
+						break;
+					}
+				}
+				Index = FirstPage + 1;
+			}
+		}
+		for (; Index < Lines.Num(); ++Index)
+		{
+			const FString& Line = Lines[Index];
+			const FString Trim = Line.TrimStartAndEnd();
+			if (Trim == TEXT("(MORE)"))
+			{
+				// A speech carried over the page: skip to "NAME (CONT'D)" and carry on with the same speech.
+				int32 Next = Index + 1;
+				while (Next < Lines.Num() && (Lines[Next].TrimStartAndEnd().IsEmpty() || IsPageNumberLine(Lines[Next])))
+				{
+					++Next;
+				}
+				if (Next < Lines.Num() && (Lines[Next].Contains(TEXT("(CONT'D)")) || Lines[Next].Contains(TEXT("(CONT\u2019D)")) || Lines[Next].Contains(TEXT("(CONTD)"))))
+				{
+					Index = Next;
+					continue;
+				}
+			}
+			if (IsPageNumberLine(Line) || Trim == TEXT("(MORE)") || Trim == TEXT("(CONTINUED)") || Trim == TEXT("CONTINUED:") || Trim == TEXT("CONTINUED"))
+			{
+				// A page break: drop the padding after it; a paragraph broken mid-sentence joins back up.
+				int32 Next = Index + 1;
+				while (Next < Lines.Num() && Lines[Next].TrimStartAndEnd().IsEmpty())
+				{
+					++Next;
+				}
+				const bool bJoins = Next < Lines.Num() && Out.Num() > 0 && !Out.Last().TrimEnd().IsEmpty()
+					&& FChar::IsLower(Lines[Next].TrimStart().IsEmpty() ? TEXT(' ') : Lines[Next].TrimStart()[0]);
+				if (!bJoins && Out.Num() > 0 && !Out.Last().TrimStartAndEnd().IsEmpty())
+				{
+					Out.Add(FString());
+				}
+				Index = Next - 1;
+				continue;
+			}
+			FString Heading;
+			if (StripSceneNumber(Trim, Heading))
+			{
+				// A heading wrapped onto the next line(s) ("... - ETERNAL" / "EVENING").
+				while (Index + 1 < Lines.Num())
+				{
+					const FString More = Lines[Index + 1].TrimStartAndEnd();
+					FString Setting, Location, Time, Ignored;
+					if (More.IsEmpty() || !IsAllCaps(More) || IsSceneTag(More) || More.Len() > 40 || StripSceneNumber(More, Ignored)
+						|| UCinemafyScriptLibrary::ParseHeading(More, Setting, Location, Time))
+					{
+						break;
+					}
+					Heading += TEXT(" ") + More;
+					++Index;
+				}
+				if (Out.Num() > 0 && !Out.Last().TrimStartAndEnd().IsEmpty())
+				{
+					Out.Add(FString());
+				}
+				Out.Add(Heading);
+				continue;
+			}
+			// "KADE (CONT'D)" is just KADE again.
+			FString Cleaned = Line.Replace(TEXT(" (CONT'D)"), TEXT("")).Replace(TEXT(" (CONT\u2019D)"), TEXT("")).Replace(TEXT(" (CONTD)"), TEXT(""));
+			Out.Add(Cleaned);
+		}
+		return FString::Join(Out, TEXT("\n"));
+	}
+
 	/** Game-script scene markers: "[Scene: Bridge]", "SCENE 12: The Bridge", "Scene 3 - Hangar". */
 	bool IsGameSceneMarker(const FString& Trim, FString& OutLocation)
 	{
@@ -529,6 +763,8 @@ namespace CinemafyScriptBreakdown
 		FCinemafyScriptScene Data;
 		FString ActMark;
 		FString ChapterMark;
+		/** A coded chapter marker's code ("SCOR 01   THE MANTLE" -> "SCOR-01"). */
+		FString ChapterCode;
 		bool bActMarked = false;
 		bool bChapterMarked = false;
 		bool bHardBreakBefore = false;
@@ -546,6 +782,7 @@ namespace CinemafyScriptBreakdown
 		// Markers waiting for the next scene.
 		FString PendingAct;
 		FString PendingChapter;
+		FString PendingChapterCode;
 		bool bPendingAct = false;
 		bool bPendingChapter = false;
 		bool bPendingHardBreak = false;
@@ -561,12 +798,14 @@ namespace CinemafyScriptBreakdown
 			Scene.ActMark = PendingAct;
 			Scene.bChapterMarked = bPendingChapter;
 			Scene.ChapterMark = PendingChapter;
+			Scene.ChapterCode = PendingChapterCode;
 			Scene.bHardBreakBefore = bPendingHardBreak;
 			Scene.bTimeJump = IsTimeJump(Heading);
 			Scene.bContinuous = IsContinuous(Heading);
 			bPendingAct = bPendingChapter = bPendingHardBreak = false;
 			PendingAct.Reset();
 			PendingChapter.Reset();
+			PendingChapterCode.Reset();
 			return Scene;
 		}
 
@@ -639,7 +878,7 @@ namespace CinemafyScriptBreakdown
 		Text = StripComments(Text.Replace(TEXT("\r\n"), TEXT("\n")).Replace(TEXT("\r"), TEXT("\n")));
 
 		TArray<FString> Lines;
-		Text.ParseIntoArray(Lines, TEXT("\n"), false);
+		CleanPrintedPages(Text).ParseIntoArray(Lines, TEXT("\n"), false);
 
 		int32 Index = 0;
 		// Title page: "Title: ..." key/value lines up to the first blank line.
@@ -760,6 +999,17 @@ namespace CinemafyScriptBreakdown
 				OpenAction = nullptr;
 				continue;
 			}
+			// Coded chapter headers ("SCOR 01   THE MANTLE"): the code becomes the chapter's id.
+			FString Code;
+			if (bStandsAlone && IsCodedChapterMarker(Trim, Code, Marker))
+			{
+				P.bPendingChapter = true;
+				P.PendingChapter = Marker;
+				P.PendingChapterCode = Code;
+				++P.ChapterMarks;
+				OpenAction = nullptr;
+				continue;
+			}
 			// Numbered chapter markers ("MISSION 2: Fallout") are unambiguous wherever they sit.
 			const FString AfterFirst = Trim.Mid(FirstWord(Trim).Len()).TrimStart();
 			const bool bNumbered = AfterFirst.Len() > 0 && FChar::IsDigit(AfterFirst[0]) && (IsAllCaps(FirstWord(Trim)) || Trim.Contains(TEXT(":")));
@@ -778,6 +1028,13 @@ namespace CinemafyScriptBreakdown
 				P.StartScene(Trim.StartsWith(TEXT(".")) ? Trim.Mid(1) : Trim, Setting, Location, Time);
 				bInDialogue = false;
 				OpenAction = nullptr;
+				continue;
+			}
+			// The scene's own id, on the line under its heading ("SCOR-01-CS01"): kept as its id for good.
+			if (P.Scenes.Num() > 0 && P.Scenes.Last().Data.Lines.Num() == 0 && !P.Scenes.Last().Data.bFixedId && IsSceneTag(Trim))
+			{
+				P.Scenes.Last().Data.Id = Trim;
+				P.Scenes.Last().Data.bFixedId = true;
 				continue;
 			}
 			if (bStandsAlone && IsGameSceneMarker(Trim, Location))
@@ -1068,6 +1325,28 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 				ActWhy.Add(TEXT("marked in the script"));
 			}
 		}
+		// A prologue (teaser, cold open) is a bookend, not an act that runs on to the epilogue: the story proper starts
+		// at the next chapter marker after it.
+		for (int32 Act = 0; Act < ActStarts.Num(); ++Act)
+		{
+			const FString Title = ActTitles[Act].ToLower();
+			if (!(Title.StartsWith(TEXT("prologue")) || Title.StartsWith(TEXT("teaser")) || Title.StartsWith(TEXT("cold open"))))
+			{
+				continue;
+			}
+			const int32 End = Act + 1 < ActStarts.Num() ? ActStarts[Act + 1] : Scenes.Num();
+			for (int32 Index = ActStarts[Act] + 1; Index < End; ++Index)
+			{
+				if (Scenes[Index].bChapterMarked)
+				{
+					ActStarts.Insert(Index, Act + 1);
+					ActTitles.Insert(TEXT("The Story"), Act + 1);
+					ActInferred.Insert(true, Act + 1);
+					ActWhy.Insert(TEXT("after the prologue (the script marks no acts of its own)"), Act + 1);
+					break;
+				}
+			}
+		}
 	}
 	else if (bInferActs && Scenes.Num() >= 6)
 	{
@@ -1164,7 +1443,8 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 			const int32 ChapterFirst = ChapterStarts[ChapterIndex];
 			const int32 ChapterEnd = ChapterIndex + 1 < ChapterStarts.Num() ? ChapterStarts[ChapterIndex + 1] : End;
 			FCinemafyScriptChapter& Chapter = Act.Chapters.AddDefaulted_GetRef();
-			Chapter.Id = FString::Printf(TEXT("%d.%d"), ActIndex + 1, ChapterIndex + 1);
+			const FString& Code = Scenes[ChapterFirst].bChapterMarked ? Scenes[ChapterFirst].ChapterCode : FString();
+			Chapter.Id = Code.IsEmpty() ? FString::Printf(TEXT("%d.%d"), ActIndex + 1, ChapterIndex + 1) : Code;
 			Chapter.bInferred = ChapterInferred[ChapterIndex];
 			Chapter.Why = ChapterWhy[ChapterIndex];
 			(Chapter.bInferred ? InferredChapters : MarkedChapters) += 1;
@@ -1172,7 +1452,10 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 			{
 				FCinemafyScriptScene Scene = Scenes[Index].Data;
 				Scene.Number = ++Number;
-				Scene.Id = FString::Printf(TEXT("%d.%d.%d"), ActIndex + 1, ChapterIndex + 1, Chapter.Scenes.Num() + 1);
+				if (!Scene.bFixedId)
+				{
+					Scene.Id = FString::Printf(TEXT("%d.%d.%d"), ActIndex + 1, ChapterIndex + 1, Chapter.Scenes.Num() + 1);
+				}
 				Chapter.Scenes.Add(MoveTemp(Scene));
 			}
 			const FString Place = MostCommonPlace(Chapter.Scenes);
@@ -1736,6 +2019,47 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 	else
 	{
 		Acts = UCinemafyScriptLibrary::BreakDownScript(ScriptText, bInferActs, ScenesPerChapter, FoundTitle, BreakdownReport);
+
+		// A screenplay whose scenes carry a script bible's ids ("SCOR-01-CS01" under each heading) takes the bible's acts.
+		FString FirstId;
+		for (const FCinemafyScriptAct& Act : Acts)
+		{
+			for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+			{
+				for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+				{
+					FirstId = FirstId.IsEmpty() && Scene.bFixedId ? Scene.Id : FirstId;
+				}
+			}
+		}
+		FString ActMap;
+		if (!FirstId.IsEmpty())
+		{
+			if (!ActMapFile.FilePath.IsEmpty())
+			{
+				FFileHelper::LoadFileToString(ActMap, *ActMapFile.FilePath);
+			}
+			else if (!ScriptFile.FilePath.IsEmpty())
+			{
+				const FString Folder = FPaths::GetPath(ScriptFile.FilePath);
+				TArray<FString> Candidates;
+				IFileManager::Get().FindFiles(Candidates, *(Folder / TEXT("*.md")), true, false);
+				for (const FString& Candidate : Candidates)
+				{
+					FString Text;
+					if (FFileHelper::LoadFileToString(Text, *(Folder / Candidate)) && Text.Contains(TEXT("### Act")) && Text.Contains(FirstId))
+					{
+						ActMap = MoveTemp(Text);
+						ActMapFile.FilePath = Folder / Candidate;
+						break;
+					}
+				}
+			}
+		}
+		if (!ActMap.IsEmpty() && UCinemafyScriptLibrary::GroupActsByMap(Acts, ActMap))
+		{
+			BreakdownReport += FString::Printf(TEXT("\nActs from the script bible's scene map (%s)."), *FPaths::GetCleanFilename(ActMapFile.FilePath));
+		}
 	}
 
 	// Line ids: speaker initials + a hash of who says what; repeats get a suffix.
@@ -2595,17 +2919,29 @@ namespace CinemafyBible
 		return 0.f;
 	}
 
-	/** "GOOD KING (RECORD)" -> "GOOD KING" and "(RECORD)". */
+	/** "GOOD KING (RECORD)" -> "GOOD KING" and "(RECORD)"; "SELENE \u2014 INTERNAL" -> "SELENE" and "(INTERNAL)". */
 	void SplitSpeaker(const FString& Cue, FString& OutName, FString& OutDirection)
 	{
+		// One apostrophe, whichever the document typed ("WOMAN\u2019S" and "WOMAN'S" are the same voice).
+		const FString Clean = Cue.Replace(TEXT("\u2019"), TEXT("'")).TrimStartAndEnd();
 		int32 Paren = INDEX_NONE;
-		if (Cue.FindChar(TEXT('('), Paren) && Paren > 0)
+		if (Clean.FindChar(TEXT('('), Paren) && Paren > 0)
 		{
-			OutName = Cue.Left(Paren).TrimStartAndEnd().ToUpper();
-			OutDirection = Cue.Mid(Paren).TrimStartAndEnd();
+			OutName = Clean.Left(Paren).TrimStartAndEnd().ToUpper();
+			OutDirection = Clean.Mid(Paren).TrimStartAndEnd();
 			return;
 		}
-		OutName = Cue.TrimStartAndEnd().ToUpper();
+		FString Name, How;
+		for (const TCHAR* Dash : { TEXT(" \u2014 "), TEXT(" \u2013 "), TEXT(" - ") })
+		{
+			if (Clean.Split(Dash, &Name, &How) && !Name.TrimStartAndEnd().IsEmpty() && !How.TrimStartAndEnd().IsEmpty())
+			{
+				OutName = Name.TrimStartAndEnd().ToUpper();
+				OutDirection = TEXT("(") + How.TrimStartAndEnd() + TEXT(")");
+				return;
+			}
+		}
+		OutName = Clean.ToUpper();
 		OutDirection.Reset();
 	}
 
@@ -3332,4 +3668,167 @@ FCinemafyScriptScene UCinemafyScriptLibrary::SceneForInsert(const FCinemafyScrip
 	Slice.Inserts.Reset();
 	Slice.bTransitionIn = Insert == 1 && Scene.bTransitionIn;
 	return Slice;
+}
+
+bool UCinemafyScriptLibrary::GroupActsByMap(TArray<FCinemafyScriptAct>& Acts, const FString& ActMapText)
+{
+	using namespace CinemafyBible;
+	const FActMap Map = ReadActMap(ActMapText);
+	struct FPlaced { FCinemafyScriptScene Scene; FString ChapterId; FString ChapterTitle; };
+	TArray<FPlaced> Placed;
+	int32 Known = 0;
+	for (const FCinemafyScriptAct& Act : Acts)
+	{
+		for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+		{
+			for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+			{
+				Placed.Add(FPlaced{ Scene, Chapter.Id, Chapter.Title });
+				Known += Map.SceneAct.Contains(Scene.Id) ? 1 : 0;
+			}
+		}
+	}
+	if (Map.IsEmpty() || Known == 0)
+	{
+		return false;
+	}
+	TArray<FString> Titles = Map.Titles;
+	Titles.Add(TEXT("Not in the scene map"));
+	TArray<FCinemafyScriptAct> Grouped;
+	int32 ActNumber = 0;
+	for (int32 ActIndex = 0; ActIndex < Titles.Num(); ++ActIndex)
+	{
+		FCinemafyScriptAct Act;
+		Act.Title = Titles[ActIndex];
+		const FString Lower = Act.Title.ToLower();
+		Act.Id = Lower.StartsWith(TEXT("prologue")) ? FString(TEXT("P")) : (Lower.StartsWith(TEXT("epilogue")) ? FString(TEXT("E")) : FString());
+		Act.Why = TEXT("the script bible's scene map");
+		for (const FPlaced& Item : Placed)
+		{
+			const int32* Found = Map.SceneAct.Find(Item.Scene.Id);
+			if ((Found ? *Found : Titles.Num() - 1) != ActIndex)
+			{
+				continue;
+			}
+			if (Act.Chapters.Num() == 0 || Act.Chapters.Last().Id != Item.ChapterId)
+			{
+				FCinemafyScriptChapter& Chapter = Act.Chapters.AddDefaulted_GetRef();
+				Chapter.Id = Item.ChapterId;
+				const FString* MapTitle = Map.MissionTitles.Find(Item.ChapterId);
+				Chapter.Title = MapTitle ? *MapTitle : Item.ChapterTitle;
+				Chapter.Why = TEXT("as the script marks it");
+			}
+			Act.Chapters.Last().Scenes.Add(Item.Scene);
+		}
+		if (Act.Chapters.Num() > 0)
+		{
+			if (Act.Id.IsEmpty())
+			{
+				Act.Id = FString::FromInt(++ActNumber);
+			}
+			Grouped.Add(MoveTemp(Act));
+		}
+	}
+	Acts = MoveTemp(Grouped);
+	return true;
+}
+
+FString UCinemafyScriptLibrary::CompareScripts(const TArray<FCinemafyScriptAct>& A, const TArray<FCinemafyScriptAct>& B, int32& OutMatching)
+{
+	using namespace CinemafyScriptText;
+	struct FSummary { int32 Order = 0; int32 Words = 0; TSet<FString> Speakers; FString Heading; };
+	auto Summarize = [](const TArray<FCinemafyScriptAct>& Acts, TArray<FString>& OutOrder)
+	{
+		TMap<FString, FSummary> Out;
+		for (const FCinemafyScriptAct& Act : Acts)
+		{
+			for (const FCinemafyScriptChapter& Chapter : Act.Chapters)
+			{
+				for (const FCinemafyScriptScene& Scene : Chapter.Scenes)
+				{
+					FSummary& Summary = Out.FindOrAdd(Scene.Id);
+					Summary.Order = OutOrder.Add(Scene.Id);
+					Summary.Heading = Scene.Heading;
+					for (const FCinemafyScriptLine& Line : Scene.Lines)
+					{
+						if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
+						{
+							Summary.Words += CountWords(Line.Text);
+							Summary.Speakers.Add(Line.Speaker);
+						}
+					}
+				}
+			}
+		}
+		return Out;
+	};
+	TArray<FString> OrderA, OrderB;
+	const TMap<FString, FSummary> SceneA = Summarize(A, OrderA);
+	const TMap<FString, FSummary> SceneB = Summarize(B, OrderB);
+	TArray<FString> OnlyA, OnlyB, Differ;
+	OutMatching = 0;
+	int32 WordsA = 0, WordsB = 0;
+	for (const FString& Id : OrderA)
+	{
+		const FSummary& First = SceneA[Id];
+		WordsA += First.Words;
+		const FSummary* Second = SceneB.Find(Id);
+		if (!Second)
+		{
+			OnlyA.Add(Id);
+			continue;
+		}
+		TArray<FString> Notes;
+		const int32 Gap = FMath::Abs(First.Words - Second->Words);
+		if (Gap > FMath::Max(10, FMath::Max(First.Words, Second->Words) / 10))
+		{
+			Notes.Add(FString::Printf(TEXT("%d vs %d spoken words"), First.Words, Second->Words));
+		}
+		TArray<FString> Missing, Extra;
+		for (const FString& Speaker : First.Speakers)
+		{
+			if (!Second->Speakers.Contains(Speaker)) { Missing.Add(Speaker); }
+		}
+		for (const FString& Speaker : Second->Speakers)
+		{
+			if (!First.Speakers.Contains(Speaker)) { Extra.Add(Speaker); }
+		}
+		if (Missing.Num() > 0) { Notes.Add(TEXT("only the first has ") + FString::Join(Missing, TEXT(", "))); }
+		if (Extra.Num() > 0) { Notes.Add(TEXT("only the second has ") + FString::Join(Extra, TEXT(", "))); }
+		if (Notes.Num() > 0)
+		{
+			Differ.Add(FString::Printf(TEXT("  %s %s: %s"), *Id, *First.Heading, *FString::Join(Notes, TEXT("; "))));
+		}
+		else
+		{
+			++OutMatching;
+		}
+	}
+	for (const FString& Id : OrderB)
+	{
+		WordsB += SceneB[Id].Words;
+		if (!SceneA.Contains(Id))
+		{
+			OnlyB.Add(Id);
+		}
+	}
+	// Order: the shared scenes, as each script runs them.
+	TArray<FString> SharedA = OrderA.FilterByPredicate([&SceneB](const FString& Id) { return SceneB.Contains(Id); });
+	TArray<FString> SharedB = OrderB.FilterByPredicate([&SceneA](const FString& Id) { return SceneA.Contains(Id); });
+	int32 OutOfOrder = 0;
+	for (int32 Index = 0; Index < SharedA.Num() && Index < SharedB.Num(); ++Index)
+	{
+		OutOfOrder += SharedA[Index] != SharedB[Index] ? 1 : 0;
+	}
+	TArray<FString> Report;
+	Report.Add(FString::Printf(TEXT("%d of %d scene(s) agree; %d spoken words vs %d."), OutMatching, OrderA.Num(), WordsA, WordsB));
+	Report.Add(OnlyA.Num() > 0 ? TEXT("Only in the first: ") + FString::Join(OnlyA, TEXT(", ")) : FString(TEXT("Every scene of the first is in the second.")));
+	Report.Add(OnlyB.Num() > 0 ? TEXT("Only in the second: ") + FString::Join(OnlyB, TEXT(", ")) : FString(TEXT("Every scene of the second is in the first.")));
+	Report.Add(OutOfOrder > 0 ? FString::Printf(TEXT("%d shared scene(s) sit in a different place."), OutOfOrder) : FString(TEXT("The shared scenes run in the same order.")));
+	if (Differ.Num() > 0)
+	{
+		Report.Add(TEXT("Scenes that differ:"));
+		Report.Append(Differ);
+	}
+	return FString::Join(Report, TEXT("\n"));
 }

@@ -988,6 +988,22 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def compare_scripts(first: unreal.CinemafyScriptProject, second: unreal.CinemafyScriptProject) -> str:
+        """Cross-checks two versions of a story by scene id: a screenplay and its script bible, or two drafts. Reports
+        scenes only in one, scenes out of order, and scenes whose spoken words or speakers differ.
+
+        Args:
+            first: One Script Project (e.g. the screenplay).
+            second: The other (e.g. the script bible).
+
+        Returns:
+            The comparison report.
+        """
+        report, _matching = unreal.CinemafyScriptLibrary.compare_scripts(first.get_editor_property('acts'), second.get_editor_property('acts'))
+        return report
+
+    @_tool
+    @staticmethod
     def generate_scratch_voices(project: unreal.CinemafyScriptProject, scene_id: str = '', replace_existing_scratch: bool = False) -> str:
         """Reads script lines aloud with the computer's voices (macOS say, Windows speech, espeak-ng on Linux) so timing
         and lip motion work before voice-over is recorded. Each character uses their Cast entry's Scratch Voice.

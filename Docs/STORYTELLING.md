@@ -16,6 +16,7 @@ Script ─► Story Board ─► Cast & Sets ─► Scratch voices ─► Pre-fl
 
 - Fountain
 - Final Draft (`.fdx`)
+- a screenplay PDF (through `pdftotext`; see [SCRIPTS](SCRIPTS.md#pdf-screenplays))
 - plain screenplay text
 - game scripts (`KADE: line`, `[Scene: Hangar]`, `MISSION 3: Blackout`)
 - game **script bibles**, the JSON or Markdown kind with scene ids, triggers and control handoffs (see

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.17.0: "Printed pages"
+- **PDF screenplays:**
+  - Import Script takes a `.pdf`. Its text comes from `pdftotext` (poppler: `brew install poppler` on a Mac), and
+    a copy is kept in `Saved/Cinemafy`.
+  - Text from a printed screenplay is cleaned before reading:
+    - page numbers and `(MORE)` / `CONTINUED` are dropped, and `(CONT'D)` speeches rejoin across the page
+    - scene numbers on either side of a heading are removed, and headings wrapped onto a second line are joined
+    - paragraphs broken by the page join back up
+    - a title page without `Title:` gives its first line as the title
+- **Scene ids in screenplays:** a tag on the line under a heading (`SCOR-01-CS01`) becomes the scene's permanent
+  id, as in a script bible.
+- **Coded chapter headers:** `SCOR 01   THE MANTLE` is a chapter with id `SCOR-01` and title "The Mantle".
+- **Bookend prologues:** a `PROLOGUE` (teaser, cold open) no longer runs on to the epilogue; the story starts at
+  the next chapter after it.
+- **Acts from the bible:** a screenplay whose scenes carry a bible's ids takes its acts from the bible's scene
+  map (`GroupActsByMap`; found beside the screenplay, or set **Act Map File**).
+- **Compare Scripts:** cross-checks two versions by scene id: scenes only in one, order, spoken words, speakers.
+  Use it for a screenplay against its bible, or one draft against another (`compare_scripts` over MCP).
+- Script bibles: `SELENE — INTERNAL` reads as Selene with an "(INTERNAL)" direction, and curly and straight
+  apostrophes in names are the same.
+- New sample: `Docs/samples/PrintedScreenplay_Sample.txt`.
+- New test: `Cinemafy.Script.ReadsPrintedScreenplays`. The golden bible test also checks a screenplay (`.fountain`
+  or `.txt`) in `CINEMAFY_BIBLE_DIR` against the bible.
+
 ## 0.16.0: "The bible"
 - **Game script bibles:**
   - A game's cutscene bible imports directly: the JSON companion, or the Markdown it's written in.

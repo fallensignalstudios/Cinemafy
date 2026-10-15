@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 16,
-	"VersionName": "0.16.0",
+	"Version": 17,
+	"VersionName": "0.17.0",
 	"FriendlyName": "Cinemafy",
 	"Description": "Easy-to-use tools for premium, film-grade real-time cutscenes: lens kits, shot templates, procedural camera feel, eye-tracked focus, MetaHuman gaze, cinematic looks, an AI scene director a click-to-choreograph performance recorder, and Premiere-style editing in Sequencer.",
 	"Category": "Cinematics",

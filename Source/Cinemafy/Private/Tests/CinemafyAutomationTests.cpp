@@ -1637,6 +1637,51 @@ bool FCinemafyScriptBibleTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyPrintedScreenplayTest, "Cinemafy.Script.ReadsPrintedScreenplays", CinemafyTests::Flags)
+bool FCinemafyPrintedScreenplayTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	const FString Printed = CinemafyTests::LoadSample(TEXT("PrintedScreenplay_Sample.txt"));
+	const FString Markdown = CinemafyTests::LoadSample(TEXT("ScriptBible_Sample.md"));
+	if (Printed.IsEmpty() || Markdown.IsEmpty())
+	{
+		AddWarning(TEXT("Docs/samples/PrintedScreenplay_Sample.txt isn't next to the plugin: test skipped."));
+		return true;
+	}
+	// Text from a PDF: a title page, page numbers, numbered and wrapped headings, (MORE) / (CONT'D), id tags, a coded chapter.
+	FString Title, Report;
+	TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Printed, true, 5, Title, Report);
+	TestEqual(TEXT("The title page's first line is the title"), Title, FString(TEXT("THE HOLLOW CROWN")));
+	if (!TestEqual(TEXT("A prologue is a bookend: Prologue, then the story"), Acts.Num(), 2))
+	{
+		return true;
+	}
+	TestTrue(TEXT("...the prologue holds only its own scene"), Acts[0].Title == TEXT("Prologue") && Acts[0].Chapters.Num() == 1 && Acts[0].Chapters[0].Scenes.Num() == 1);
+	TestTrue(TEXT("A coded chapter header gives the chapter its code and title"), Acts[1].Chapters.Num() == 1 && Acts[1].Chapters[0].Id == TEXT("HC-01") && Acts[1].Chapters[0].Title == TEXT("The Gate"));
+	const FCinemafyScriptScene* Stair = CinemafyTests::FindIn(Acts, TEXT("HC-01-CS01"));
+	if (TestNotNull(TEXT("The tag under the heading is the scene's id"), Stair))
+	{
+		TestTrue(TEXT("...kept for good"), Stair->bFixedId);
+		TestEqual(TEXT("The scene number is gone and the wrapped heading is whole"), Stair->Heading, FString(TEXT("EXT. HOLLOW KEEP - GATE STAIR - LONG DUSK")));
+		TestEqual(TEXT("Five lines (the speech over the page is one)"), Stair->DialogueLines, 5);
+		TestTrue(TEXT("(MORE) / (CONT'D) joins the speech back up"), Stair->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Text == TEXT("I trust the warden."); }));
+		TestTrue(TEXT("An action paragraph broken by the page joins too"), Stair->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Action && L.Text.EndsWith(TEXT("stair beneath it.")); }));
+		TestFalse(TEXT("No page numbers anywhere"), Stair->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Text.EndsWith(TEXT(" 3.")) || L.Text.EndsWith(TEXT(" 4.")) || L.Text == TEXT("(MORE)"); }));
+		TestFalse(TEXT("Nobody is called HC-01-CS01"), Stair->Characters.Contains(TEXT("HC-01-CS01")));
+	}
+	const FCinemafyScriptScene* Seal = CinemafyTests::FindIn(Acts, TEXT("HC-01-CS02"));
+	TestTrue(TEXT("A trailing scene number goes too"), Seal && Seal->Heading == TEXT("EXT. HOLLOW KEEP - GATE SEAL - DUSK"));
+
+	// With the bible's scene map: its acts. And the screenplay agrees with the bible scene for scene.
+	TestTrue(TEXT("The bible's acts"), Script::GroupActsByMap(Acts, Markdown) && Acts.Num() == 2 && Acts[1].Title == TEXT("The Gate"));
+	const TArray<FCinemafyScriptAct> Bible = Script::BreakDownScriptBible(Markdown, FString(), Title, Report);
+	int32 Matching = 0;
+	const FString Comparison = Script::CompareScripts(Acts, Bible, Matching);
+	AddInfo(Comparison);
+	TestEqual(TEXT("Every scene agrees with the bible"), Matching, 3);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGameBibleTest, "Cinemafy.Golden.ReadsTheGameBible", CinemafyTests::Flags)
 bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 {
@@ -1668,6 +1713,28 @@ bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 		CinemafyTests::CountKind(FromMarkdown, ECinemafyScriptLineKind::Display, Ignored));
 	TestEqual(TEXT("...and the acts"), FromJson.Num(), FromMarkdown.Num());
 	TestFalse(TEXT("Every scene is in the scene map"), FromJson.ContainsByPredicate([](const FCinemafyScriptAct& Act) { return Act.Title == TEXT("Not in the scene map"); }));
+
+	// The screenplay too, when its text is in the folder (a .fountain, or pdftotext's .txt of the PDF).
+	TArray<FString> Screenplays;
+	IFileManager::Get().FindFiles(Screenplays, *(Folder / TEXT("*.fountain")), true, false);
+	TArray<FString> Texts;
+	IFileManager::Get().FindFiles(Texts, *(Folder / TEXT("*.txt")), true, false);
+	Screenplays.Append(Texts);
+	if (Screenplays.Num() > 0)
+	{
+		FString Screenplay;
+		FFileHelper::LoadFileToString(Screenplay, *(Folder / Screenplays[0]));
+		TArray<FCinemafyScriptAct> FromScreenplay = UCinemafyScriptLibrary::BreakDownScript(Screenplay, true, 5, Title, Report);
+		TestTrue(TEXT("The screenplay takes the bible's acts"), UCinemafyScriptLibrary::GroupActsByMap(FromScreenplay, Markdown));
+		int32 Matching = 0;
+		const FString Comparison = UCinemafyScriptLibrary::CompareScripts(FromScreenplay, FromJson, Matching);
+		AddInfo(Comparison);
+		int32 ScreenplayScenes = 0;
+		CinemafyTests::CountKind(FromScreenplay, ECinemafyScriptLineKind::Dialogue, ScreenplayScenes);
+		TestEqual(TEXT("The screenplay has every scene of the bible"), ScreenplayScenes, JsonScenes);
+		TestTrue(TEXT("...and nearly all of them agree (the report lists the rest)"), Matching >= JsonScenes - 3);
+		TestTrue(TEXT("...in the same order"), Comparison.Contains(TEXT("same order")));
+	}
 	for (const FCinemafyScriptAct& Act : FromJson)
 	{
 		for (const FCinemafyScriptChapter& Chapter : Act.Chapters)

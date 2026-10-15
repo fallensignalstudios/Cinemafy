@@ -23,6 +23,31 @@ Try it with [samples/TheBridge.fountain](samples/TheBridge.fountain).
 | Game scripts | `KADE: line` dialogue, `[Scene: Hangar]` / `SCENE 12: Hangar` markers, and `MISSION 3: Blackout`, `CHAPTER 2`, `LEVEL`, `QUEST` or `EPISODE` markers, even with no blank lines. |
 | Act markers | `ACT ONE`, `ACT 2`, `PART III`, `PROLOGUE`, `EPILOGUE`, `COLD OPEN`, or `#` sections. |
 
+## PDF screenplays
+
+A screenplay PDF imports straight away. Cinemafy runs `pdftotext` on it, which comes with poppler
+(`brew install poppler` on a Mac, `poppler-utils` on Linux). The text is kept in `Saved/Cinemafy` so you can check
+it. A printed page's furniture is cleaned off before the script is read:
+
+- page numbers, `(MORE)` and `CONTINUED`
+- `(CONT'D)`: the speech carries on as one line
+- scene numbers either side of the heading (`12   INT. BRIDGE - NIGHT   12`)
+- a heading wrapped onto a second line
+- a paragraph broken by the page, which joins back up
+- a title page without `Title:`, whose first line is taken as the title
+
+Writers' conventions it reads:
+
+- **A scene id on the line under a heading** (`SCOR-01-CS01`): that becomes the scene's permanent id, exactly as
+  in a script bible.
+- **A coded chapter header** (`SCOR 01   THE MANTLE`): a chapter with id `SCOR-01`, titled "The Mantle".
+- **`PROLOGUE` / `EPILOGUE`**: bookends. The story proper starts at the first chapter after the prologue.
+
+When the scenes carry a script bible's ids and the bible's Markdown sits beside the screenplay (or is set as
+**Act Map File**), the screenplay takes the bible's acts. **Compare Scripts** (`compare_scripts`) then cross-checks
+them by scene id: scenes only in one, scenes out of order, and scenes whose spoken words or speakers differ. It
+works just as well for two drafts of the same script.
+
 ## Game script bibles
 
 A game's cutscene bible imports as it is, no screenplay needed. Two formats are read:
