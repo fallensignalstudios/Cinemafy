@@ -450,6 +450,13 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 	constexpr float MinShotLength = 0.8f;
 
 	TArray<FCinemafyPlannedShot> Shots;
+	if (Line.Speaker && Line.Listener && UCinemafyFramingLibrary::IsThing(Line.Listener) && !UCinemafyFramingLibrary::IsThing(Line.Speaker))
+	{
+		// Talking to a thing (into a radio, at a ship): their singles. No over-the-shoulder of a hull.
+		FCinemafyLine Alone = Line;
+		Alone.Listener = nullptr;
+		return PlanLine(Alone, LineIndex, Style, Random, Previous, bOpensScene, StartTime, SceneCast);
+	}
 	if (!Line.Speaker)
 	{
 		// A voice with no body (an announcement, a radio, V.O.): never black. Watch whoever hears it, else hold the
@@ -835,7 +842,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 
 	// The one speaking isn't a person (a carrier on the radio, a console, a ship): show the thing, framed whole, then
 	// watch whoever hears it. Not a close-up on a hull.
-	if (Line.Speaker && !Line.Speaker->IsA<APawn>())
+	if (UCinemafyFramingLibrary::IsThing(Line.Speaker))
 	{
 		for (FCinemafyPlannedShot& Shot : Shots)
 		{
@@ -883,9 +890,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 	TMap<int32, TArray<AActor*>> CastByScene;
 	for (const FCinemafyLine& Line : Lines)
 	{
+		// People only: a ship on the radio doesn't make two people a group (or stretch a group shot out to it).
 		TArray<AActor*>& SceneCast = CastByScene.FindOrAdd(Line.SceneId);
-		if (Line.Speaker) { SceneCast.AddUnique(Line.Speaker); }
-		if (Line.Listener) { SceneCast.AddUnique(Line.Listener); }
+		if (Line.Speaker && !UCinemafyFramingLibrary::IsThing(Line.Speaker)) { SceneCast.AddUnique(Line.Speaker); }
+		if (Line.Listener && !UCinemafyFramingLibrary::IsThing(Line.Listener)) { SceneCast.AddUnique(Line.Listener); }
 	}
 	TArray<FCinemafyPlannedShot> Plan;
 	float Time = 0.f;

@@ -123,6 +123,8 @@ class CinemafyTools(unreal.ToolsetDefinition):
         sequence, report = result if isinstance(result, tuple) else (result, '')
         if sequence is None:
             raise RuntimeError(f'Export failed: {report}')
+        if 'FAILED:' in report:
+            raise RuntimeError(f'Export wrote {sequence.get_path_name()} but not as asked: {report}')
         return report
 
     @_tool

@@ -51,6 +51,11 @@ Your game has its own cutscene player? **Export Sequence For Playback** (MCP `ex
 `_Playback` copy with every camera move and focus baked to plain keys, on plain cameras, needing nothing from
 Cinemafy at runtime.
 
+## Bonus: radios, ships and other things that speak
+A line spoken by something that isn't a person (a ship on the radio, a console) shows it whole, from where the
+people hearing it stand, then watches them listen. Cinemafy counts an actor as a thing when it shows only geometry
+(no skeletal mesh); tag it `Cinemafy.Thing` or `Cinemafy.Person` to say otherwise.
+
 ## Bonus: live, unscripted conversations
 For NPC chats driven by your dialogue system, skip Sequencer entirely. Call the director's
 **Direct Line** (speaker, listener, duration, intensity, subtitle) as each line plays, then

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.21.0: "Vertical slice, round 2"
+- **Export really makes spawnable cameras:** the copy is reopened before its cameras are converted (Sequencer converts
+  from what a binding resolves to, and it still held the old cameras), only conversions that happened are counted,
+  and the export checks the saved result: any camera still a possessable is named and the report says `FAILED:`
+  (`export_for_playback` raises).
+- **Only things are things:** a speaker gets the "shown whole, then whoever hears it" treatment only when it really
+  isn't a person: tagged `Cinemafy.Thing`, or showing only geometry. Pawns, anything with a skeletal mesh (or an
+  attached stand-in), placeholders and actors tagged `Cinemafy.Person` are people again (`IsThing` in Blueprint).
+- **Things aren't cast:** a ship on the radio no longer makes two people a group, stretches group shots out to it, or
+  gets over-the-shoulders when someone talks back to it (their singles instead).
+- **Big things are seen from where people are:** an insert on something large (a ship, a building) frames it whole
+  from just behind and above whoever hears it, on a lens that fits it, and tries all the way round them, higher.
+  If no camera can see it, there's no "best guess" facing a wall: the line stays on its listener, with a warning.
+- **Group shots are the people together:** things and anyone 15 m or more away are left out of the frame.
+- **Hand-back is a preference, not a rule:** the last shot keeps its framing and screen side and turns at most 30
+  degrees toward gameplay's view, or goes over the player's shoulder when the player is in it. When neither gets
+  within 45 degrees, it says so (and what would help) instead of swinging round into an empty wide.
+- **Every kept frame has a camera:** with Keep Playback Range, the first and last cuts stretch to the range (or, if
+  they aren't Cinemafy's, a warning counts the frames left to gameplay's view).
+- **Quitting with Sequencer open:** Cinemafy lets go of Sequencer and its choreography mode at engine pre-exit, while
+  everything is still alive.
+- **Tests:** `Cinemafy.Director.ThingsThatSpeak`.
+
 ## 0.20.0: "Vertical slice"
 Notes from the first run in a real game project.
 - **Builds on 5.8:** a Shot Browser local no longer shadows `SWidget::Tag`.

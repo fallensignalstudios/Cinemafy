@@ -2112,41 +2112,107 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		Request.bUseRecommendedLens = false;
 		Request.Lens = Shot.Lens;
 		Request.bFlipSide = Director->bFlipSide;
-		// The last shot hands back to gameplay: framed from the angle nearest the gameplay camera's (the way the
-		// player faces), on its own camera, so the cut back isn't a reverse-angle flip. Crossing the line costs extra.
+		// A thing (a ship on the radio) no camera can see from where people are: stay on whoever hears it.
+		if (Shot.ShotType == ECinemafyShotType::Insert && Shot.Counterpart && UCinemafyFramingLibrary::IsThing(Shot.Subject))
+		{
+			FCinemafyShotSolution Seen;
+			bool bSeen = false;
+			UCinemafyFramingLibrary::SolveShotAvoidingObstacles(Director->GetWorld(), Request, Seen, bSeen);
+			if (!bSeen)
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: no clear view of %s from anywhere near %s (shot %d), so that line stays on %s. Move a window's collision off Visibility, or place a camera on it by hand."),
+					*Shot.Subject->GetActorNameOrLabel(), *Shot.Counterpart->GetActorNameOrLabel(), ShotIndex + 1, *Shot.Counterpart->GetActorNameOrLabel());
+				Request.ShotType = ECinemafyShotType::MediumCloseUp;
+				Request.Subject = Shot.Counterpart;
+				Request.Counterpart = Shot.Subject;
+				Request.bUseRecommendedLens = true;
+				ShotTag = FName(*(ShotTag.ToString() + TEXT(".Hearer")));
+				Camera = ExistingCameras.FindRef(ShotTag);
+			}
+		}
+		// The last shot hands back to gameplay: of the framings that still show this shot's people properly and keep
+		// the screen side, the one looking most nearly the way the gameplay camera does, on its own camera, so the cut
+		// back isn't a reverse-angle flip. The angle is a preference inside the framing rules, not a rule over them:
+		// the shot isn't swung round into an empty wide, and doesn't cross the line.
 		if (ShotIndex == Plan.Num() - 1 && Director->HandBackTo && Shot.Subject)
 		{
 			const float WantYaw = Director->HandBackTo->GetActorRotation().Yaw;
+			// The player, if they're in the shot: the gameplay camera is behind them, so over their shoulder is the
+			// natural hand-back.
+			AActor* Player = Director->HandBackTo;
+			if (!Player->IsA<APawn>())
+			{
+				AActor* Parent = Player->GetAttachParentActor();
+				Player = Parent && Parent->IsA<APawn>() ? Parent : (Player->GetOwner() && Player->GetOwner()->IsA<APawn>() ? Player->GetOwner() : Player);
+			}
+			AActor* Other = nullptr;
+			if (Player == Shot.Subject)
+			{
+				Other = Shot.Counterpart;
+			}
+			else if (Player == Shot.Counterpart || Shot.Group.Contains(Player))
+			{
+				Other = Shot.Subject;
+			}
+			if (Other && UCinemafyFramingLibrary::IsThing(Other))
+			{
+				Other = nullptr;
+			}
+
+			TArray<TPair<FCinemafyShotRequest, float>> Tries; // A framing and what changing to it costs.
+			for (float Angle = -30.f; Angle <= 30.f; Angle += 10.f)
+			{
+				FCinemafyShotRequest Try = Request;
+				Try.AngleOffset = Angle;
+				Tries.Add({ Try, FMath::Abs(Angle) * 0.3f });
+			}
+			if (Other)
+			{
+				for (float Angle = -20.f; Angle <= 20.f; Angle += 10.f)
+				{
+					FCinemafyShotRequest Try = Request;
+					Try.ShotType = ECinemafyShotType::OverTheShoulder;
+					Try.Subject = Other;
+					Try.Counterpart = Player;
+					Try.Group.Reset();
+					Try.bUseRecommendedLens = true;
+					Try.AngleOffset = Angle;
+					Tries.Add({ Try, 10.f + FMath::Abs(Angle) * 0.3f });
+				}
+			}
 			float BestScore = TNumericLimits<float>::Max();
 			float BestDelta = 0.f;
 			FCinemafyShotRequest Best = Request;
-			for (const bool bFlip : { Request.bFlipSide, !Request.bFlipSide })
+			for (const TPair<FCinemafyShotRequest, float>& Try : Tries)
 			{
-				for (float Angle = -60.f; Angle <= 60.f; Angle += 15.f)
+				FCinemafyShotSolution Solved;
+				if (!UCinemafyFramingLibrary::SolveShot(Try.Key, Solved))
 				{
-					FCinemafyShotRequest Try = Request;
-					Try.bFlipSide = bFlip;
-					Try.AngleOffset = Angle;
-					FCinemafyShotSolution Solved;
-					if (!UCinemafyFramingLibrary::SolveShot(Try, Solved))
-					{
-						continue;
-					}
-					const float Delta = FMath::Abs(FRotator::NormalizeAxis(Solved.CameraTransform.Rotator().Yaw - WantYaw));
-					const float Score = Delta + (bFlip != Request.bFlipSide ? 25.f : 0.f) + FMath::Abs(Angle) * 0.2f;
-					if (Score < BestScore)
-					{
-						BestScore = Score;
-						BestDelta = Delta;
-						Best = Try;
-					}
+					continue;
+				}
+				const float Delta = FMath::Abs(FRotator::NormalizeAxis(Solved.CameraTransform.Rotator().Yaw - WantYaw));
+				const bool bClear = UCinemafyFramingLibrary::IsShotClear(Director->GetWorld(), Try.Key, Solved);
+				const float Score = Delta + Try.Value + (bClear ? 0.f : 60.f);
+				if (Score < BestScore)
+				{
+					BestScore = Score;
+					BestDelta = Delta;
+					Best = Try.Key;
 				}
 			}
 			Request = Best;
-			ShotTag = FName(*(ShotTag.ToString() + TEXT(".HandBack")));
+			ShotTag = FName(*FString::Printf(TEXT("%s.HandBack.%d"), *ShotTag.ToString(), static_cast<int32>(Request.ShotType)));
 			Camera = ExistingCameras.FindRef(ShotTag);
 			Director->HandBackYawDelta = BestDelta;
-			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: the last shot looks %.0f degrees from the gameplay camera (%s)."), BestDelta, *Director->HandBackTo->GetActorLabel());
+			if (BestDelta > 45.f)
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the last shot looks %.0f degrees from the gameplay camera (%s): no framing of %s that keeps the screen side gets closer. Put %s in the last shot, or end the scene on a line said to them, for an over-the-shoulder hand-back."),
+					BestDelta, *Director->HandBackTo->GetActorLabel(), *Shot.Subject->GetActorNameOrLabel(), *Player->GetActorNameOrLabel());
+			}
+			else
+			{
+				UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: the last shot looks %.0f degrees from the gameplay camera (%s)."), BestDelta, *Director->HandBackTo->GetActorLabel());
+			}
 		}
 		// Where the subject stood when the camera was framed: a reused camera is re-framed if they've moved since
 		// (a new take put them elsewhere), and keeps its hand tweaks if they haven't.
@@ -2388,6 +2454,64 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	if (Playback.GetUpperBoundValue() != NewEnd && NewEnd > Playback.GetLowerBoundValue())
 	{
 		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), NewEnd));
+	}
+
+	// Every frame that plays has a camera: with the range kept wider than the scene, the frames before the first cut
+	// and after the last would show whatever the player's own view is. Our first and last cuts stretch to the range;
+	// someone else's leave a warning instead.
+	{
+		const TRange<FFrameNumber> Range = MovieScene->GetPlaybackRange();
+		TSet<FGuid> Ours;
+		for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
+		{
+			Ours.Add(CinemafySequencer::FindBinding(Sequence, Pair.Key));
+		}
+		UMovieSceneCameraCutSection* First = nullptr;
+		UMovieSceneCameraCutSection* Final = nullptr;
+		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
+		{
+			UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+			if (!Cut || !Cut->HasStartFrame() || !Cut->HasEndFrame() || !Cut->IsActive())
+			{
+				continue;
+			}
+			if (!First || Cut->GetInclusiveStartFrame() < First->GetInclusiveStartFrame())
+			{
+				First = Cut;
+			}
+			if (!Final || Cut->GetExclusiveEndFrame() > Final->GetExclusiveEndFrame())
+			{
+				Final = Cut;
+			}
+		}
+		const FFrameRate Display = MovieScene->GetDisplayRate();
+		auto Frames = [&](FFrameNumber Ticks) { return FFrameRate::TransformTime(FFrameTime(Ticks), TickResolution, Display).RoundToFrame().Value; };
+		if (First && First->GetInclusiveStartFrame() > Range.GetLowerBoundValue())
+		{
+			if (Ours.Contains(First->GetCameraBindingID().GetGuid()))
+			{
+				First->Modify();
+				First->SetRange(TRange<FFrameNumber>(Range.GetLowerBoundValue(), First->GetExclusiveEndFrame()));
+			}
+			else
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the first %d frame(s) of the playback range have no camera cut (gameplay's own view shows)."),
+					Frames(First->GetInclusiveStartFrame() - Range.GetLowerBoundValue()));
+			}
+		}
+		if (Final && Final->GetExclusiveEndFrame() < Range.GetUpperBoundValue())
+		{
+			if (Ours.Contains(Final->GetCameraBindingID().GetGuid()))
+			{
+				Final->Modify();
+				Final->SetRange(TRange<FFrameNumber>(Final->GetInclusiveStartFrame(), Range.GetUpperBoundValue()));
+			}
+			else
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the last %d frame(s) of the playback range have no camera cut (gameplay's own view shows)."),
+					Frames(Range.GetUpperBoundValue() - Final->GetExclusiveEndFrame()));
+			}
+		}
 	}
 
 	CinemafySequencer::NotifyChanged();

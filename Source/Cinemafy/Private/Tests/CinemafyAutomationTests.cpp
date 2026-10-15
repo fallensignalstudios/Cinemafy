@@ -26,6 +26,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Engine/StaticMeshActor.h"
 
 namespace CinemafyTests
 {
@@ -1953,3 +1954,55 @@ bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyThingsThatSpeakTest, "Cinemafy.Director.ThingsThatSpeak", CinemafyTests::Flags)
+bool FCinemafyThingsThatSpeakTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	AStaticMeshActor* Ship = Scene.World->SpawnActor<AStaticMeshActor>();
+	AStaticMeshActor* Statue = Scene.World->SpawnActor<AStaticMeshActor>();
+	Statue->Tags.Add(TEXT("Cinemafy.Person"));
+	AActor* Console = Scene.World->SpawnActor<AActor>();
+	Console->Tags.Add(TEXT("Cinemafy.Thing"));
+
+	TestFalse(TEXT("A placeholder actor is a person"), UCinemafyFramingLibrary::IsThing(Scene.Kara));
+	TestTrue(TEXT("Something that only shows geometry is a thing"), UCinemafyFramingLibrary::IsThing(Ship));
+	TestFalse(TEXT("Tagged a person, it is one"), UCinemafyFramingLibrary::IsThing(Statue));
+	TestTrue(TEXT("Tagged a thing, it is one"), UCinemafyFramingLibrary::IsThing(Console));
+
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(4);
+	FCinemafyLine Radio;
+	Radio.Speaker = Ship;
+	Radio.Listener = Scene.Kara;
+	Radio.Duration = 4.f;
+	Radio.PauseAfter = 0.5f;
+	Lines.Insert(Radio, 2);
+	FCinemafyLine Reply;
+	Reply.Speaker = Scene.Kara;
+	Reply.Listener = Ship;
+	Reply.Duration = 3.f;
+	Lines.Insert(Reply, 3);
+
+	const FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood);
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, Style, 7);
+	bool bShipShown = false;
+	for (const FCinemafyPlannedShot& Shot : Plan)
+	{
+		if (Shot.LineIndex == 2 && Shot.Subject == Ship)
+		{
+			bShipShown = true;
+			TestEqual(TEXT("The ship is shown whole"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::Insert));
+		}
+		if (Shot.LineIndex != 2)
+		{
+			TestNotEqual(TEXT("People get people's shots"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::Insert));
+		}
+		TestNotEqual(TEXT("Two people and a ship aren't a group"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::GroupShot));
+		if (Shot.LineIndex == 3)
+		{
+			TestTrue(TEXT("Talking to the ship: no over-the-shoulder of a hull"), Shot.Counterpart != Ship || Shot.ShotType != ECinemafyShotType::OverTheShoulder);
+		}
+	}
+	TestTrue(TEXT("The ship that speaks is seen"), bShipShown);
+	return true;
+}

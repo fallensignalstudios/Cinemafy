@@ -67,6 +67,15 @@ public:
 	static FVector GetEyePoint(const AActor* Actor);
 
 	/**
+	 * Not a person: a ship, a console, a radio. Tag an actor "Cinemafy.Thing" or "Cinemafy.Person" to say; otherwise
+	 * pawns, anything with a skeletal mesh (its own or an attached stand-in's) and placeholders with nothing to see are
+	 * people, and an actor that shows only static meshes or other geometry is a thing. A thing that speaks is shown
+	 * whole on an insert, it isn't counted in the scene's cast, and it's left out of group shots.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static bool IsThing(const AActor* Actor);
+
+	/**
 	 * Which side of the line of action between two characters a point is on: > 0 is the side
 	 * SolveShot uses by default, < 0 is the flipped side. The line is ordered by actor name,
 	 * so the answer doesn't depend on which character you pass first. Returns signed distance in cm.

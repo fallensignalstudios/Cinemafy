@@ -16,6 +16,7 @@
 #include "MovieScene.h"
 #include "MovieSceneBindingProxy.h"
 #include "Misc/PackageName.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "Sections/MovieScene3DTransformSection.h"
 #include "Sections/MovieSceneFloatSection.h"
 #include "Tracks/MovieScene3DTransformTrack.h"
@@ -334,16 +335,56 @@ ULevelSequence* UCinemafyEditorLibrary::ExportSequenceForPlayback(ULevelSequence
 	// Owned by the sequence: the cameras move in, so the map needn't be saved.
 	if (bSpawnableCameras)
 	{
-		int32 Converted = 0;
-		if (ULevelSequenceEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<ULevelSequenceEditorSubsystem>())
+		// Sequencer converts from the object a binding resolves to, and the one keying the copy still holds what it
+		// saw before the rebind: reopen the copy so it resolves the plain cameras afresh.
+		if (UAssetEditorSubsystem* Editors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
 		{
-			for (const FCameraBake& Bake : Cameras)
+			Editors->CloseAllEditorsForAsset(Dest);
+		}
+		TSharedPtr<ISequencer> Sequencer = OpenSequenceForEditing(Dest) ? CinemafySequencer::GetOpenSequencer() : nullptr;
+		if (Sequencer.IsValid())
+		{
+			Sequencer->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::RefreshAllImmediately);
+			Sequencer->ForceEvaluate();
+		}
+		int32 Converted = 0;
+		ULevelSequenceEditorSubsystem* Subsystem = GEditor->GetEditorSubsystem<ULevelSequenceEditorSubsystem>();
+		for (const FCameraBake& Bake : Cameras)
+		{
+			if (!Subsystem || !Sequencer.IsValid())
 			{
-				Subsystem->ConvertToSpawnable(FMovieSceneBindingProxy(Bake.Binding, Dest));
+				break;
+			}
+			const TArray<FMovieSceneBindingProxy> Result = Subsystem->ConvertToSpawnable(FMovieSceneBindingProxy(Bake.Binding, Dest));
+			if (Result.Num() > 0 && Result[0].BindingID.IsValid())
+			{
 				++Converted;
 			}
 		}
-		Report.Add(FString::Printf(TEXT("%d camera(s) are now spawnables owned by the sequence."), Converted));
+		// Trust the sequence, not the calls: a camera still possessed would resolve to nothing in a fresh session.
+		TArray<FString> StillPossessed;
+		for (const FCameraBake& Bake : Cameras)
+		{
+			if (Out->FindPossessable(Bake.Binding))
+			{
+				StillPossessed.Add(GetNameSafe(Bake.Camera));
+			}
+		}
+		if (StillPossessed.Num() > 0)
+		{
+			const FString Failure = FString::Printf(TEXT("FAILED: %d of %d camera(s) are still possessables of level actors (%s), so the copy needs the map saved with them. Convert them in Sequencer (right-click > Convert to Spawnable), or export again with spawnable cameras off and save the map."),
+				StillPossessed.Num(), Cameras.Num(), *FString::Join(StillPossessed, TEXT(", ")));
+			UE_LOG(LogCinemafy, Error, TEXT("Cinemafy export: %s"), *Failure);
+			Report.Add(Failure);
+		}
+		else
+		{
+			Report.Add(FString::Printf(TEXT("%d camera(s) are now spawnables owned by the sequence."), Cameras.Num()));
+		}
+		if (Converted != Cameras.Num() - StillPossessed.Num())
+		{
+			UE_LOG(LogCinemafy, Verbose, TEXT("Cinemafy export: %d conversion(s) reported, %d camera(s) converted."), Converted, Cameras.Num() - StillPossessed.Num());
+		}
 	}
 	Dest->MarkPackageDirty();
 	Report.Add(FString::Printf(TEXT("Wrote %s (unsaved: save it with the rest)."), *Dest->GetPathName()));

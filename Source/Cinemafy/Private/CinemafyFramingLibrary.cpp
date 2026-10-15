@@ -2,6 +2,7 @@
 #include "Components/CapsuleComponent.h"
 #include "CinemafyCameraLibrary.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "CollisionQueryParams.h"
@@ -116,6 +117,48 @@ namespace CinemafyEyes
 		}
 		return false;
 	}
+}
+
+/**
+ * A speaker that isn't a person: a ship, a console, a radio. Tags decide when there are any ("Cinemafy.Thing" /
+ * "Cinemafy.Person"); otherwise a pawn, anything with a skeletal mesh (its own or an attached stand-in's), or an
+ * actor with nothing to see (a placeholder) is a person, and only a visible, mesh-only actor is a thing.
+ */
+bool UCinemafyFramingLibrary::IsThing(const AActor* Actor)
+{
+	if (!Actor)
+	{
+		return false;
+	}
+	if (Actor->ActorHasTag(TEXT("Cinemafy.Thing")))
+	{
+		return true;
+	}
+	if (Actor->ActorHasTag(TEXT("Cinemafy.Person")) || Actor->IsA<APawn>())
+	{
+		return false;
+	}
+	TArray<AActor*> Parts;
+	Actor->GetAttachedActors(Parts, true, true);
+	Parts.Add(const_cast<AActor*>(Actor));
+	bool bVisible = false;
+	for (const AActor* Part : Parts)
+	{
+		if (!Part)
+		{
+			continue;
+		}
+		if (Part->FindComponentByClass<USkeletalMeshComponent>())
+		{
+			return false;
+		}
+		TInlineComponentArray<UPrimitiveComponent*> Primitives(Part);
+		for (const UPrimitiveComponent* Primitive : Primitives)
+		{
+			bVisible |= Primitive && Primitive->IsVisible() && !Primitive->bHiddenInGame;
+		}
+	}
+	return bVisible;
 }
 
 FVector UCinemafyFramingLibrary::GetEyePoint(const AActor* Actor)
@@ -307,13 +350,16 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& InRequest, F
 		// Everyone in: center on the group, wide enough for its spread, from the camera side of the main pair.
 		TArray<FVector, TInlineAllocator<8>> Eyes;
 		Eyes.Add(SubjectEye);
-		if (Counterpart)
+		if (Counterpart && !IsThing(Counterpart))
 		{
 			Eyes.Add(OtherEye);
 		}
 		for (const AActor* Member : Request.Group)
 		{
-			if (Member && Member != Subject && Member != Counterpart)
+			// People only: a ship on the radio isn't stood with them, and would stretch the frame out to it. Nor is
+			// someone across the room: a group shot is the people together, not everyone in the level.
+			if (Member && Member != Subject && Member != Counterpart && !IsThing(Member)
+				&& FVector::Dist2D(GetEyePoint(Member), SubjectEye) < 1500.f)
 			{
 				Eyes.Add(GetEyePoint(Member));
 			}
@@ -402,16 +448,51 @@ bool UCinemafyFramingLibrary::SolveShot(const FCinemafyShotRequest& InRequest, F
 				break;
 			}
 		}
+		FVector Extent = FVector::ZeroVector;
 		if (Hands)
 		{
 			Center = Hands->GetSocketLocation(Cinemafy::RightHandBone);
 		}
 		else
 		{
-			FVector Extent;
 			Subject->GetActorBounds(true, Center, Extent);
 			Size = FMath::Max(Spec.FrameHeight, static_cast<float>(Extent.Size()) * 2.2f);
 		}
+
+		// Something big (a vehicle, a ship, a building): framed whole, and from where people are.
+		const float Radius = static_cast<float>(Extent.Size());
+		if (!Hands && Radius > 400.f)
+		{
+			Size = FMath::Max(static_cast<float>(Extent.Z) * 2.f, static_cast<float>(FMath::Max(Extent.X, Extent.Y)) * 2.f / Aspect) * 1.15f;
+			auto LensToFit = [&](const FVector& From)
+			{
+				const float Want = SensorH * static_cast<float>(FVector::Dist(From, Center)) / FMath::Max(Size, 1.f);
+				Lens = UCinemafyCameraLibrary::SnapToPrime(FMath::Clamp(Want, 18.f, 135.f));
+				Focal = UCinemafyCameraLibrary::GetPrimeFocalLength(Lens);
+			};
+			if (Counterpart && FVector::Dist(OtherEye, Center) > Radius * 0.5f)
+			{
+				// What they see: just behind and above whoever hears it, looking out at it. The camera stays where the
+				// people are (a deck, a room with a window), not out in the void a whole-ship framing would put it.
+				const FVector Out = (Center - OtherEye).GetSafeNormal2D().IsNearlyZero() ? LookDir : (Center - OtherEye).GetSafeNormal2D();
+				const FVector Across = FVector::CrossProduct(Up, Out) * (Request.bFlipSide ? -1.f : 1.f);
+				CamPos = OtherEye - Out * 120.f + Across * (60.f + Request.AngleOffset * 3.f) + Up * (30.f + Request.HeightOffset);
+			}
+			else
+			{
+				// Nobody to see it from: around it, at the distance that frames it on a wide lens.
+				Lens = ECinemafyPrime::Prime24;
+				Focal = UCinemafyCameraLibrary::GetPrimeFocalLength(Lens);
+				const FVector Around = Subject->GetActorForwardVector().GetSafeNormal2D().RotateAngleAxis(35.f + Request.AngleOffset * (Request.bFlipSide ? -1.f : 1.f), Up);
+				CamPos = Center + (Around.IsNearlyZero() ? FVector::ForwardVector : Around) * (DistanceForFrame(Size, Focal, SensorH) + static_cast<float>(FMath::Max(Extent.X, Extent.Y)))
+					+ Up * (Extent.Z * 0.5f + Request.HeightOffset);
+			}
+			LensToFit(CamPos);
+			AimPoint = Center;
+			FocusPoint = Center;
+			break;
+		}
+
 		const FVector Side = Counterpart ? (OtherEye - Center).GetSafeNormal2D() : Subject->GetActorForwardVector().GetSafeNormal2D();
 		const FVector Flat = (Side.IsNearlyZero() ? FVector::ForwardVector : Side).RotateAngleAxis((Spec.SideAngleDeg + Request.AngleOffset) * (Request.bFlipSide ? -1.f : 1.f), Up);
 		const float Elevation = FMath::DegreesToRadians(35.f);
@@ -485,6 +566,26 @@ bool UCinemafyFramingLibrary::IsShotClear(const UWorld* World, const FCinemafySh
 	// Room for the lens: not inside a wall or a prop.
 	if (World->OverlapAnyTestByChannel(Camera, FQuat::Identity, ECC_Visibility, FCollisionShape::MakeSphere(12.f), Params))
 	{
+		return false;
+	}
+
+	// A thing (a ship past a window): some of it in clear view will do; its middle, its top, its ends.
+	if (Request.ShotType == ECinemafyShotType::Insert && IsThing(Request.Subject))
+	{
+		FVector Center, Extent;
+		Request.Subject->GetActorBounds(true, Center, Extent);
+		const FVector Ahead = Solution.CameraTransform.GetRotation().GetForwardVector();
+		const FVector Across = FVector::CrossProduct(FVector::UpVector, Ahead).GetSafeNormal();
+		const float HalfWidth = static_cast<float>(FMath::Max(Extent.X, Extent.Y));
+		const FVector Points[] = { Center, Center + FVector(0.f, 0.f, Extent.Z * 0.6f), Center + Across * HalfWidth * 0.6f, Center - Across * HalfWidth * 0.6f };
+		for (const FVector& Point : Points)
+		{
+			FHitResult Hit;
+			if (FVector::DotProduct(Point - Camera, Ahead) > 0.f && !World->LineTraceSingleByChannel(Hit, Camera, Point, ECC_Visibility, Params))
+			{
+				return true;
+			}
+		}
 		return false;
 	}
 
@@ -590,8 +691,16 @@ bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldCon
 		{ 40.f,   0.f, -1 }, {-40.f,   0.f, -1 }, { 60.f,   0.f, -2 }, {-60.f,   0.f, -2 },
 	};
 
+	// A thing can be seen from anywhere around whoever is looking at it: try the whole way round, and higher.
+	static const FVariant ThingVariants[] = {
+		{ 20.f, 0.f, 0 }, { -20.f, 0.f, 0 }, { 40.f, 0.f, 0 }, { -40.f, 0.f, 0 }, { 0.f, 120.f, 0 }, { 60.f, 0.f, 0 },
+		{ -60.f, 0.f, 0 }, { 20.f, 120.f, 0 }, { -20.f, 120.f, 0 }, { 90.f, 0.f, 0 }, { -90.f, 0.f, 0 }, { 0.f, 250.f, 0 },
+	};
+	const bool bThing = Request.ShotType == ECinemafyShotType::Insert && IsThing(Request.Subject);
+	const TArrayView<const FVariant> Tries = bThing ? TArrayView<const FVariant>(ThingVariants) : TArrayView<const FVariant>(Variants);
+
 	const ECinemafyPrime BaseLens = OutSolution.Lens;
-	for (const FVariant& Variant : Variants)
+	for (const FVariant& Variant : Tries)
 	{
 		FCinemafyShotRequest Attempt = Request;
 		Attempt.AngleOffset += Variant.Angle;
@@ -610,6 +719,13 @@ bool UCinemafyFramingLibrary::SolveShotAvoidingObstacles(const UObject* WorldCon
 			bOutClearView = true;
 			return true;
 		}
+	}
+
+	// A thing with no clear view from anywhere: pulling in from it would land the camera in the wall between, facing
+	// that wall. Say so (not clear) and let the caller show someone else.
+	if (bThing)
+	{
+		return true;
 	}
 
 	// Last resort, like a spring arm: keep the angle but bring the camera in front of whatever is between it
