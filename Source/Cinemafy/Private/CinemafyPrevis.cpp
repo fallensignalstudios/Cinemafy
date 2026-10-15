@@ -269,13 +269,51 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 	{
 		if (Line.Kind == ECinemafyScriptLineKind::Dialogue && UCinemafyScriptLibrary::IsVoiceOnly(Line.Speaker, Line.Direction))
 		{
-			// Heard, not seen: nobody walks it, says it or waits on it in the take (no body could ever give the cue).
-			// It plays as audio and a subtitle in the cut.
+			// Heard, not seen: no body walks it or says it. Whoever is there to hear it (the last to speak, else the
+			// next, else anyone in the scene) carries it in the take, so it plays in time and gives its cue.
+			FString Hearer = LastSpeaker;
+			if (Hearer.IsEmpty())
+			{
+				bool bAfter = false;
+				for (const FCinemafyScriptLine& Later : Scene.Lines)
+				{
+					bAfter |= &Later == &Line;
+					if (bAfter && &Later != &Line && Later.Kind == ECinemafyScriptLineKind::Dialogue && !UCinemafyScriptLibrary::IsVoiceOnly(Later.Speaker, Later.Direction))
+					{
+						Hearer = Later.Speaker;
+						break;
+					}
+				}
+			}
+			if (Hearer.IsEmpty() && Names.Num() > 0)
+			{
+				Hearer = Names[0];
+			}
+			if (Hearer.IsEmpty())
+			{
+				continue; // Nobody on set: the cut still plays it.
+			}
+			LastBeatOf.Add(Hearer, Beats.Num());
+			LinesAtBeat.Add(TotalLines + 1);
+			FCinemafyStagedBeat& Heard = Beats.AddDefaulted_GetRef();
+			Heard.Character = Hearer;
+			Heard.Prompt = TEXT("say");
+			Heard.Line = Line.Text;
+			Heard.LineAudio = Line.Audio;
+			Heard.LineDirection = Line.Direction;
+			Heard.HeardFrom = Line.Speaker;
+			Heard.Source = Line.Text;
+			LinesSaid.FindOrAdd(Hearer) += 1;
+			++TotalLines;
+			LastSpeaker = Hearer;
+			PendingCueFrom = Hearer;
 			continue;
 		}
 		if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
 		{
-			const FString& Speaker = Line.Speaker;
+			// "TARRIK AND SELENE": the first of them carries it on set (there's no actor called that).
+			const TArray<FString> People = UCinemafyScriptLibrary::PeopleInCue(Line.Speaker);
+			const FString Speaker = People.Num() > 0 ? People[0] : Line.Speaker;
 			// Said to the last other speaker, or the next one to speak.
 			FString Listener = LastSpeaker != Speaker ? LastSpeaker : FString();
 			if (Listener.IsEmpty())

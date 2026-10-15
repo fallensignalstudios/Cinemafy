@@ -372,6 +372,13 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
 	FString LineDirection;
 
+	/**
+	 * A line this performer hears rather than says: a voice with no body ("SHIP ANNOUNCEMENT", a radio, V.O.). It plays
+	 * unattached with that name on the subtitle, the lips stay still, and the director watches this performer hearing it.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
+	FString HeardFrom;
+
 	/** Wait for exactly this line of theirs (1 = their first line in the take); 0 = the next line they finish. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line", meta = (ClampMin = "0"))
 	int32 WaitForLineNumber = 0;

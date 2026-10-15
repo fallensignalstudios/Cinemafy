@@ -30,6 +30,14 @@ Fixes from staging a 420-page game screenplay end to end.
 - **Pre-flight:** warns when the level has no Player Start (the game's pawn would spawn at the origin during the
   take), with a fix that places one off set.
 - A possessive isn't a death: "kills Selene's Frost" kills the Frost.
+- **Voices in the take:** a voice-only line (an announcement, a radio) is heard by whoever just spoke (else the next to
+  speak): it plays unattached with the voice's name on the subtitle, the hearer's lips stay still, it paces the take
+  and gives the next line its cue, and the cut watches the hearer.
+- **Group cues on set:** `TARRIK AND SELENE` is played by the first of them.
+- **Casting over recorded takes:** still lines in a recorded take get a performance for their tone too. The take's
+  own body animation fades out under the cast clip and back after it, instead of the take skipping casting.
+- **No white flash on an opening Dissolve:** the first shot has nothing to dissolve, wipe or whip from, so it fades
+  in from black (a dip to white stays a dip).
 - Choreography wiring is logged once per performer, not on every beat.
 - Mac (clang) build fix in the director.
 - New test: `Cinemafy.Script.ReadsTheFinePrint`.

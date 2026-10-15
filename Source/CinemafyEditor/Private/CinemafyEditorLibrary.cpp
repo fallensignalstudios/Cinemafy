@@ -82,6 +82,7 @@
 #include "MovieSceneObjectBindingID.h"
 #include "Tracks/MovieSceneCameraCutTrack.h"
 #include "Tracks/MovieSceneSkeletalAnimationTrack.h"
+#include "Sections/MovieSceneSkeletalAnimationSection.h"
 
 #define LOCTEXT_NAMESPACE "CinemafyEditor"
 
@@ -1079,6 +1080,8 @@ namespace
 	{
 		struct FPlacement { USkeletalMeshComponent* Mesh; UAnimSequenceBase* Clip; FFrameNumber Start; FFrameNumber End; };
 		TArray<FPlacement> Placements;
+		// Cast clips over a recorded take: where the take's own body animation steps aside for them, per mesh.
+		TMap<USkeletalMeshComponent*, TArray<TRange<FFrameNumber>>> OverTake;
 
 		const FFrameRate TickResolution = MovieScene->GetTickResolution();
 		const float Blend = 0.35f;
@@ -1100,10 +1103,6 @@ namespace
 			if (!bRecorded)
 			{
 				bRecorded = &Recorded.Add(Actor, HasChoreographyTake(Sequence, MovieScene, Actor));
-			}
-			if (*bRecorded)
-			{
-				return;
 			}
 			TArray<FCinemafyMoveCandidate>* Candidates = CandidatesBySkeleton.Find(Skeleton);
 			if (!Candidates)
@@ -1141,6 +1140,11 @@ namespace
 				Used.RemoveAt(0);
 			}
 			Placements.Add({ Mesh, Clip, SceneStart + TickResolution.AsFrameNumber(From), SceneStart + TickResolution.AsFrameNumber(To) });
+			if (*bRecorded)
+			{
+				// A still line in a recorded take: the take is standing there, so the line's clip plays over it.
+				OverTake.FindOrAdd(Mesh).Add(TRange<FFrameNumber>(Placements.Last().Start, Placements.Last().End));
+			}
 			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: line %d cast %s as %s (%s, %s)."), LineIndex, *Clip->GetName(),
 				*GetNameSafe(Actor), bSpeaking ? TEXT("speaking") : TEXT("listening"),
 				*StaticEnum<ECinemafyEmotion>()->GetNameStringByValue(static_cast<int64>(UCinemafyDirectorLibrary::ReadLineTone(Line))));
@@ -1236,6 +1240,66 @@ namespace
 				Section->Easing.ManualEaseOutDuration = Ease;
 			}
 		}
+
+		// Under those clips, the recorded take fades out and back (its weight), so the two don't play half and half.
+		const int32 EaseTicks = TickResolution.AsFrameNumber(Blend).Value;
+		for (TPair<USkeletalMeshComponent*, TArray<TRange<FFrameNumber>>>& Pair : OverTake)
+		{
+			const FGuid Binding = CinemafySequencer::FindBinding(Sequence, Pair.Key->GetOwner());
+			const FGuid MeshBinding = CinemafySequencer::BindObject(Sequence, Pair.Key);
+			// Back-to-back lines are one stretch, so the take doesn't pop back in between them.
+			TArray<TRange<FFrameNumber>>& Ranges = Pair.Value;
+			Ranges.Sort([](const TRange<FFrameNumber>& A, const TRange<FFrameNumber>& B) { return A.GetLowerBoundValue() < B.GetLowerBoundValue(); });
+			TArray<TRange<FFrameNumber>> Merged;
+			for (const TRange<FFrameNumber>& Range : Ranges)
+			{
+				if (Merged.Num() > 0 && Range.GetLowerBoundValue() <= Merged.Last().GetUpperBoundValue() + EaseTicks * 2)
+				{
+					Merged.Last() = TRange<FFrameNumber>(Merged.Last().GetLowerBoundValue(), FMath::Max(Merged.Last().GetUpperBoundValue(), Range.GetUpperBoundValue()));
+				}
+				else
+				{
+					Merged.Add(Range);
+				}
+			}
+			const UMovieScene* ConstMovieScene = MovieScene;
+			for (const FGuid& Owner : { Binding, MeshBinding })
+			{
+				const FMovieSceneBinding* Found = Owner.IsValid() ? ConstMovieScene->FindBinding(Owner) : nullptr;
+				if (!Found)
+				{
+					continue;
+				}
+				for (UMovieSceneTrack* Track : Found->GetTracks())
+				{
+					if (!Track || !Track->IsA<UMovieSceneSkeletalAnimationTrack>() || Track->GetDisplayName().ToString() != TEXT("Cinemafy Take"))
+					{
+						continue;
+					}
+					for (UMovieSceneSection* Section : Track->GetAllSections())
+					{
+						UMovieSceneSkeletalAnimationSection* Take = Cast<UMovieSceneSkeletalAnimationSection>(Section);
+						if (!Take)
+						{
+							continue;
+						}
+						Take->Modify();
+						FMovieSceneFloatChannel& Weight = Take->Params.Weight;
+						Weight.Reset();
+						Weight.SetDefault(1.f);
+						for (const TRange<FFrameNumber>& Range : Merged)
+						{
+							const FFrameNumber In = Range.GetLowerBoundValue();
+							const FFrameNumber Out = Range.GetUpperBoundValue();
+							Weight.AddLinearKey(In, 1.f);
+							Weight.AddLinearKey(In + EaseTicks, 0.f);
+							Weight.AddLinearKey(FMath::Max(Out - EaseTicks, In + EaseTicks), 0.f);
+							Weight.AddLinearKey(Out, 1.f);
+						}
+					}
+				}
+			}
+		}
 	}
 
 	/** Keys the director's SubtitleLineIndex: each line's index while it's spoken, -1 in between. */
@@ -1324,7 +1388,10 @@ namespace
 			const FFrameNumber Cut = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
 			const FFrameNumber Half = TickResolution.AsFrameNumber(Shot.TransitionDuration * 0.5f);
 
-			if (Shot.TransitionIn == ECinemafyTransition::FadeThroughBlack)
+			// The first shot has nothing to dissolve, wipe or whip from: the overlay would capture an empty frame (a
+			// white flash). It fades in from black instead; a dip to white stays a dip.
+			const bool bNothingBefore = Index == 0 && IsOverlayTransition(Shot.TransitionIn) && Shot.TransitionIn != ECinemafyTransition::DipToWhite;
+			if (Shot.TransitionIn == ECinemafyTransition::FadeThroughBlack || bNothingBefore)
 			{
 				if (FMovieSceneFloatChannel* Channel = GetFadeChannel())
 				{

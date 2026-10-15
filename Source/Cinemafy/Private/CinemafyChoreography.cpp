@@ -1463,16 +1463,18 @@ void ACinemafyChoreography::StartLine()
 		LastAddressed = Listener;
 	}
 
+	// A heard line (an announcement, a radio) comes from nowhere in particular and carries the voice's name.
+	const bool bHeard = !Beat.HeardFrom.IsEmpty();
 	if (Beat.DialogueAudio)
 	{
-		LineAudio = UGameplayStatics::SpawnSoundAttached(Beat.DialogueAudio, Performer->GetRootComponent());
+		LineAudio = bHeard ? UGameplayStatics::SpawnSound2D(this, Beat.DialogueAudio) : UGameplayStatics::SpawnSoundAttached(Beat.DialogueAudio, Performer->GetRootComponent());
 	}
 	UWorld* World = GetWorld();
 	if (bShowSubtitlesWhilePerforming && !Text.IsEmpty() && World)
 	{
 		if (UCinemafySubtitleSubsystem* Subtitles = World->GetSubsystem<UCinemafySubtitleSubsystem>())
 		{
-			Subtitles->ShowSubtitle(FText::FromString(Performer->GetActorNameOrLabel()), Text, Seconds);
+			Subtitles->ShowSubtitle(FText::FromString(bHeard ? Beat.HeardFrom : Performer->GetActorNameOrLabel()), Text, Seconds);
 		}
 	}
 	if (World)

@@ -48,6 +48,10 @@ struct CINEMAFY_API FCinemafyStagedBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	int32 WaitForLineNumber = 0;
 
+	/** Set when Character hears this line rather than says it: the voice with no body it comes from ("SHIP ANNOUNCEMENT"). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
+	FString HeardFrom;
+
 	/** The script's words it came from. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	FString Source;

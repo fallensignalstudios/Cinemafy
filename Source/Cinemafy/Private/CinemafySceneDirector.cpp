@@ -289,6 +289,10 @@ void ACinemafySceneDirector::UpdateSequencedTransition()
 	const ECinemafyTransition Type = bClosing ? Shot.TransitionOut : Shot.TransitionIn;
 	const int32 OutgoingIndex = bClosing ? LastPlan.Num() - 1 : TransitionCue - 1;
 	AActor* Outgoing = LastPlanCameras.IsValidIndex(OutgoingIndex) ? LastPlanCameras[OutgoingIndex].Get() : nullptr;
+	if (!bClosing && TransitionCue == 0 && Type != ECinemafyTransition::DipToWhite)
+	{
+		return; // Nothing to dissolve, wipe or whip from (the scene's first shot): capturing it would flash white.
+	}
 
 	// Fades through black are baked as a Sequencer Fade track; only wipes and dissolves need the overlay.
 	if (Type == ECinemafyTransition::Wipe || Type == ECinemafyTransition::Dissolve

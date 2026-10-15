@@ -658,6 +658,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 				Added.DialogueAudio = Beat.LineAudio.LoadSynchronous();
 				Added.LineDirection = Beat.LineDirection;
 				Added.Listener = Target;
+				Added.HeardFrom = Beat.HeardFrom;
 			}
 			if (AActor* const* Cue = Actors.Find(Beat.WaitFor))
 			{

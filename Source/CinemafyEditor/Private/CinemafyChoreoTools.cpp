@@ -1158,8 +1158,9 @@ namespace CinemafyChoreoTake
 
 		Director->Modify();
 		Director->Lines = MergeLines(Ensemble);
-		Director->bPlacePerformances = false;
-		// The take's bodies are already baked; its spoken lines still need their audio in the cut.
+		// The take's bodies are baked; still lines still get a performance cast for their tone (the take's animation
+		// steps aside under it), and spoken lines need their audio in the cut.
+		Director->bPlacePerformances = true;
 		Director->bPlaceDialogueAudio = Director->Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return Line.Audio != nullptr; });
 
 		const UMovieScene* MovieScene = Open->GetMovieScene();

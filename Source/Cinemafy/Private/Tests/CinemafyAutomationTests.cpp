@@ -1751,6 +1751,16 @@ bool FCinemafyScreenplayFinePrintTest::RunTest(const FString& Parameters)
 	const TArray<FString> Pair = Script::PeopleInCue(TEXT("MARA AND OREN"));
 	TestTrue(TEXT("A group cue is its people"), Pair.Num() == 2 && Pair[0] == TEXT("MARA") && Pair[1] == TEXT("OREN"));
 
+	// In the take, the announcement is heard by whoever just spoke, and the next line waits for it.
+	TArray<FString> NotStaged;
+	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(*Deck, NotStaged);
+	const FCinemafyStagedBeat* Heard = Staged.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.HeardFrom == TEXT("SHIP ANNOUNCEMENT"); });
+	TestTrue(TEXT("Dead Hand hears the announcement"), Heard && Heard->Character == TEXT("DEAD HAND") && Heard->Line == TEXT("All crew to stations."));
+	TestFalse(TEXT("Nobody plays SHIP ANNOUNCEMENT"), Staged.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("SHIP ANNOUNCEMENT") || B.Target == TEXT("SHIP ANNOUNCEMENT"); }));
+	const FCinemafyStagedBeat* Answer = Staged.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("OREN") && B.Prompt == TEXT("say"); });
+	TestTrue(TEXT("Oren's line waits for the announcement to finish"), Answer && Answer->WaitFor == TEXT("DEAD HAND") && Answer->WaitForLineNumber == 2);
+	TestFalse(TEXT("A group cue is played by one of its people"), Staged.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("MARA AND OREN"); }));
+
 	TestTrue(TEXT("An announcement is a voice, not a body"), Script::IsVoiceOnly(TEXT("SHIP ANNOUNCEMENT"), FString()));
 	TestTrue(TEXT("...so is V.O."), Script::IsVoiceOnly(TEXT("MARA"), TEXT("(V.O.)")));
 	TestFalse(TEXT("...and Mara on the deck isn't"), Script::IsVoiceOnly(TEXT("MARA"), FString()));
