@@ -24,6 +24,7 @@
 #include "AutomatedAssetImportData.h"
 #include "CinemafyFaceComponent.h"
 #include "CinemafySequencerUtils.h"
+#include "ISequencer.h"
 #include "Channels/MovieSceneFloatChannel.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
@@ -324,6 +325,79 @@ namespace CinemafyRevision
 	}
 }
 
+namespace CinemafyStory
+{
+	int32 DropDeadBindings(ULevelSequence* Sequence)
+	{
+		const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer();
+		UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
+		if (!Sequencer || !MovieScene || CinemafySequencer::GetOpenSequence() != Sequence)
+		{
+			return 0;
+		}
+		// Only what Cinemafy's own takes recorded ("Cinemafy Take" tracks, on the actor or a component): a binding
+		// that resolves to nothing may just be in a sublevel that isn't loaded.
+		TSet<FGuid> Recorded;
+		const UMovieScene* ConstMovieScene = MovieScene;
+		for (const FMovieSceneBinding& Binding : ConstMovieScene->GetBindings())
+		{
+			for (const UMovieSceneTrack* Track : Binding.GetTracks())
+			{
+				if (Track && Track->GetDisplayName().ToString() == TEXT("Cinemafy Take"))
+				{
+					const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(Binding.GetObjectGuid());
+					Recorded.Add(Possessable && Possessable->GetParent().IsValid() ? Possessable->GetParent() : Binding.GetObjectGuid());
+				}
+			}
+		}
+		TArray<FGuid> Dead;
+		for (int32 Index = 0; Index < MovieScene->GetPossessableCount(); ++Index)
+		{
+			const FMovieScenePossessable& Possessable = MovieScene->GetPossessable(Index);
+			if (Possessable.GetParent().IsValid() || !Recorded.Contains(Possessable.GetGuid()))
+			{
+				continue; // Components go with their actor; bindings that aren't from a take are left alone.
+			}
+			bool bAlive = false;
+			for (const TWeakObjectPtr<UObject>& Bound : Sequencer->FindBoundObjects(Possessable.GetGuid(), MovieSceneSequenceID::Root))
+			{
+				bAlive |= Bound.IsValid();
+			}
+			if (!bAlive)
+			{
+				Dead.Add(Possessable.GetGuid());
+			}
+		}
+		if (Dead.Num() == 0)
+		{
+			return 0;
+		}
+		Sequence->Modify();
+		MovieScene->Modify();
+		for (const FGuid& Guid : Dead)
+		{
+			// Children (components) first, then the actor's own binding and tracks.
+			TArray<FGuid> Children;
+			for (int32 Index = 0; Index < MovieScene->GetPossessableCount(); ++Index)
+			{
+				if (MovieScene->GetPossessable(Index).GetParent() == Guid)
+				{
+					Children.Add(MovieScene->GetPossessable(Index).GetGuid());
+				}
+			}
+			for (const FGuid& Child : Children)
+			{
+				Sequence->UnbindPossessableObjects(Child);
+				MovieScene->RemovePossessable(Child);
+			}
+			Sequence->UnbindPossessableObjects(Guid);
+			MovieScene->RemovePossessable(Guid);
+		}
+		Sequencer->NotifyMovieSceneDataChanged(EMovieSceneDataChangeType::MovieSceneStructureItemsChanged);
+		return Dead.Num();
+	}
+}
+
 FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, const FString& SceneId, bool bRecord)
 {
 	UWorld* World = CinemafyStory::EditorWorld();
@@ -348,6 +422,17 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 	if (Set && !Set->Level.IsNull() && Set->Level.ToSoftObjectPath() != FSoftObjectPath(World))
 	{
 		Report.Add(FString::Printf(TEXT("Note: %s is set in %s, but %s is open. Staging here anyway."), *Scene->Location, *Set->Level.GetAssetName(), *World->GetMapName()));
+	}
+
+	// Earlier takes bound to cast who've since been deleted: drop those bindings and their tracks before anyone is
+	// spawned, or a new character given the old one's object name inherits the old take.
+	if (ULevelSequence* Existing = OpenSceneSequence(Project, SceneId))
+	{
+		const int32 Dropped = CinemafyStory::DropDeadBindings(Existing);
+		if (Dropped > 0)
+		{
+			Report.Add(FString::Printf(TEXT("Dropped %d binding(s) from earlier takes whose actors are gone."), Dropped));
+		}
 	}
 
 	// The staging, from the script (one insert of a gameplay bridge: just its lines).

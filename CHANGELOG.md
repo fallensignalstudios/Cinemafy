@@ -23,6 +23,13 @@ Fixes from staging a 420-page game screenplay end to end.
 - **Pre-flight:** Fix All places a start mark for every character it brings in (including the ones it casts as the
   template), not one per run. Spawned cast stand on their marks instead of falling through the floor. Fix All builds
   the cast before casting it.
+- **Re-staging:** Previs drops bindings from earlier takes whose actors are gone before it spawns anyone, so a new
+  character given an old object name doesn't inherit the old take. (Only bindings with Cinemafy Take tracks.)
+- **Talking characters meet in the middle** instead of walking into each other.
+- **The cut is the playback range:** the sequence ends at the last shot instead of playing the take's black tail.
+- **Pre-flight:** warns when the level has no Player Start (the game's pawn would spawn at the origin during the
+  take), with a fix that places one off set.
+- A possessive isn't a death: "kills Selene's Frost" kills the Frost.
 - Choreography wiring is logged once per performer, not on every beat.
 - Mac (clang) build fix in the director.
 - New test: `Cinemafy.Script.ReadsTheFinePrint`.

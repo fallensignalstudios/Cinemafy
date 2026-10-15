@@ -1763,9 +1763,10 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		FramingSequencer->ForceEvaluate();
 	}
 
-	// Make sure the whole scene fits in the playback range.
+	// The playback range is the cut: the whole scene fits, and nothing plays on past the last shot (a take keeps
+	// recording after its last line, and with no camera that tail plays black).
 	const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
-	if (Playback.GetUpperBoundValue() < SceneEnd)
+	if (Playback.GetUpperBoundValue() != SceneEnd && SceneEnd > Playback.GetLowerBoundValue())
 	{
 		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), SceneEnd));
 	}

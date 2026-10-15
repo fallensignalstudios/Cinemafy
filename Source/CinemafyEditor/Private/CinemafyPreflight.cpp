@@ -13,6 +13,7 @@
 #include "FileHelpers.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerStart.h"
 #include "LevelEditorViewport.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -293,6 +294,12 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, TEXT("No nav mesh in the level: moves can't path around things."),
 			ECinemafyFix::AddNavMesh, FString(), TEXT("Add a Nav Mesh")));
 	}
+	// Takes record in a play session: with no Player Start, the game's own pawn appears at the world origin, often on set.
+	if (!TActorIterator<APlayerStart>(World))
+	{
+		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, TEXT("No Player Start in the level: when the take plays, the game's pawn spawns at the world origin, maybe in the middle of the scene."),
+			ECinemafyFix::AddPlayerStart, FString(), TEXT("Add a Player Start off set")));
+	}
 
 	// Voices.
 	int32 Silent = 0;
@@ -507,6 +514,33 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 	}
 	case ECinemafyFix::AddNavMesh:
 		return HasNavMeshBounds(World) || AddNavMesh(World);
+	case ECinemafyFix::AddPlayerStart:
+	{
+		if (TActorIterator<APlayerStart>(World))
+		{
+			return true;
+		}
+		// Well clear of the set: 30 m past the far side of everything Cinemafy stages around.
+		FBox Set(ForceInit);
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->IsA<ACharacter>() || It->IsA<ACinemafyMark>())
+			{
+				Set += It->GetActorLocation();
+			}
+		}
+		const FVector Center = Set.IsValid ? Set.GetCenter() : FVector::ZeroVector;
+		const float Reach = Set.IsValid ? Set.GetExtent().Size2D() : 0.f;
+		const FVector Where = Center + FVector(0.f, -(Reach + 3000.f), 100.f);
+		const FScopedTransaction Transaction(LOCTEXT("AddPlayerStart", "Cinemafy: Add Player Start"));
+		FActorSpawnParameters Params;
+		APlayerStart* Start = World->SpawnActor<APlayerStart>(Where, FRotator::ZeroRotator, Params);
+		if (Start)
+		{
+			Start->SetActorLabel(TEXT("CinemafyPlayerStart_OffSet"));
+		}
+		return Start != nullptr;
+	}
 	case ECinemafyFix::ScratchVoices:
 		return UCinemafyStoryLibrary::GenerateScratchVoices(Project, Check.SceneId, false) > 0;
 	case ECinemafyFix::LipSync:

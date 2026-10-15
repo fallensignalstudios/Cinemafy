@@ -1715,6 +1715,7 @@ bool FCinemafyScreenplayFinePrintTest::RunTest(const FString& Parameters)
 		"          Again.\n\n"
 		"                    MARA\n"
 		"          Hold.\n\n"
+		"A dampening field kills Mara's Frost.\n\n"
 		"Oren dies.\n");
 	FString Title, Report;
 	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Text, true, 5, Title, Report);
@@ -1745,6 +1746,7 @@ bool FCinemafyScreenplayFinePrintTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("A channel and a scream dying kill nobody"), Deck->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead"); }));
 	TestFalse(TEXT("\"her hand\" isn't DEAD HAND"), Later->Characters.Contains(TEXT("DEAD HAND")));
 	TestFalse(TEXT("...and \"and\" isn't MARA AND OREN"), Later->Characters.Contains(TEXT("MARA AND OREN")));
+	TestFalse(TEXT("\"kills Mara's Frost\" kills the Frost, not Mara"), Later->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead") && F.Character == TEXT("MARA"); }));
 	TestTrue(TEXT("\"Oren dies.\" does"), Later->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead") && F.Character == TEXT("OREN"); }));
 	const TArray<FString> Pair = Script::PeopleInCue(TEXT("MARA AND OREN"));
 	TestTrue(TEXT("A group cue is its people"), Pair.Num() == 2 && Pair[0] == TEXT("MARA") && Pair[1] == TEXT("OREN"));

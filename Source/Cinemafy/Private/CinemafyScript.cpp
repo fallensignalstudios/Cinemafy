@@ -2021,7 +2021,12 @@ void UCinemafyScriptLibrary::TrackContinuity(TArray<FCinemafyScriptAct>& Acts)
 						// Deaths, only with a character as the verb's subject or object: "Kade kills Thane", "Thane dies", "He is
 						// killed". "Her channel dies" and "his scream dies" are things going quiet.
 						auto NamedEndingAt = [&Mentions](int32 At) { const FNamed* M = Mentions.FindByPredicate([At](const FNamed& N) { return N.End == At; }); return M ? M->Name : FString(); };
-						auto NamedStartingAt = [&Mentions](int32 At) { const FNamed* M = Mentions.FindByPredicate([At](const FNamed& N) { return N.Start == At; }); return M ? M->Name : FString(); };
+						// "kills Selene's Frost" kills the Frost: a name with 's owns the object, it isn't the object.
+						auto NamedStartingAt = [&Mentions, &Words](int32 At)
+						{
+							const FNamed* M = Mentions.FindByPredicate([At](const FNamed& N) { return N.Start == At; });
+							return M && !(M->End < Words.Num() && Words[M->End] == TEXT("s")) ? M->Name : FString();
+						};
 						auto SubjectOf = [&](int32 VerbStart) -> FString
 						{
 							const FString Named2 = NamedEndingAt(VerbStart);
