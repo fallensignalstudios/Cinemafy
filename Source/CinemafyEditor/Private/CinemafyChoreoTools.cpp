@@ -850,6 +850,9 @@ namespace CinemafyChoreoTake
 				Beat.Events = Took.Events;
 				Beat.Outcome = Took.Outcome;
 				Beat.OutcomeReason = Took.OutcomeReason;
+				// When the line was said: without it the director can't tell lines from silent beats (no text, no tone).
+				Beat.LineStartTime = Took.LineStartTime;
+				Beat.LineDuration = Took.LineDuration;
 				if (Took.Outcome != ECinemafyBeatOutcome::Succeeded)
 				{
 					++NeedsAttention;

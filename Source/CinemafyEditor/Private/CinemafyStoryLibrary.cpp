@@ -117,7 +117,12 @@ int32 UCinemafyStoryLibrary::BuildCastAndSets(UCinemafyScriptProject* Project)
 		{
 			Member = &Project->CastMembers.AddDefaulted_GetRef();
 			Member->ScriptName = Name;
+			Member->bVoiceOnly = UCinemafyScriptLibrary::IsVoiceOnly(Name, FString());
 			++Added;
+		}
+		if (Member->bVoiceOnly)
+		{
+			continue;
 		}
 		if (Member->ActorLabel.IsEmpty() && World)
 		{

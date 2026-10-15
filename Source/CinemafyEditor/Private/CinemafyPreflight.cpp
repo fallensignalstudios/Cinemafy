@@ -221,6 +221,10 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 	{
 		AActor* Actor = UCinemafyStoryLibrary::FindCastActor(Project, Name, World);
 		const FCinemafyCastMember* Member = Project->FindCastMember(Name);
+		if (Member ? Member->bVoiceOnly : UCinemafyScriptLibrary::IsVoiceOnly(Name, FString()))
+		{
+			continue; // Heard, not seen.
+		}
 		if (Actor)
 		{
 			if (!Actor->IsA<ACharacter>())
@@ -245,6 +249,8 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 				ECinemafyFix::CastTemplateCharacter, Name, FString::Printf(TEXT("Cast as %s"), *Template->GetName()))
 			: MakeCheck(Id, ECinemafyCheckSeverity::Blocker, FString::Printf(TEXT("%s isn't on set and has no Character Class: place them in the level (labelled %s), or give their cast entry a Character Class."), *Name, *Name),
 				ECinemafyFix::OpenProject, FString(), TEXT("Open Cast & Sets")));
+		// Cast as the template, they're brought in too: their start marks go down in the same Fix All.
+		ToSpawn += Template ? 1 : 0;
 	}
 	if (ToSpawn > 0)
 	{
@@ -256,7 +262,8 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 		if (StartMarks < ToSpawn)
 		{
 			Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("%d character(s) will be brought in, but there are %d start mark(s): the rest line up at the world origin."), ToSpawn, StartMarks),
-				ECinemafyFix::PlaceMark, TEXT("start"), TEXT("Place a start mark")));
+				ECinemafyFix::PlaceMark, FString::Printf(TEXT("start:%d"), ToSpawn - StartMarks),
+				ToSpawn - StartMarks == 1 ? FString(TEXT("Place a start mark")) : FString::Printf(TEXT("Place %d start marks"), ToSpawn - StartMarks)));
 		}
 	}
 	// Set pieces the script mentions that the level doesn't have yet: one fix dresses them all.
@@ -358,7 +365,7 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckProject(UCinemafyScriptPr
 	TArray<FString> Uncast;
 	for (const FCinemafyCastMember& Member : Project->CastMembers)
 	{
-		if (Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
+		if (!Member.bVoiceOnly && Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
 		{
 			Uncast.Add(Member.ScriptName);
 		}
@@ -459,32 +466,44 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 	}
 	case ECinemafyFix::PlaceMark:
 	{
-		const bool bStart = Check.FixArg == TEXT("start");
-		ACinemafyMark* Mark = UCinemafyStoryLibrary::PlaceMark(Check.FixArg, Scene ? Scene->Location : FString());
-		if (!Mark)
+		// "start:3" places three start marks: one for each character who'll be brought in.
+		FString MarkName = Check.FixArg, CountText;
+		int32 Count = 1;
+		if (Check.FixArg.Split(TEXT(":"), &MarkName, &CountText))
 		{
-			return false;
+			Count = FMath::Clamp(FCString::Atoi(*CountText), 1, 16);
 		}
-		// Side by side, not stacked, when several are placed in a row.
-		for (int32 Step = 0; Step < 20; ++Step)
+		const bool bStart = MarkName == TEXT("start");
+		int32 Placed = 0;
+		for (int32 Each = 0; Each < Count; ++Each)
 		{
-			bool bCrowded = false;
-			for (TActorIterator<ACinemafyMark> It(World); It; ++It)
-			{
-				bCrowded |= *It != Mark && FVector::Dist2D(It->GetActorLocation(), Mark->GetActorLocation()) < 80.f;
-			}
-			if (!bCrowded)
+			ACinemafyMark* Mark = UCinemafyStoryLibrary::PlaceMark(MarkName, Scene ? Scene->Location : FString());
+			if (!Mark)
 			{
 				break;
 			}
-			Mark->SetActorLocation(Mark->GetActorLocation() + FVector(0.f, 150.f, 0.f));
+			// Side by side, not stacked, when several are placed in a row.
+			for (int32 Step = 0; Step < 20; ++Step)
+			{
+				bool bCrowded = false;
+				for (TActorIterator<ACinemafyMark> It(World); It; ++It)
+				{
+					bCrowded |= *It != Mark && FVector::Dist2D(It->GetActorLocation(), Mark->GetActorLocation()) < 80.f;
+				}
+				if (!bCrowded)
+				{
+					break;
+				}
+				Mark->SetActorLocation(Mark->GetActorLocation() + FVector(0.f, 150.f, 0.f));
+			}
+			if (bStart)
+			{
+				Mark->bStartMark = true;
+				Mark->RerunConstructionScripts();
+			}
+			++Placed;
 		}
-		if (bStart)
-		{
-			Mark->bStartMark = true;
-			Mark->RerunConstructionScripts();
-		}
-		return true;
+		return Placed > 0;
 	}
 	case ECinemafyFix::AddNavMesh:
 		return HasNavMeshBounds(World) || AddNavMesh(World);
@@ -512,7 +531,7 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 		for (FCinemafyCastMember& Member : Project->CastMembers)
 		{
 			const bool bWanted = Check.FixArg.IsEmpty() || Member.ScriptName.Equals(Check.FixArg, ESearchCase::IgnoreCase);
-			if (bWanted && Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
+			if (bWanted && !Member.bVoiceOnly && Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
 			{
 				Member.CharacterClass = TSoftClassPtr<ACharacter>(Template);
 				++Given;

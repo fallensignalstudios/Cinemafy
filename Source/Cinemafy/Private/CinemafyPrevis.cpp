@@ -97,8 +97,14 @@ namespace CinemafyStaging
 		{
 			static const TSet<FString> Titles = { TEXT("the"), TEXT("admiral"), TEXT("captain"), TEXT("doctor"), TEXT("dr"), TEXT("mr"), TEXT("mrs"), TEXT("ms"),
 				TEXT("sergeant"), TEXT("commander"), TEXT("lieutenant"), TEXT("general"), TEXT("officer"), TEXT("agent"), TEXT("lord"), TEXT("lady"), TEXT("sir") };
-			TMap<FString, int32> Use;
+			// Group cues are their people ("TARRIK AND SELENE" -> TARRIK, SELENE), and "and" is nobody's name.
+			TArray<FString> People;
 			for (const FString& Name : Names)
+			{
+				People.Append(UCinemafyScriptLibrary::PeopleInCue(Name));
+			}
+			TMap<FString, int32> Use;
+			for (const FString& Name : People)
 			{
 				TArray<FString> Words;
 				Normalize(Name).ParseIntoArrayWS(Words);
@@ -107,19 +113,18 @@ namespace CinemafyStaging
 					Use.FindOrAdd(Word) += 1;
 				}
 			}
-			for (const FString& Name : Names)
+			for (const FString& Name : People)
 			{
 				const FString Full = Normalize(Name);
 				Map.Add(Full, Name);
 				TArray<FString> Words;
 				Full.ParseIntoArrayWS(Words);
-				for (const FString& Word : Words)
+				// "ADMIRAL THANE" is also "thane"; "DEAD HAND" is never just "hand".
+				TArray<FString> Own = Words.FilterByPredicate([](const FString& Word) { return !Titles.Contains(Word); });
+				if (Words.Num() > 1 && Own.Num() == 1 && Own[0].Len() >= 3 && Use.FindRef(Own[0]) == 1)
 				{
-					if (Word.Len() >= 3 && !Titles.Contains(Word) && Use.FindRef(Word) == 1)
-					{
-						Map.Add(Word, Name);
-						Map.Add(Word + TEXT("'s"), Name);
-					}
+					Map.Add(Own[0], Name);
+					Map.Add(Own[0] + TEXT("'s"), Name);
 				}
 			}
 		}
@@ -157,7 +162,10 @@ namespace CinemafyStaging
 	bool IsStop(const FString& Word)
 	{
 		static const TSet<FString> Set = { TEXT("and"), TEXT("then"), TEXT("as"), TEXT("while"), TEXT("before"), TEXT("after"), TEXT("but"), TEXT("with"),
-			TEXT("from"), TEXT("away"), TEXT("again"), TEXT("slowly"), TEXT("quickly"), TEXT("clear") };
+			TEXT("from"), TEXT("away"), TEXT("again"), TEXT("slowly"), TEXT("quickly"), TEXT("clear"), TEXT("instead"), TEXT("of"), TEXT("than"),
+			TEXT("because"), TEXT("until"), TEXT("once"), TEXT("so"), TEXT("which"), TEXT("that"), TEXT("who"), TEXT("where"), TEXT("when"), TEXT("if"),
+			TEXT("for"), TEXT("like"), TEXT("now"), TEXT("still"), TEXT("too"), TEXT("only"), TEXT("just"), TEXT("even"), TEXT("almost"), TEXT("already"),
+			TEXT("is"), TEXT("are"), TEXT("was"), TEXT("were"), TEXT("has"), TEXT("have"), TEXT("not"), TEXT("never"), TEXT("together"), TEXT("alone") };
 		return Set.Contains(Word);
 	}
 
@@ -225,6 +233,8 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 			Names.AddUnique(Line.Speaker);
 		}
 	}
+	// Voices with no body ("SHIP ANNOUNCEMENT") never walk, turn or get walked to.
+	Names.RemoveAll([](const FString& Name) { return UCinemafyScriptLibrary::IsVoiceOnly(Name, FString()); });
 	FCastAliases Aliases;
 	Aliases.Build(Names);
 
@@ -257,6 +267,12 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 
 	for (const FCinemafyScriptLine& Line : Scene.Lines)
 	{
+		if (Line.Kind == ECinemafyScriptLineKind::Dialogue && UCinemafyScriptLibrary::IsVoiceOnly(Line.Speaker, Line.Direction))
+		{
+			// Heard, not seen: nobody walks it, says it or waits on it in the take (no body could ever give the cue).
+			// It plays as audio and a subtitle in the cut.
+			continue;
+		}
 		if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
 		{
 			const FString& Speaker = Line.Speaker;
@@ -272,7 +288,7 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 						bAfter = true;
 						continue;
 					}
-					if (bAfter && Later.Kind == ECinemafyScriptLineKind::Dialogue && Later.Speaker != Speaker)
+					if (bAfter && Later.Kind == ECinemafyScriptLineKind::Dialogue && Later.Speaker != Speaker && !UCinemafyScriptLibrary::IsVoiceOnly(Later.Speaker, Later.Direction))
 					{
 						Listener = Later.Speaker;
 						break;
@@ -487,7 +503,19 @@ namespace CinemafyDressing
 			TEXT("everyone"), TEXT("everybody"), TEXT("someone"), TEXT("something"), TEXT("nothing"), TEXT("view"), TEXT("sight"), TEXT("place"),
 			TEXT("spot"), TEXT("area"), TEXT("space"), TEXT("cover"), TEXT("gap"), TEXT("tears"), TEXT("pain"), TEXT("trigger"), TEXT("grip"),
 			TEXT("hilt"), TEXT("knees"), TEXT("knee"), TEXT("feet"), TEXT("sky"), TEXT("horizon"), TEXT("crowd"), TEXT("one"), TEXT("other"),
-			TEXT("others"), TEXT("us"), TEXT("me"), TEXT("you"), TEXT("this"), TEXT("that"), TEXT("there"), TEXT("here"), TEXT("door"), TEXT("doorway") };
+			TEXT("others"), TEXT("us"), TEXT("me"), TEXT("you"), TEXT("this"), TEXT("that"), TEXT("there"), TEXT("here"), TEXT("door"), TEXT("doorway"),
+			// The rest of the body, and what it does.
+			TEXT("faces"), TEXT("heads"), TEXT("neck"), TEXT("necks"), TEXT("throat"), TEXT("collarbone"), TEXT("heart"), TEXT("hair"), TEXT("skin"),
+			TEXT("cheek"), TEXT("cheeks"), TEXT("jaw"), TEXT("brow"), TEXT("forehead"), TEXT("temple"), TEXT("temples"), TEXT("finger"), TEXT("fingers"),
+			TEXT("fingertips"), TEXT("thumb"), TEXT("wrist"), TEXT("wrists"), TEXT("palm"), TEXT("palms"), TEXT("fist"), TEXT("fists"), TEXT("knuckles"),
+			TEXT("elbow"), TEXT("spine"), TEXT("ribs"), TEXT("rib"), TEXT("hip"), TEXT("hips"), TEXT("waist"), TEXT("lap"), TEXT("stomach"), TEXT("gut"),
+			TEXT("shoulders"), TEXT("blood"), TEXT("sweat"), TEXT("voice"), TEXT("gaze"), TEXT("glance"), TEXT("expression"), TEXT("smile"), TEXT("teeth"),
+			TEXT("tongue"), TEXT("nose"), TEXT("ear"), TEXT("ears"), TEXT("eyelids"), TEXT("pulse"), TEXT("wound"), TEXT("wounds"), TEXT("scar"), TEXT("ankle"),
+			TEXT("thigh"), TEXT("heel"), TEXT("heels"), TEXT("toes"), TEXT("mind"), TEXT("thoughts"), TEXT("memory"), TEXT("name"), TEXT("words"),
+			// Picture-making words, not things on set.
+			TEXT("foreground"), TEXT("background"), TEXT("frame"), TEXT("shot"), TEXT("scene"), TEXT("focus"), TEXT("cut"),
+			TEXT("glow"), TEXT("dark"), TEXT("quiet"), TEXT("noise"), TEXT("sound"), TEXT("echo"), TEXT("time"), TEXT("seconds"), TEXT("instant"),
+			TEXT("way"), TEXT("direction"), TEXT("line"), TEXT("lines"), TEXT("course"), TEXT("signal"), TEXT("channel"), TEXT("order"), TEXT("orders") };
 		return Noun.IsEmpty() || Set.Contains(Noun);
 	}
 

@@ -889,8 +889,13 @@ void ACinemafyChoreography::BuildRig()
 	}
 
 	EffectiveFallbackSpeeds = P ? P->FallbackSpeeds : FallbackSpeeds;
-	WiringReport = FString::Join(Report, TEXT("; "));
-	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography wiring for %s: %s"), *GetNameSafe(Performer), *WiringReport);
+	// Wiring runs again with every beat: say so once, and again only when it changes.
+	const FString NewReport = FString::Join(Report, TEXT("; "));
+	if (NewReport != WiringReport)
+	{
+		WiringReport = NewReport;
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography wiring for %s: %s"), *GetNameSafe(Performer), *WiringReport);
+	}
 }
 
 FString UCinemafyPerformerProfile::Validate(const ACharacter* Character) const
@@ -1751,12 +1756,14 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		}
 		if (!IsCueReady())
 		{
-			if (CueWaitTime > CueTimeout)
+			if (CueWaitTime <= CueTimeout)
 			{
-				FinishBeat(ECinemafyBeatOutcome::TimedOut, FString::Printf(TEXT("Waited %.0fs for %s's line, which never came (are they in the take, and do they have a line?)"),
-					CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat))));
+				return;
 			}
-			return;
+			// A cue that never comes doesn't take this beat's own line down with it: say so, and go ahead.
+			AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("waited %.0fs for %s's line, which never came (are they in the take, and do they have a line?): went ahead"),
+				CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat))));
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: %s waited %.0fs for %s's line, which never came; went ahead."), *GetNameSafe(Performer), CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat)));
 		}
 		bWaitingForCue = false;
 		AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("cue from %s"), *GetNameSafe(GetCueActor(CurrentBeat))));

@@ -451,6 +451,25 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 	TArray<FCinemafyPlannedShot> Shots;
 	if (!Line.Speaker)
 	{
+		// A voice with no body (an announcement, a radio, V.O.): never black. Watch whoever hears it, else hold the
+		// last shot through it, else the first of the cast.
+		AActor* Hearer = Line.Listener ? Line.Listener.Get() : (Previous || SceneCast.Num() == 0 ? nullptr : SceneCast[0]);
+		if (Hearer)
+		{
+			FCinemafyLine Heard = Line;
+			Heard.Speaker = Hearer;
+			Heard.Listener = nullptr;
+			return PlanLine(Heard, LineIndex, Style, Random, Previous, bOpensScene, StartTime, SceneCast);
+		}
+		if (Previous)
+		{
+			FCinemafyPlannedShot Held = *Previous;
+			Held.StartTime = StartTime;
+			Held.Duration = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+			Held.LineIndex = LineIndex;
+			Held.bLineStart = true;
+			Shots.Add(Held);
+		}
 		return Shots;
 	}
 

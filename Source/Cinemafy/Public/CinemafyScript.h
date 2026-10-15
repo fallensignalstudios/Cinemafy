@@ -794,6 +794,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
 	static FString CompareScripts(const TArray<FCinemafyScriptAct>& A, const TArray<FCinemafyScriptAct>& B, int32& OutMatching);
 
+	/**
+	 * A voice with no body on set: (V.O.) lines, and speakers that are announcements, systems, intercoms, radios,
+	 * narrators or unseen voices ("SHIP ANNOUNCEMENT", "UNIDENTIFIED VOICE"). They're heard and subtitled, never cast,
+	 * marked, walked or cut to.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static bool IsVoiceOnly(const FString& Speaker, const FString& Direction);
+
+	/** The people behind a cue: "TARRIK AND SELENE" -> TARRIK, SELENE; "KADE" -> KADE; "ALL" -> nobody in particular. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static TArray<FString> PeopleInCue(const FString& Speaker);
+
 	/** "SCOR-01-CS01#2" -> "SCOR-01-CS01" and 2 (1-based); a plain id -> itself and 0. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static FString SplitInsertId(const FString& SceneId, int32& OutInsert);

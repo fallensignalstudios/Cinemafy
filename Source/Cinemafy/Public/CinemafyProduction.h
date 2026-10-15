@@ -121,6 +121,13 @@ struct CINEMAFY_API FCinemafyCastMember
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast")
 	bool bIsPlayer = false;
 
+	/**
+	 * Heard, not seen: an announcement, a system, a radio, a narrator. Their lines play as audio and subtitles; they get
+	 * no character, mark, walk or shot. Set for speakers like "SHIP ANNOUNCEMENT" when the cast is built.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast")
+	bool bVoiceOnly = false;
+
 	/** Scratch voice: a system voice name (macOS "Samantha", Windows "Microsoft David"...). Empty = default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast|Voice")
 	FString ScratchVoice;

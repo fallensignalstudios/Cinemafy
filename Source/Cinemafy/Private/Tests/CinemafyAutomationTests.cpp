@@ -1682,6 +1682,104 @@ bool FCinemafyPrintedScreenplayTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyScreenplayFinePrintTest, "Cinemafy.Script.ReadsTheFinePrint", CinemafyTests::Flags)
+bool FCinemafyScreenplayFinePrintTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	// What a long screenplay taught the reader: on-screen readouts, colons in prose, group cues, voices with no body,
+	// things (not people) that "die", and names that are also words.
+	const FString Text = TEXT(
+		"INT. COMMAND DECK - NIGHT\n"
+		"DECK-01-CS01\n\n"
+		"ON SCREEN:\n"
+		"MISSION ASSESSMENT: OPERATIONAL SUCCESS\n"
+		"ESTIMATED MISSION SUCCESS: 81.7%\n\n"
+		"The contrast settles: Mara in the light, Oren in the dark.\n\n"
+		"Her channel dies. His scream dies in his throat. The dead console flickers.\n\n"
+		"                    MARA\n"
+		"          Report.\n\n"
+		"                    DEAD HAND\n"
+		"          Nothing to report.\n\n"
+		"                    SHIP ANNOUNCEMENT\n"
+		"          All crew to stations.\n\n"
+		"                    OREN\n"
+		"          You heard it.\n\n"
+		"                    MARA AND OREN\n"
+		"          Together, then.\n\n"
+		"INT. COMMAND DECK - LATER\n"
+		"DECK-01-CS02\n\n"
+		"Mara lifts her hand. She lays a palm over her heart instead of the rail, then over her neck.\n\n"
+		"                    MARA\n"
+		"          Again.\n\n"
+		"                    OREN\n"
+		"          Again.\n\n"
+		"                    MARA\n"
+		"          Hold.\n\n"
+		"Oren dies.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Text, true, 5, Title, Report);
+	const FCinemafyScriptScene* Deck = CinemafyTests::FindIn(Acts, TEXT("DECK-01-CS01"));
+	const FCinemafyScriptScene* Later = CinemafyTests::FindIn(Acts, TEXT("DECK-01-CS02"));
+	int32 Scenes = 0;
+	CinemafyTests::CountKind(Acts, ECinemafyScriptLineKind::Dialogue, Scenes);
+	TestEqual(TEXT("A readout is not a chapter, and doesn't split the scene"), Scenes, 2);
+	if (!TestNotNull(TEXT("The first scene"), Deck) || !TestNotNull(TEXT("The second scene"), Later))
+	{
+		return true;
+	}
+	TArray<FString> Shown;
+	for (const FCinemafyScriptLine& Line : Deck->Lines)
+	{
+		if (Line.Kind == ECinemafyScriptLineKind::Display)
+		{
+			Shown.Add(Line.Text);
+		}
+	}
+	TestEqual(TEXT("Everything under ON SCREEN: is shown on screen"), Shown.Num(), 2);
+	TestTrue(TEXT("...line for line"), Shown.Num() == 2 && Shown[1] == TEXT("ESTIMATED MISSION SUCCESS: 81.7%"));
+	for (const TCHAR* NotAPerson : { TEXT("ESTIMATED MISSION SUCCESS"), TEXT("MISSION ASSESSMENT"), TEXT("THE CONTRAST SETTLES"), TEXT("THE CONTRAST") })
+	{
+		TestFalse(FString::Printf(TEXT("%s isn't a character"), NotAPerson), Deck->Characters.Contains(NotAPerson));
+	}
+	TestTrue(TEXT("A colon in a screenplay's prose stays prose"), Deck->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Action && L.Text.StartsWith(TEXT("The contrast settles:")); }));
+	TestFalse(TEXT("A channel and a scream dying kill nobody"), Deck->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead"); }));
+	TestFalse(TEXT("\"her hand\" isn't DEAD HAND"), Later->Characters.Contains(TEXT("DEAD HAND")));
+	TestFalse(TEXT("...and \"and\" isn't MARA AND OREN"), Later->Characters.Contains(TEXT("MARA AND OREN")));
+	TestTrue(TEXT("\"Oren dies.\" does"), Later->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead") && F.Character == TEXT("OREN"); }));
+	const TArray<FString> Pair = Script::PeopleInCue(TEXT("MARA AND OREN"));
+	TestTrue(TEXT("A group cue is its people"), Pair.Num() == 2 && Pair[0] == TEXT("MARA") && Pair[1] == TEXT("OREN"));
+
+	TestTrue(TEXT("An announcement is a voice, not a body"), Script::IsVoiceOnly(TEXT("SHIP ANNOUNCEMENT"), FString()));
+	TestTrue(TEXT("...so is V.O."), Script::IsVoiceOnly(TEXT("MARA"), TEXT("(V.O.)")));
+	TestFalse(TEXT("...and Mara on the deck isn't"), Script::IsVoiceOnly(TEXT("MARA"), FString()));
+
+	const TArray<FCinemafySetPiece> Dressing = UCinemafyPrevisLibrary::FindSetDressing(*Later);
+	for (const FCinemafySetPiece& Piece : Dressing)
+	{
+		TestFalse(FString::Printf(TEXT("%s isn't set dressing"), *Piece.Name), Piece.Name.Contains(TEXT("neck")) || Piece.Name.Contains(TEXT("collarbone")) || Piece.Name.Contains(TEXT("heart")));
+	}
+
+	// Between a prologue and an epilogue, the story still has three acts, each starting on a chapter.
+	FString Long = TEXT("PROLOGUE\n\nINT. HALL - NIGHT\n\nMara waits.\n\n");
+	for (int32 Chapter = 1; Chapter <= 8; ++Chapter)
+	{
+		Long += FString::Printf(TEXT("DK %02d   CHAPTER NAME\n\nINT. ROOM %d - DAY\n\nMara walks in and looks around the room for a long while.\n\n                    MARA\n          Line %d.\n\n"), Chapter, Chapter, Chapter);
+	}
+	Long += TEXT("EPILOGUE\n\nINT. HALL - DAWN\n\nMara leaves.\n");
+	const TArray<FCinemafyScriptAct> Bookended = Script::BreakDownScript(Long, true, 5, Title, Report);
+	AddInfo(Report);
+	if (TestEqual(TEXT("Prologue, three acts, epilogue"), Bookended.Num(), 5))
+	{
+		TestEqual(TEXT("...opening on the prologue"), Bookended[0].Title, FString(TEXT("Prologue")));
+		TestEqual(TEXT("...closing on the epilogue"), Bookended[4].Title, FString(TEXT("Epilogue")));
+		for (int32 Act = 1; Act <= 3; ++Act)
+		{
+			TestTrue(FString::Printf(TEXT("Act %d starts on a chapter"), Act), Bookended[Act].Chapters.Num() > 0 && Bookended[Act].Chapters[0].Id.StartsWith(TEXT("DK-")));
+		}
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGameBibleTest, "Cinemafy.Golden.ReadsTheGameBible", CinemafyTests::Flags)
 bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 {

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.18.0: "The fine print"
+Fixes from staging a 420-page game screenplay end to end.
+- **Reading:**
+  - `ON SCREEN:` (and `SUPER:`, `CHYRON:`, `CAPTION:`, `TITLE CARD:`, `HUD:`, `READOUT:`) blocks are display lines
+    up to the next blank line, not speakers, chapters or scenes.
+  - Chapter markers need a number: `MISSION ASSESSMENT: OPERATIONAL SUCCESS` no longer starts a chapter.
+  - A screenplay that writes speech under cues no longer reads `The contrast settles: ...` in its action as dialogue.
+  - Cast in a scene: speakers, plus whole names (or a titled name's own name) written with a capital. Single words
+    of longer names ("hand", "dead", "and") no longer pull characters into scenes.
+  - Group cues (`TARRIK AND SELENE`) credit each speaker and aren't cast members of their own.
+  - Deaths need a character as the subject: "her channel dies", "his scream dies", "the dead console" kill nobody.
+  - Between a prologue and an epilogue, the story gets three inferred acts on chapter starts (if the script marks none).
+- **Voices:** announcements, systems, consoles, narrators, unseen voices and `(V.O.)` lines are voice-only: a
+  **Voice Only** cast flag, no template character, mark or walk, and nobody waits on them for a cue. The cut watches
+  whoever hears the line instead of going black.
+- **Takes:**
+  - A recorded take keeps when each line was said, so its director lines keep their text, audio and tone
+    (they were all empty, 0.3 Neutral).
+  - A cue that never comes no longer takes the waiting character's own line with it: after the timeout they go ahead.
+- **Set dressing:** body parts, picture words ("foreground") and fragments ("heart instead of") aren't props.
+- **Pre-flight:** Fix All places a start mark for every character it brings in (including the ones it casts as the
+  template), not one per run. Spawned cast stand on their marks instead of falling through the floor. Fix All builds
+  the cast before casting it.
+- Choreography wiring is logged once per performer, not on every beat.
+- Mac (clang) build fix in the director.
+- New test: `Cinemafy.Script.ReadsTheFinePrint`.
+
 ## 0.17.0: "Printed pages"
 - **PDF screenplays:**
   - Import Script takes a `.pdf`. Its text comes from `pdftotext` (poppler: `brew install poppler` on a Mac), and
