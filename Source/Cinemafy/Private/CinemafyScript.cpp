@@ -2790,8 +2790,9 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 			ECinemafyEmotion::Worried, true, 0.45f, 0.95f, 0.8f, false },
 		{ { TEXT("determined"), TEXT("firmly"), TEXT("firm"), TEXT("resolute"), TEXT("steely"), TEXT("commanding"), TEXT("defiant") },
 			ECinemafyEmotion::Determined, true, 0.7f, 0.95f, 1.f, false },
+		// Tender is warm and quiet, not happy: a love scene shouldn't laugh its way through.
 		{ { TEXT("tender"), TEXT("lovingly"), TEXT("fondly"), TEXT("gently"), TEXT("intimate"), TEXT("romantic"), TEXT("adoring") },
-			ECinemafyEmotion::Happy, true, 0.5f, 0.9f, 0.7f, false },
+			ECinemafyEmotion::Neutral, false, 0.35f, 0.9f, 0.75f, false },
 	};
 	if (!Words.IsEmpty())
 	{
@@ -2838,13 +2839,17 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 		ECinemafyEmotion Emotion;
 		float Intensity;
 	};
+	// The first match wins: specific readings before the general ones. Neutral = tender (warm, quiet, no feeling named).
 	static const FWords Said[] = {
 		{ { TEXT("i love you"), TEXT("love you"), TEXT("my love"), TEXT("darling"), TEXT("beloved"), TEXT("my heart"), TEXT("kiss me"), TEXT("i missed you") },
-			ECinemafyEmotion::Happy, 0.55f },
-		{ { TEXT("afraid"), TEXT("scared"), TEXT("fear"), TEXT("terrified"), TEXT("frightened") }, ECinemafyEmotion::Worried, 0.55f },
+			ECinemafyEmotion::Neutral, 0.4f },
 		{ { TEXT("i m sorry"), TEXT("im sorry"), TEXT("forgive me"), TEXT("goodbye"), TEXT("i miss"), TEXT("they re gone"), TEXT("is dead"), TEXT("are dead") },
 			ECinemafyEmotion::Sad, 0.5f },
 		{ { TEXT("i hate"), TEXT("how dare"), TEXT("damn you"), TEXT("i ll kill"), TEXT("traitor") }, ECinemafyEmotion::Angry, 0.65f },
+		// Danger in the words, whoever's afraid: "You are afraid", "The assassin fired".
+		{ { TEXT("afraid"), TEXT("scared"), TEXT("fear"), TEXT("feared"), TEXT("fears"), TEXT("terrified"), TEXT("frightened"), TEXT("assassin"),
+			TEXT("assassins"), TEXT("murder"), TEXT("murdered"), TEXT("killed"), TEXT("kill"), TEXT("die"), TEXT("dying"), TEXT("dead"), TEXT("blood"),
+			TEXT("threat"), TEXT("danger") }, ECinemafyEmotion::Worried, 0.55f },
 		{ { TEXT("i am serious"), TEXT("i m serious"), TEXT("i swear"), TEXT("i promise"), TEXT("i will"), TEXT("never again"), TEXT("we must"), TEXT("i must") },
 			ECinemafyEmotion::Determined, 0.55f },
 	};
@@ -2855,9 +2860,10 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 		{
 			if (Spoken.Contains(FString::Printf(TEXT(" %s "), Phrase)))
 			{
-				Delivery.bHasEmotion = true;
+				Delivery.bHasEmotion = Entry.Emotion != ECinemafyEmotion::Neutral;
 				Delivery.Emotion = Entry.Emotion;
 				Delivery.Intensity = Entry.Intensity;
+				Delivery.Volume = Entry.Emotion == ECinemafyEmotion::Neutral ? 0.8f : 1.f;
 				Delivery.Cue = FString::Printf(TEXT("says \"%s\""), Phrase);
 				return Delivery;
 			}
@@ -2875,6 +2881,15 @@ FString UCinemafyScriptLibrary::MoodDirection(const FString& Mood)
 		: Mood == TEXT("action") ? TEXT("firmly")
 		: Mood == TEXT("warm") || Mood == TEXT("triumphant") ? TEXT("warmly")
 		: TEXT("");
+}
+
+FString UCinemafyScriptLibrary::MoodAfterLine(const FString& Mood, const FCinemafyDelivery& Line)
+{
+	// Once the words turn dark (fear, grief, anger), the rest of a warm scene plays uneasy, not tender.
+	const bool bDark = Line.bHasEmotion && (Line.Emotion == ECinemafyEmotion::Worried || Line.Emotion == ECinemafyEmotion::Fear
+		|| Line.Emotion == ECinemafyEmotion::Sad || Line.Emotion == ECinemafyEmotion::Angry);
+	const bool bWarm = Mood == TEXT("romantic") || Mood == TEXT("warm") || Mood == TEXT("calm") || Mood == TEXT("triumphant");
+	return bDark && bWarm ? FString(TEXT("tense")) : Mood;
 }
 
 FCinemafyDelivery UCinemafyScriptLibrary::ReadDeliveryInMood(const FString& Direction, const FString& Text, const FString& Mood)

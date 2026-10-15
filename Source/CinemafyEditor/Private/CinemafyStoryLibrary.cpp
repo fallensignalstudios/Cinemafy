@@ -260,6 +260,55 @@ FString UCinemafyStoryLibrary::SetSceneBlocking(UCinemafyScriptProject* Project,
 	return DescribeBlocking(Project, Scene->Id);
 }
 
+namespace CinemafyStory
+{
+	FString DescribePoseClips()
+	{
+		const UCinemafySettings* Settings = GetDefault<UCinemafySettings>();
+		const UEnum* Poses = StaticEnum<ECinemafyPose>();
+		TArray<FString> Out;
+		for (const TPair<ECinemafyPose, TSoftObjectPtr<UAnimSequenceBase>>& Pair : Settings->PoseAnimations)
+		{
+			Out.Add(FString::Printf(TEXT("  %s: %s"), *Poses->GetNameStringByValue(static_cast<int64>(Pair.Key)), *Pair.Value.ToString()));
+		}
+		for (const FCinemafyPosePair& Pair : Settings->TogetherAnimations)
+		{
+			Out.Add(FString::Printf(TEXT("  %s together: %s + %s"), *Poses->GetNameStringByValue(static_cast<int64>(Pair.Pose)), *Pair.Lead.ToString(), *Pair.Partner.ToString()));
+		}
+		return Out.Num() > 0 ? TEXT("Pose clips:\n") + FString::Join(Out, TEXT("\n")) : FString(TEXT("No pose clips set: found by name."));
+	}
+}
+
+FString UCinemafyStoryLibrary::SetPoseAnimation(ECinemafyPose Pose, UAnimSequenceBase* Clip)
+{
+	UCinemafySettings* Settings = GetMutableDefault<UCinemafySettings>();
+	if (Clip)
+	{
+		Settings->PoseAnimations.Add(Pose, Clip);
+	}
+	else
+	{
+		Settings->PoseAnimations.Remove(Pose);
+	}
+	Settings->TryUpdateDefaultConfigFile();
+	return CinemafyStory::DescribePoseClips();
+}
+
+FString UCinemafyStoryLibrary::SetTogetherAnimation(ECinemafyPose Pose, UAnimSequenceBase* Lead, UAnimSequenceBase* Partner)
+{
+	UCinemafySettings* Settings = GetMutableDefault<UCinemafySettings>();
+	Settings->TogetherAnimations.RemoveAll([Pose](const FCinemafyPosePair& Pair) { return Pair.Pose == Pose; });
+	if (Lead && Partner)
+	{
+		FCinemafyPosePair& Pair = Settings->TogetherAnimations.AddDefaulted_GetRef();
+		Pair.Pose = Pose;
+		Pair.Lead = Lead;
+		Pair.Partner = Partner;
+	}
+	Settings->TryUpdateDefaultConfigFile();
+	return CinemafyStory::DescribePoseClips();
+}
+
 FString UCinemafyStoryLibrary::DescribeBlocking(UCinemafyScriptProject* Project, const FString& SceneId)
 {
 	const FCinemafyScriptScene* Scene = Project ? Project->FindScene(SceneId) : nullptr;
@@ -388,8 +437,18 @@ namespace CinemafyStory
 		const ACharacter* Defaults = Character->GetClass()->GetDefaultObject<ACharacter>();
 		if (Defaults && Defaults->GetMesh() && Character->GetMesh())
 		{
-			Character->GetMesh()->Modify();
-			Character->GetMesh()->SetRelativeTransform(Defaults->GetMesh()->GetRelativeTransform());
+			USkeletalMeshComponent* Mesh = Character->GetMesh();
+			const USkeletalMeshComponent* Default = Defaults->GetMesh();
+			Mesh->Modify();
+			Mesh->SetRelativeTransform(Default->GetRelativeTransform());
+			// Back on their own Animation Blueprint, as the class sets them up.
+			Mesh->AnimationData = Default->AnimationData;
+			Mesh->SetUpdateAnimationInEditor(Default->GetUpdateAnimationInEditor());
+			Mesh->SetAnimationMode(Default->GetAnimationMode());
+			if (Default->GetAnimationMode() == EAnimationMode::AnimationBlueprint)
+			{
+				Mesh->SetAnimInstanceClass(Default->AnimClass);
+			}
 		}
 		if (Defaults && Defaults->GetCapsuleComponent() && Character->GetCapsuleComponent())
 		{
@@ -484,31 +543,43 @@ namespace CinemafyStory
 		return false;
 	}
 
-	/**
-	 * Puts a character into a pose at a spot: on the surface there (a bed's top, a seat), side by side with the others
-	 * in the block (close if together), facing along the spot. With a pose clip they stand there and the clip plays
-	 * the pose in the cut; lying without one, they're laid flat as a stand-in. Returns what it did, for the report.
-	 */
-	FString HoldPose(ACharacter* Character, ECinemafyPose Pose, const FTransform& Spot, int32 Slot, int32 Count, bool bTogether)
+	/** The hips' world position as the mesh is posed now: "pelvis" / "hips", else the middle of the mesh. */
+	FVector Hips(const ACharacter* Character)
 	{
-		UWorld* World = Character->GetWorld();
+		const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+		if (!Mesh)
+		{
+			return Character ? Character->GetActorLocation() : FVector::ZeroVector;
+		}
+		for (const TCHAR* Bone : { TEXT("pelvis"), TEXT("Pelvis"), TEXT("hips"), TEXT("Hips"), TEXT("mixamorig:Hips") })
+		{
+			if (Mesh->GetBoneIndex(Bone) != INDEX_NONE)
+			{
+				return Mesh->GetBoneLocation(Bone);
+			}
+		}
+		return Mesh->Bounds.Origin;
+	}
+
+	/**
+	 * Puts a character into a pose at a spot, on the surface there (a bed's top, a seat), facing along the spot. Side by
+	 * side with the others in the block (close if together; on the same spot for a pair of clips made for two).
+	 * With a pose clip, the mesh plays it right here in the level (the editor shows it, the take records it, the
+	 * cameras find the posed head). Lying without one, they're laid flat as a stand-in. Returns what it did.
+	 */
+	FString HoldPose(ACharacter* Character, ECinemafyPose Pose, const FTransform& Spot, float SurfaceZ, int32 Slot, int32 Count, bool bTogether, bool bPair)
+	{
 		UCapsuleComponent* Capsule = Character->GetCapsuleComponent();
 		USkeletalMeshComponent* Mesh = Character->GetMesh();
 		const float Half = Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 90.f;
 		ReleasePose(Character);
 		Character->Modify();
 
-		// Side by side across the spot: close when they're together.
+		// Side by side across the spot: close when they're together, one spot for a pair made for two.
 		const FVector Across = Spot.GetRotation().GetRightVector();
-		const float Gap = bTogether ? 42.f : 90.f;
+		const float Gap = bPair ? 0.f : (bTogether ? 42.f : 90.f);
 		FVector Ground = Spot.GetLocation() + Across * ((Slot - (Count - 1) * 0.5f) * Gap);
-		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyHoldPose), false);
-		Query.AddIgnoredActor(Character);
-		FHitResult Hit;
-		if (World && World->LineTraceSingleByChannel(Hit, Ground + FVector(0.f, 0.f, 150.f), Ground - FVector(0.f, 0.f, 300.f), ECC_Visibility, Query))
-		{
-			Ground = Hit.ImpactPoint;
-		}
+		Ground.Z = SurfaceZ;
 		FRotator Facing(0.f, Spot.Rotator().Yaw, 0.f);
 		const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
 		UAnimSequenceBase* Clip = UCinemafyPrevisLibrary::FindPoseAnimation(Pose, Skeleton, bTogether, Slot);
@@ -523,6 +594,22 @@ namespace CinemafyStory
 			Mesh->SetRelativeLocation(FVector(90.f, 0.f, -Half + 12.f));
 		}
 		Character->SetActorLocationAndRotation(Ground + FVector(0.f, 0.f, Half + 2.f), Facing, false, nullptr, ETeleportType::TeleportPhysics);
+		if (Clip && Mesh)
+		{
+			// The pose, held by the mesh itself (looping), so it's there from the first frame and in the editor too.
+			Mesh->Modify();
+			Mesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+			Mesh->AnimationData.AnimToPlay = Clip;
+			Mesh->AnimationData.bSavedLooping = true;
+			Mesh->AnimationData.bSavedPlaying = true;
+			Mesh->AnimationData.SavedPosition = 0.f;
+			Mesh->AnimationData.SavedPlayRate = 1.f;
+			Mesh->SetAnimation(Clip);
+			Mesh->SetUpdateAnimationInEditor(true);
+			Mesh->SetPosition(0.f, false);
+			Mesh->TickAnimation(0.f, false);
+			Mesh->RefreshBoneTransforms();
+		}
 		if (Capsule)
 		{
 			// Close together on a bed: their capsules mustn't shove each other apart.
@@ -539,7 +626,7 @@ namespace CinemafyStory
 		const FString PoseName = StaticEnum<ECinemafyPose>()->GetDisplayNameTextByValue(static_cast<int64>(Pose)).ToString().ToLower();
 		if (Clip)
 		{
-			return FString::Printf(TEXT("%s (%s)"), *PoseName, *Clip->GetName());
+			return FString::Printf(TEXT("%s (%s%s)"), *PoseName, *Clip->GetName(), bPair ? TEXT(", one of a pair") : TEXT(""));
 		}
 		if (bStandIn)
 		{
@@ -550,6 +637,58 @@ namespace CinemafyStory
 			return PoseName;
 		}
 		return FString::Printf(TEXT("%s, but standing: no %s clip found (set Project Settings > Cinemafy > Staging > Pose Animations)"), *PoseName, *PoseName);
+	}
+
+	/**
+	 * Clips carry their own placement: a pack's lying couple may have its hips a metre behind the root and at the
+	 * height of the bed it was made on. Moves the people of a block (together, so a pair stays a pair) until their
+	 * hips sit over the spot, and just above the surface when lying or sitting. Returns how far they moved, in cm.
+	 */
+	float SettleOnSpot(const TArray<ACharacter*>& People, ECinemafyPose Pose, const FTransform& Spot, float SurfaceZ)
+	{
+		// Only bodies actually in the pose: a pose clip playing, or the lying stand-in (not someone left standing).
+		const USkeletalMeshComponent* Mesh = People.Num() > 0 ? People[0]->GetMesh() : nullptr;
+		if (!Mesh || (Mesh->GetAnimationMode() != EAnimationMode::AnimationSingleNode && Pose != ECinemafyPose::Lie))
+		{
+			return 0.f;
+		}
+		FVector Middle = FVector::ZeroVector;
+		for (const ACharacter* Character : People)
+		{
+			Middle += Hips(Character);
+		}
+		Middle /= People.Num();
+		FVector Move(Spot.GetLocation().X - Middle.X, Spot.GetLocation().Y - Middle.Y, 0.f);
+		if (Pose == ECinemafyPose::Lie || Pose == ECinemafyPose::Sit)
+		{
+			Move.Z = SurfaceZ + (Pose == ECinemafyPose::Lie ? 14.f : 10.f) - Middle.Z;
+		}
+		// People side by side keep their gap: only the clip's own offset is taken out.
+		if (People.Num() > 1 && Move.Size2D() < 60.f)
+		{
+			Move.X = Move.Y = 0.f;
+		}
+		for (ACharacter* Character : People)
+		{
+			Character->SetActorLocation(Character->GetActorLocation() + Move, false, nullptr, ETeleportType::TeleportPhysics);
+		}
+		return Move.Size();
+	}
+
+	/** The top of whatever is at the spot (a bed, a seat, the floor). */
+	float SurfaceAt(UWorld* World, const FVector& Point, const TArray<ACharacter*>& Ignore)
+	{
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyHoldPose), false);
+		for (ACharacter* Character : Ignore)
+		{
+			Query.AddIgnoredActor(Character);
+		}
+		FHitResult Hit;
+		if (World && World->LineTraceSingleByChannel(Hit, Point + FVector(0.f, 0.f, 150.f), Point - FVector(0.f, 0.f, 300.f), ECC_Visibility, Query))
+		{
+			return Hit.ImpactPoint.Z;
+		}
+		return Point.Z;
 	}
 
 	int32 DropDeadBindings(ULevelSequence* Sequence)
@@ -660,8 +799,8 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		}
 	}
 
-	// The scene's mood, for lines the page gives no direction.
-	const FString MoodDirection = UCinemafyScriptLibrary::MoodDirection(UCinemafyMoodLibrary::ReadSceneMood(*Scene, ECinemafyTimeOfDay::Unknown).Mood);
+	// The scene's mood, for lines the page gives no direction (it darkens once the words do).
+	FString RunningMood = UCinemafyMoodLibrary::ReadSceneMood(*Scene, ECinemafyTimeOfDay::Unknown).Mood;
 
 	// The staging, from the script (one insert of a gameplay bridge: just its lines).
 	int32 InsertIndex = 0;
@@ -774,11 +913,30 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 					Block.Pose == ECinemafyPose::Lie ? TEXT(" (on the bed, arrow toward the pillow)") : TEXT("")));
 			continue;
 		}
+		// Two clips made for each other (a cuddling couple) put both people on the one spot: the clips place the bodies.
+		bool bPair = false;
+		if (Block.bTogether && People.Num() == 2)
+		{
+			auto SkeletonOf = [](const ACharacter* Character) -> const USkeleton*
+			{
+				const USkeletalMeshComponent* Mesh = Character->GetMesh();
+				return Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+			};
+			const UAnimSequenceBase* Lead = UCinemafyPrevisLibrary::FindPoseAnimation(Pose, SkeletonOf(People[0]), true, 0);
+			const UAnimSequenceBase* Partner = UCinemafyPrevisLibrary::FindPoseAnimation(Pose, SkeletonOf(People[1]), true, 1);
+			bPair = Lead && Partner && Lead != Partner;
+		}
+		const float SurfaceZ = CinemafyStory::SurfaceAt(World, Spot.GetLocation(), People);
 		for (int32 Slot = 0; Slot < People.Num(); ++Slot)
 		{
-			const FString Did = CinemafyStory::HoldPose(People[Slot], Pose, Spot, Slot, People.Num(), Block.bTogether);
+			const FString Did = CinemafyStory::HoldPose(People[Slot], Pose, Spot, SurfaceZ, Slot, People.Num(), Block.bTogether, bPair);
 			Holding.Add(PeopleNames[Slot]);
 			Report.Add(FString::Printf(TEXT("Blocking: %s %s at %s%s."), *PeopleNames[Slot], *Did, *What, Block.bTogether ? TEXT(", together") : TEXT("")));
+		}
+		const float Settled = CinemafyStory::SettleOnSpot(People, Pose, Spot, SurfaceZ);
+		if (Settled > 30.f)
+		{
+			Report.Add(FString::Printf(TEXT("Blocking: the pose clip%s carried the bodies %.0f cm off the spot; moved them back onto it."), People.Num() > 1 ? TEXT("s") : TEXT(""), Settled));
 		}
 	}
 	// Posed by an earlier staging, not by this one: back on their feet.
@@ -947,10 +1105,13 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 				Added.DialogueAudio = Beat.LineAudio.LoadSynchronous();
 				Added.LineDirection = Beat.LineDirection;
 				// No direction and nothing in the words: the take plays the scene's mood ("(tender)" in a love scene).
-				if (Added.LineDirection.IsEmpty() && UCinemafyScriptLibrary::ReadDelivery(FString(), Beat.Line).Cue.IsEmpty() && !MoodDirection.IsEmpty())
+				const FCinemafyDelivery Said = UCinemafyScriptLibrary::ReadDelivery(Beat.LineDirection, Beat.Line);
+				const FString MoodDirection = UCinemafyScriptLibrary::MoodDirection(RunningMood);
+				if (Added.LineDirection.IsEmpty() && Said.Cue.IsEmpty() && !MoodDirection.IsEmpty())
 				{
 					Added.LineDirection = FString::Printf(TEXT("(%s)"), *MoodDirection);
 				}
+				RunningMood = UCinemafyScriptLibrary::MoodAfterLine(RunningMood, Said);
 				Added.Listener = Target;
 				Added.HeardFrom = Beat.HeardFrom;
 			}
@@ -1416,7 +1577,7 @@ int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Proje
 		{
 			continue;
 		}
-		const FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(*Scene, ECinemafyTimeOfDay::Unknown).Mood;
+		FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(*Scene, ECinemafyTimeOfDay::Unknown).Mood;
 		for (FCinemafyScriptLine& Line : Scene->Lines)
 		{
 			const bool bHasReal = !Line.Audio.IsNull() && !Line.bScratchAudio;
@@ -1429,6 +1590,7 @@ int32 UCinemafyStoryLibrary::GenerateScratchVoices(UCinemafyScriptProject* Proje
 			const FString Wav = Folder / (Line.LineId + TEXT(".wav"));
 			// Read the way the script directs it: "(whispering)" quiet and slow, "(shouting)" loud and quick.
 			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDeliveryInMood(Line.Direction, Line.Text, SceneMood);
+			SceneMood = UCinemafyScriptLibrary::MoodAfterLine(SceneMood, Delivery);
 			if (CinemafyVoices::Synthesize(Line.Text, Member ? Member->ScratchVoice : FString(), (Member ? Member->ScratchRate : 1.f) * Delivery.Rate,
 				Delivery.Volume, Delivery.bWhisper, Wav))
 			{

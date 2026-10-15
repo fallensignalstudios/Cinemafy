@@ -87,6 +87,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
 	static FString SetSceneBlocking(UCinemafyScriptProject* Project, const FString& SceneId, const FString& Blocking);
 
+	/**
+	 * Sets the clip a pose holds (Project Settings > Cinemafy > Staging > Pose Animations), saved to the project's
+	 * config. Null clears it (back to finding one by name). Returns what's set now.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString SetPoseAnimation(ECinemafyPose Pose, UAnimSequenceBase* Clip);
+
+	/** Sets a pair of clips made for two for a pose (Together Animations): the lead on the first person named. */
+	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Story")
+	static FString SetTogetherAnimation(ECinemafyPose Pose, UAnimSequenceBase* Lead, UAnimSequenceBase* Partner);
+
 	/** How Cinemafy reads a scene's blocking: who goes where, in what pose, from the notes or the opening action. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Story")
 	static FString DescribeBlocking(UCinemafyScriptProject* Project, const FString& SceneId);

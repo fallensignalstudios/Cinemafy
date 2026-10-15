@@ -968,6 +968,34 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def set_pose_animation(pose: str, clip_path: str = '', partner_path: str = '') -> str:
+        """Sets the clip a blocking pose holds (Project Settings > Cinemafy > Staging), saved to the project config.
+        With partner_path, sets a pair made for two (Together Animations: clip_path plays on the first person named,
+        partner_path on the second), used when blocking puts two people together. An empty clip_path clears it.
+
+        Args:
+            pose: Stand, Sit, Lie, Kneel or Lean.
+            clip_path: The animation's object path ("/Game/Romantic/Lie-1_1").
+            partner_path: The partner's half of a pair, for two people together.
+
+        Returns:
+            The pose clips now set.
+        """
+        value = getattr(unreal.CinemafyPose, pose.strip().upper(), None)
+        if value is None:
+            return f'Unknown pose "{pose}": Stand, Sit, Lie, Kneel or Lean.'
+        clip = unreal.load_asset(clip_path) if clip_path else None
+        if clip_path and clip is None:
+            return f'No animation at {clip_path}.'
+        if partner_path:
+            partner = unreal.load_asset(partner_path)
+            if partner is None:
+                return f'No animation at {partner_path}.'
+            return unreal.CinemafyStoryLibrary.set_together_animation(value, clip, partner)
+        return unreal.CinemafyStoryLibrary.set_pose_animation(value, clip)
+
+    @_tool
+    @staticmethod
     def describe_blocking(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
         """How Cinemafy reads a scene's blocking (its notes, plus poses its opening action sets): who goes where, in
         what pose, together or not. Use it to check blocking before previs_scene.

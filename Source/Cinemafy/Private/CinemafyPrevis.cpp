@@ -1123,8 +1123,8 @@ UAnimSequenceBase* UCinemafyPrevisLibrary::FindPoseAnimation(ECinemafyPose Pose,
 	static const TSet<FString> Changes = { TEXT("to"), TEXT("getup"), TEXT("standup"), TEXT("start"), TEXT("stop"), TEXT("enter"), TEXT("exit"),
 		TEXT("transition"), TEXT("down"), TEXT("up"), TEXT("death"), TEXT("die"), TEXT("dying"), TEXT("dead") };
 	const TArray<FCinemafyMoveCandidate> Candidates = UCinemafyChoreographyLibrary::GatherCandidates(nullptr, {}, Skeleton);
-	const FCinemafyMoveCandidate* Best = nullptr;
-	float BestScore = 0.f;
+	TArray<const FCinemafyMoveCandidate*> Posed;
+	TArray<float> Scores;
 	for (const FCinemafyMoveCandidate& Candidate : Candidates)
 	{
 		bool bPose = false, bChange = false;
@@ -1139,15 +1139,55 @@ UAnimSequenceBase* UCinemafyPrevisLibrary::FindPoseAnimation(ECinemafyPose Pose,
 			Score += (Token == TEXT("idle") || Token == TEXT("loop")) ? 2.f : 0.f;
 			Score += bTogether && (Token == TEXT("cuddle") || Token == TEXT("couple") || Token == TEXT("hug") || Token == TEXT("embrace")) ? 3.f : 0.f;
 		}
-		if (!bPose || bChange)
+		if (bPose && !bChange)
 		{
-			continue;
+			Posed.Add(&Candidate);
+			Scores.Add(Score + 1.f);
 		}
-		Score += 1.f;
+	}
+	// A clip's other half, by name: "Lie-1_1" / "Lie-1_1_1", "Cuddle_A" / "Cuddle_B", "..._Male" / "..._Female".
+	auto PartnerOf = [&Posed](const FCinemafyMoveCandidate* Lead) -> const FCinemafyMoveCandidate*
+	{
+		const FString Name = Lead->Name;
+		TArray<FString> Wanted;
+		static const TCHAR* const Swaps[][2] = { { TEXT("_A"), TEXT("_B") }, { TEXT("Male"), TEXT("Female") }, { TEXT("Lead"), TEXT("Partner") }, { TEXT("_01"), TEXT("_02") } };
+		for (const auto& Swap : Swaps)
+		{
+			if (Name.Contains(Swap[0], ESearchCase::CaseSensitive))
+			{
+				Wanted.Add(Name.Replace(Swap[0], Swap[1], ESearchCase::CaseSensitive));
+			}
+		}
+		for (const FCinemafyMoveCandidate* Other : Posed)
+		{
+			if (Other == Lead)
+			{
+				continue;
+			}
+			if (Wanted.Contains(Other->Name) || (Other->Name.StartsWith(Name + TEXT("_")) && !Other->Name.Mid(Name.Len() + 1).Contains(TEXT("_"))))
+			{
+				return Other;
+			}
+		}
+		return nullptr;
+	};
+	const FCinemafyMoveCandidate* Best = nullptr;
+	float BestScore = 0.f;
+	for (int32 Each = 0; Each < Posed.Num(); ++Each)
+	{
+		// Together, a clip with a partner beats one without: two people shouldn't play the same half of a couple.
+		const float Score = Scores[Each] + (bTogether && PartnerOf(Posed[Each]) ? 5.f : 0.f);
 		if (!Best || Score > BestScore)
 		{
-			Best = &Candidate;
+			Best = Posed[Each];
 			BestScore = Score;
+		}
+	}
+	if (Best && bTogether && Index % 2 == 1)
+	{
+		if (const FCinemafyMoveCandidate* Partner = PartnerOf(Best))
+		{
+			Best = Partner;
 		}
 	}
 	return Best ? Cast<UAnimSequenceBase>(Best->Path.TryLoad()) : nullptr;

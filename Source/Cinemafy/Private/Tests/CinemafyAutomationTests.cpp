@@ -1228,12 +1228,16 @@ bool FCinemafyDeliveryTest::RunTest(const FString& Parameters)
 
 	// No direction: the words, then the scene's mood. A written direction always wins.
 	const FCinemafyDelivery Love = Script::ReadDelivery(FString(), TEXT("I love you."));
-	TestTrue(TEXT("\"I love you\" isn't Neutral"), Love.bHasEmotion && Love.Emotion == ECinemafyEmotion::Happy && Love.Intensity < 0.7f);
+	TestTrue(TEXT("\"I love you\" is tender: warm and quiet, not laughing"), !Love.Cue.IsEmpty() && Love.Emotion != ECinemafyEmotion::Happy && Love.Intensity < 0.5f && Love.Volume < 1.f);
 	TestEqual(TEXT("\"You are afraid\" is worried"), Script::ReadDelivery(FString(), TEXT("You are afraid.")).Emotion, ECinemafyEmotion::Worried);
+	TestEqual(TEXT("...and so is an assassin"), Script::ReadDelivery(FString(), TEXT("The assassin fired when Caelus named me.")).Emotion, ECinemafyEmotion::Worried);
 	TestEqual(TEXT("\"I am serious\" is determined"), Script::ReadDelivery(FString(), TEXT("I am serious.")).Emotion, ECinemafyEmotion::Determined);
 	const FCinemafyDelivery Quiet = Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("romantic"));
-	TestTrue(TEXT("A plain line in a romantic scene plays tender and soft"), Quiet.bHasEmotion && Quiet.Emotion == ECinemafyEmotion::Happy && Quiet.Intensity <= 0.5f && Quiet.Volume < 1.f);
-	TestFalse(TEXT("...a calm scene leaves it alone"), Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("calm")).bHasEmotion);
+	TestTrue(TEXT("A plain line in a romantic scene plays tender: quiet, not happy"), !Quiet.Cue.IsEmpty() && Quiet.Emotion != ECinemafyEmotion::Happy && Quiet.Intensity <= 0.5f && Quiet.Volume < 1.f);
+	TestTrue(TEXT("...a calm scene leaves it alone"), Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("calm")).Cue.IsEmpty());
+	const FString Darker = Script::MoodAfterLine(TEXT("romantic"), Script::ReadDelivery(FString(), TEXT("The assassin fired when Caelus named me.")));
+	TestEqual(TEXT("Once the words turn dark, a romantic scene plays tense"), Darker, FString(TEXT("tense")));
+	TestEqual(TEXT("...and the next plain line plays uneasy"), Script::ReadDeliveryInMood(FString(), TEXT("Or she knew something I do not."), Darker).Emotion, ECinemafyEmotion::Worried);
 	TestEqual(TEXT("...and a direction beats the mood"), Script::ReadDeliveryInMood(TEXT("(coldly)"), TEXT("Stay."), TEXT("romantic")).Emotion, ECinemafyEmotion::Contempt);
 	TestEqual(TEXT("...and so do the words"), Script::ReadDeliveryInMood(FString(), TEXT("I am serious."), TEXT("romantic")).Emotion, ECinemafyEmotion::Determined);
 	return true;

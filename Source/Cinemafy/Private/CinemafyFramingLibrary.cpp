@@ -155,6 +155,11 @@ bool UCinemafyFramingLibrary::IsLyingDown(const AActor* Actor)
 	{
 		return false;
 	}
+	// Blocked lying down (Previs tags them "Cinemafy.Pose.Lie..."), whatever the mesh shows right now.
+	if (Actor->Tags.ContainsByPredicate([](const FName& Tag) { return Tag.ToString().StartsWith(TEXT("Cinemafy.Pose.Lie")); }))
+	{
+		return true;
+	}
 	// Eyes within 70 cm of the feet: lying on a bed, a floor, a couch.
 	float Feet = Actor->GetActorLocation().Z;
 	if (const UCapsuleComponent* Capsule = Actor->FindComponentByClass<UCapsuleComponent>())

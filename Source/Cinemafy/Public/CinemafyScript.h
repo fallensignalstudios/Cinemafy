@@ -753,6 +753,10 @@ public:
 	 * the scene's mood sets a gentle baseline: a romantic scene plays tender, a sad one sad, a tense one uneasy.
 	 * Mood is a Scene Mood's word (calm, tense, action, sad, warm, romantic, triumphant, eerie, alarm).
 	 */
+	/** The scene's mood after a line: a warm scene whose words turn dark (fear, grief, anger) plays tense from there. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FString MoodAfterLine(const FString& Mood, const FCinemafyDelivery& Line);
+
 	/** The direction a scene's mood stands for when a line has none ("romantic" -> "tender"); empty for calm. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
 	static FString MoodDirection(const FString& Mood);

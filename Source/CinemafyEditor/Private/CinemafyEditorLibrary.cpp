@@ -1292,8 +1292,11 @@ namespace
 				{
 					continue; // A lying stand-in is laid flat on the actor itself; standing needs nothing.
 				}
-				const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(FMath::Max(Time, 0.2f));
-				Placements.Add({ Mesh, Clip, SceneStart, End });
+				// From the first frame to the last ("for the whole scene"), not from the first line.
+				const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
+				const FFrameNumber Begin = FMath::Min(SceneStart, Playback.GetLowerBoundValue());
+				const FFrameNumber End = FMath::Max(SceneStart + TickResolution.AsFrameNumber(FMath::Max(Time, 0.2f)), Playback.GetUpperBoundValue());
+				Placements.Add({ Mesh, Clip, Begin, End });
 				bool* bRecorded = Recorded.Find(Actor);
 				if (!bRecorded)
 				{
@@ -1301,7 +1304,7 @@ namespace
 				}
 				if (*bRecorded)
 				{
-					OverTake.FindOrAdd(Mesh).Add(TRange<FFrameNumber>(SceneStart, End));
+					OverTake.FindOrAdd(Mesh).Add(TRange<FFrameNumber>(Begin, End));
 				}
 			}
 		}
@@ -3704,7 +3707,7 @@ namespace CinemafyScriptEditor
 	TArray<FCinemafyLine> BuildDirectorLines(UWorld* World, const FCinemafyScriptScene& Scene, TArray<AActor*>& OutPerformers, int32& OutUnmatched)
 	{
 		// With no parenthetical, a line plays its own words, else the scene's mood (a love scene isn't Neutral).
-		const FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(Scene, ECinemafyTimeOfDay::Unknown).Mood;
+		FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(Scene, ECinemafyTimeOfDay::Unknown).Mood;
 		TArray<FCinemafyLine> Lines;
 		FString PreviousSpeaker;
 		AActor* PreviousActor = nullptr;
@@ -3757,6 +3760,7 @@ namespace CinemafyScriptEditor
 			Line.FaceAnimation = ScriptLine.HasCurrentFace() ? ScriptLine.FaceAnimation.LoadSynchronous() : nullptr;
 			// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
 			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDeliveryInMood(ScriptLine.Direction, ScriptLine.Text, SceneMood);
+			SceneMood = UCinemafyScriptLibrary::MoodAfterLine(SceneMood, Delivery);
 			if (Delivery.bHasEmotion)
 			{
 				Line.bSetEmotion = true;

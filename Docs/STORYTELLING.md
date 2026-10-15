@@ -145,9 +145,15 @@ blocking with no place on set and offers to place a mark (already posed).
 - **Pose Animations:** the clip each pose holds (a lying idle, a seated idle). Empty = found by name ("lie",
   "lying", "sleep"; "sit", "seated"; "kneel"; "lean"), skipping getting-up and sitting-down clips.
 - **Together Animations:** clips made for two (a couple cuddled on a bed): the lead plays on the first person
-  named, the partner on the second.
+  named, the partner on the second, both on the one spot (the clips place the bodies). By name, a clip's partner
+  is found too: "Lie-1_1" / "Lie-1_1_1", "_A" / "_B", "Male" / "Female".
+- Over MCP: `set_pose_animation` (pose, clip, and a partner for a pair).
 
-The clip plays across the whole scene in the cut (a recorded take's own body animation steps aside for it), and
+The clip plays on the character right in the level, looping, so you see the pose in the editor, the take records
+it, and the cameras aim at the posed head. A clip that carries the body away from its root (a pack made on its own
+bed) is moved until the hips sit over the spot, just above the surface.
+
+In the cut, the clip plays across the whole sequence (a recorded take's own body animation steps aside for it), and
 posed people don't get standing gesture clips. With no lying clip, people lying down are **laid flat as a stand-in**
 so the shot still reads; sitting or kneeling without a clip stays standing (the report says which to set).
 

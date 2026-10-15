@@ -14,8 +14,19 @@
 - **Pose clips:** Project Settings > Cinemafy > Staging > Pose Animations (one per pose) and Together Animations
   (pairs made for two), else found by name. The clip plays across the scene in the cut, a recorded take's body
   steps aside for it, and posed people don't get standing gesture clips. Lying with no clip: laid flat as a stand-in.
-- **The camera looks down at people lying down:** shots of anyone whose eyes are near the bed rise above them
-  (`IsLyingDown`).
+- **The camera looks down at people lying down:** shots of anyone blocked lying, or whose eyes are near the bed,
+  rise above them (`IsLyingDown`).
+- **Posed in the editor:** a pose clip plays on the character right in the level (looping), so it's there from the
+  first frame, the take records it, and the cameras aim at the posed head. Releasing the pose puts their own
+  Animation Blueprint back.
+- **Clips land on the mark:** a pack's clip that carries the body off its root (a lying couple's hips a metre back,
+  at the height of the bed it was made on) is moved until the hips sit over the spot, just above the surface.
+- **Pairs share the spot:** two clips made for each other put both people on the one spot (the clips place the
+  bodies). By name, a clip's partner is found too ("Lie-1_1" / "Lie-1_1_1", "_A" / "_B", "Male" / "Female").
+- **Pose clips over MCP:** `set_pose_animation` (and `SetPoseAnimation` / `SetTogetherAnimation` in Blueprint).
+- **Tone:** tender is warm and quiet (Neutral, soft), not Happy, so a love scene doesn't laugh through; "I love you"
+  plays tender; danger in the words ("afraid", "assassin", "die", "blood") plays worried whoever says it; and once a
+  warm scene's words turn dark, the rest of it plays tense (`MoodAfterLine`).
 - New test: `Cinemafy.Previs.ReadsYourBlocking`.
 
 ## 0.18.0: "The fine print"
