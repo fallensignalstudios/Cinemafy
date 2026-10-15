@@ -1,4 +1,5 @@
 #include "CinemafyChoreoTools.h"
+#include "CinemafyDialog.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "CinemafyEditorLibrary.h"
@@ -136,16 +137,19 @@ void FCinemafyChoreoMode::Stop()
 	}
 	TSharedPtr<FCinemafyChoreoMode> Old = Instance;
 	Instance.Reset();
+	if (!FSlateApplication::IsInitialized())
+	{
+		// Exiting: Slate already took its notifications and windows with it.
+		Old->Banner.Reset();
+		return;
+	}
 	Old->ClosePrompt();
 	if (Old->Banner.IsValid())
 	{
 		Old->Banner->SetCompletionState(SNotificationItem::CS_None);
 		Old->Banner->ExpireAndFadeout();
 	}
-	if (FSlateApplication::IsInitialized())
-	{
-		FSlateApplication::Get().UnregisterInputPreProcessor(Old);
-	}
+	FSlateApplication::Get().UnregisterInputPreProcessor(Old);
 }
 
 void FCinemafyChoreoMode::UpdateBanner()
@@ -850,6 +854,9 @@ namespace CinemafyChoreoTake
 				Beat.Events = Took.Events;
 				Beat.Outcome = Took.Outcome;
 				Beat.OutcomeReason = Took.OutcomeReason;
+				// When the line was said: without it the director can't tell lines from silent beats (no text, no tone).
+				Beat.LineStartTime = Took.LineStartTime;
+				Beat.LineDuration = Took.LineDuration;
 				if (Took.Outcome != ECinemafyBeatOutcome::Succeeded)
 				{
 					++NeedsAttention;
@@ -943,12 +950,12 @@ namespace CinemafyChoreoTake
 		}
 		if (GEditor->PlayWorld)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("AlreadyPlaying", "Stop the current play session first, then Perform & Record."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("AlreadyPlaying", "Stop the current play session first, then Perform & Record."));
 			return;
 		}
 		if (!Primary->Performer || Primary->Beats.Num() == 0)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NothingToPerform", "Choreograph first: pick a performer and click some beats."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NothingToPerform", "Choreograph first: pick a performer and click some beats."));
 			return;
 		}
 
@@ -997,7 +1004,7 @@ namespace CinemafyChoreoTake
 			const FText Message = FText::Format(LOCTEXT("TraversalWontWork",
 				"These won't work as placed:\n\n{0}\n\nRecord anyway? (They'll be marked Failed in the take, not faked.)"),
 				FText::FromString(FString::Join(WontWork, TEXT("\n"))));
-			if (FMessageDialog::Open(EAppMsgType::YesNo, Message) != EAppReturnType::Yes)
+			if (CinemafyDialog::Open(EAppMsgType::YesNo, Message, EAppReturnType::Yes) != EAppReturnType::Yes)
 			{
 				for (TActorIterator<ACinemafyChoreography> It(GetEditorWorld()); It; ++It)
 				{
@@ -1071,8 +1078,12 @@ namespace CinemafyChoreoTake
 					{
 						Timed[Index].Start = Timed[Index - 1].Start;
 					}
+					// Whoever's walking during it still is: the surviving line keeps the walk (and its tracking shot).
+					const bool bWalking = Timed[Index - 1].Line.bMoving || Timed[Index].Line.bMoving;
 					Timed[Index - 1] = Timed[Index];
+					Timed[Index - 1].Line.bMoving = bWalking;
 				}
+				Timed[Index - 1].Line.bMoving |= Timed[Index].Line.bMoving;
 				Timed.RemoveAt(Index);
 			}
 		}
@@ -1109,7 +1120,7 @@ namespace CinemafyChoreoTake
 		}
 		if (Choreo->TakeDuration <= 0.f)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoTake", "Record a take first (Perform & Record), then the director can cut around it."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoTake", "Record a take first (Perform & Record), then the director can cut around it."));
 			return 0;
 		}
 
@@ -1123,7 +1134,7 @@ namespace CinemafyChoreoTake
 		ULevelSequence* Open = CinemafySequencer::GetOpenSequence();
 		if (!Sequencer.IsValid() || !Open)
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open the Level Sequence the take was baked into, then Direct Shots."));
+			CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open the Level Sequence the take was baked into, then Direct Shots."));
 			return 0;
 		}
 
@@ -1155,8 +1166,9 @@ namespace CinemafyChoreoTake
 
 		Director->Modify();
 		Director->Lines = MergeLines(Ensemble);
-		Director->bPlacePerformances = false;
-		// The take's bodies are already baked; its spoken lines still need their audio in the cut.
+		// The take's bodies are baked; still lines still get a performance cast for their tone (the take's animation
+		// steps aside under it), and spoken lines need their audio in the cut.
+		Director->bPlacePerformances = true;
 		Director->bPlaceDialogueAudio = Director->Lines.ContainsByPredicate([](const FCinemafyLine& Line) { return Line.Audio != nullptr; });
 
 		const UMovieScene* MovieScene = Open->GetMovieScene();

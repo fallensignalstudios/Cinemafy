@@ -29,7 +29,8 @@ enum class ECinemafyFix : uint8
 	UpdateChanged          UMETA(DisplayName = "Update Changed Scenes"),
 	CastTemplateCharacter  UMETA(DisplayName = "Cast a Template Character"),
 	DressSet               UMETA(DisplayName = "Dress the Set"),
-	LipSync                UMETA(DisplayName = "Lip-Sync (MetaHuman)")
+	LipSync                UMETA(DisplayName = "Lip-Sync (MetaHuman)"),
+	AddPlayerStart         UMETA(DisplayName = "Add a Player Start (off set)")
 };
 
 /** One thing the pre-flight check found, and how to fix it. */

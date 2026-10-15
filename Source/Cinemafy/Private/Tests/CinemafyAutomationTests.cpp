@@ -26,6 +26,7 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Engine/StaticMeshActor.h"
 
 namespace CinemafyTests
 {
@@ -1225,6 +1226,21 @@ bool FCinemafyDeliveryTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("A line in capitals is shouted"), Caps.bHasEmotion && Caps.Emotion == ECinemafyEmotion::Angry);
 	TestFalse(TEXT("A plain line has no direction"), Script::ReadDelivery(FString(), TEXT("Stand down, Admiral.")).bHasEmotion);
 	TestFalse(TEXT("V.O. isn't a feeling"), Script::ReadDelivery(TEXT("(V.O.)"), TEXT("You always did hesitate.")).bHasEmotion);
+
+	// No direction: the words, then the scene's mood. A written direction always wins.
+	const FCinemafyDelivery Love = Script::ReadDelivery(FString(), TEXT("I love you."));
+	TestTrue(TEXT("\"I love you\" is tender: warm and quiet, not laughing"), !Love.Cue.IsEmpty() && Love.Emotion != ECinemafyEmotion::Happy && Love.Intensity < 0.5f && Love.Volume < 1.f);
+	TestEqual(TEXT("\"You are afraid\" is worried"), Script::ReadDelivery(FString(), TEXT("You are afraid.")).Emotion, ECinemafyEmotion::Worried);
+	TestEqual(TEXT("...and so is an assassin"), Script::ReadDelivery(FString(), TEXT("The assassin fired when Caelus named me.")).Emotion, ECinemafyEmotion::Worried);
+	TestEqual(TEXT("\"I am serious\" is determined"), Script::ReadDelivery(FString(), TEXT("I am serious.")).Emotion, ECinemafyEmotion::Determined);
+	const FCinemafyDelivery Quiet = Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("romantic"));
+	TestTrue(TEXT("A plain line in a romantic scene plays tender: quiet, not happy"), !Quiet.Cue.IsEmpty() && Quiet.Emotion != ECinemafyEmotion::Happy && Quiet.Intensity <= 0.5f && Quiet.Volume < 1.f);
+	TestTrue(TEXT("...a calm scene leaves it alone"), Script::ReadDeliveryInMood(FString(), TEXT("Stay a little longer."), TEXT("calm")).Cue.IsEmpty());
+	const FString Darker = Script::MoodAfterLine(TEXT("romantic"), Script::ReadDelivery(FString(), TEXT("The assassin fired when Caelus named me.")));
+	TestEqual(TEXT("Once the words turn dark, a romantic scene plays tense"), Darker, FString(TEXT("tense")));
+	TestEqual(TEXT("...and the next plain line plays uneasy"), Script::ReadDeliveryInMood(FString(), TEXT("Or she knew something I do not."), Darker).Emotion, ECinemafyEmotion::Worried);
+	TestEqual(TEXT("...and a direction beats the mood"), Script::ReadDeliveryInMood(TEXT("(coldly)"), TEXT("Stay."), TEXT("romantic")).Emotion, ECinemafyEmotion::Contempt);
+	TestEqual(TEXT("...and so do the words"), Script::ReadDeliveryInMood(FString(), TEXT("I am serious."), TEXT("romantic")).Emotion, ECinemafyEmotion::Determined);
 	return true;
 }
 
@@ -1682,6 +1698,194 @@ bool FCinemafyPrintedScreenplayTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyScreenplayFinePrintTest, "Cinemafy.Script.ReadsTheFinePrint", CinemafyTests::Flags)
+bool FCinemafyScreenplayFinePrintTest::RunTest(const FString& Parameters)
+{
+	using Script = UCinemafyScriptLibrary;
+	// What a long screenplay taught the reader: on-screen readouts, colons in prose, group cues, voices with no body,
+	// things (not people) that "die", and names that are also words.
+	const FString Text = TEXT(
+		"INT. COMMAND DECK - NIGHT\n"
+		"DECK-01-CS01\n\n"
+		"ON SCREEN:\n"
+		"MISSION ASSESSMENT: OPERATIONAL SUCCESS\n"
+		"ESTIMATED MISSION SUCCESS: 81.7%\n\n"
+		"The contrast settles: Mara in the light, Oren in the dark.\n\n"
+		"Her channel dies. His scream dies in his throat. The dead console flickers.\n\n"
+		"                    MARA\n"
+		"          Report.\n\n"
+		"                    DEAD HAND\n"
+		"          Nothing to report.\n\n"
+		"                    SHIP ANNOUNCEMENT\n"
+		"          All crew to stations.\n\n"
+		"                    OREN\n"
+		"          You heard it.\n\n"
+		"                    MARA AND OREN\n"
+		"          Together, then.\n\n"
+		"INT. COMMAND DECK - LATER\n"
+		"DECK-01-CS02\n\n"
+		"Mara lifts her hand. She lays a palm over her heart instead of the rail, then over her neck.\n\n"
+		"                    MARA\n"
+		"          Again.\n\n"
+		"                    OREN\n"
+		"          Again.\n\n"
+		"                    MARA\n"
+		"          Hold.\n\n"
+		"A dampening field kills Mara's Frost.\n\n"
+		"Oren dies.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = Script::BreakDownScript(Text, true, 5, Title, Report);
+	const FCinemafyScriptScene* Deck = CinemafyTests::FindIn(Acts, TEXT("DECK-01-CS01"));
+	const FCinemafyScriptScene* Later = CinemafyTests::FindIn(Acts, TEXT("DECK-01-CS02"));
+	int32 Scenes = 0;
+	CinemafyTests::CountKind(Acts, ECinemafyScriptLineKind::Dialogue, Scenes);
+	TestEqual(TEXT("A readout is not a chapter, and doesn't split the scene"), Scenes, 2);
+	if (!TestNotNull(TEXT("The first scene"), Deck) || !TestNotNull(TEXT("The second scene"), Later))
+	{
+		return true;
+	}
+	TArray<FString> Shown;
+	for (const FCinemafyScriptLine& Line : Deck->Lines)
+	{
+		if (Line.Kind == ECinemafyScriptLineKind::Display)
+		{
+			Shown.Add(Line.Text);
+		}
+	}
+	TestEqual(TEXT("Everything under ON SCREEN: is shown on screen"), Shown.Num(), 2);
+	TestTrue(TEXT("...line for line"), Shown.Num() == 2 && Shown[1] == TEXT("ESTIMATED MISSION SUCCESS: 81.7%"));
+	for (const TCHAR* NotAPerson : { TEXT("ESTIMATED MISSION SUCCESS"), TEXT("MISSION ASSESSMENT"), TEXT("THE CONTRAST SETTLES"), TEXT("THE CONTRAST") })
+	{
+		TestFalse(FString::Printf(TEXT("%s isn't a character"), NotAPerson), Deck->Characters.Contains(NotAPerson));
+	}
+	TestTrue(TEXT("A colon in a screenplay's prose stays prose"), Deck->Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Kind == ECinemafyScriptLineKind::Action && L.Text.StartsWith(TEXT("The contrast settles:")); }));
+	TestFalse(TEXT("A channel and a scream dying kill nobody"), Deck->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead"); }));
+	TestFalse(TEXT("\"her hand\" isn't DEAD HAND"), Later->Characters.Contains(TEXT("DEAD HAND")));
+	TestFalse(TEXT("...and \"and\" isn't MARA AND OREN"), Later->Characters.Contains(TEXT("MARA AND OREN")));
+	TestFalse(TEXT("\"kills Mara's Frost\" kills the Frost, not Mara"), Later->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead") && F.Character == TEXT("MARA"); }));
+	TestTrue(TEXT("\"Oren dies.\" does"), Later->Changes.ContainsByPredicate([](const FCinemafyContinuityFact& F) { return F.Category == TEXT("Dead") && F.Character == TEXT("OREN"); }));
+	const TArray<FString> Pair = Script::PeopleInCue(TEXT("MARA AND OREN"));
+	TestTrue(TEXT("A group cue is its people"), Pair.Num() == 2 && Pair[0] == TEXT("MARA") && Pair[1] == TEXT("OREN"));
+
+	// In the take, the announcement is heard by whoever just spoke, and the next line waits for it.
+	TArray<FString> NotStaged;
+	const TArray<FCinemafyStagedBeat> Staged = UCinemafyPrevisLibrary::StageScene(*Deck, NotStaged);
+	const FCinemafyStagedBeat* Heard = Staged.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.HeardFrom == TEXT("SHIP ANNOUNCEMENT"); });
+	TestTrue(TEXT("Dead Hand hears the announcement"), Heard && Heard->Character == TEXT("DEAD HAND") && Heard->Line == TEXT("All crew to stations."));
+	TestFalse(TEXT("Nobody plays SHIP ANNOUNCEMENT"), Staged.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("SHIP ANNOUNCEMENT") || B.Target == TEXT("SHIP ANNOUNCEMENT"); }));
+	const FCinemafyStagedBeat* Answer = Staged.FindByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("OREN") && B.Prompt == TEXT("say"); });
+	TestTrue(TEXT("Oren's line waits for the announcement to finish"), Answer && Answer->WaitFor == TEXT("DEAD HAND") && Answer->WaitForLineNumber == 2);
+	TestFalse(TEXT("A group cue is played by one of its people"), Staged.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("MARA AND OREN"); }));
+
+	TestTrue(TEXT("An announcement is a voice, not a body"), Script::IsVoiceOnly(TEXT("SHIP ANNOUNCEMENT"), FString()));
+	TestTrue(TEXT("...so is V.O."), Script::IsVoiceOnly(TEXT("MARA"), TEXT("(V.O.)")));
+	TestFalse(TEXT("...and Mara on the deck isn't"), Script::IsVoiceOnly(TEXT("MARA"), FString()));
+
+	const TArray<FCinemafySetPiece> Dressing = UCinemafyPrevisLibrary::FindSetDressing(*Later);
+	for (const FCinemafySetPiece& Piece : Dressing)
+	{
+		TestFalse(FString::Printf(TEXT("%s isn't set dressing"), *Piece.Name), Piece.Name.Contains(TEXT("neck")) || Piece.Name.Contains(TEXT("collarbone")) || Piece.Name.Contains(TEXT("heart")));
+	}
+
+	// Between a prologue and an epilogue, the story still has three acts, each starting on a chapter.
+	FString Long = TEXT("PROLOGUE\n\nINT. HALL - NIGHT\n\nMara waits.\n\n");
+	for (int32 Chapter = 1; Chapter <= 8; ++Chapter)
+	{
+		Long += FString::Printf(TEXT("DK %02d   CHAPTER NAME\n\nINT. ROOM %d - DAY\n\nMara walks in and looks around the room for a long while.\n\n                    MARA\n          Line %d.\n\n"), Chapter, Chapter, Chapter);
+	}
+	Long += TEXT("EPILOGUE\n\nINT. HALL - DAWN\n\nMara leaves.\n");
+	const TArray<FCinemafyScriptAct> Bookended = Script::BreakDownScript(Long, true, 5, Title, Report);
+	AddInfo(Report);
+	if (TestEqual(TEXT("Prologue, three acts, epilogue"), Bookended.Num(), 5))
+	{
+		TestEqual(TEXT("...opening on the prologue"), Bookended[0].Title, FString(TEXT("Prologue")));
+		TestEqual(TEXT("...closing on the epilogue"), Bookended[4].Title, FString(TEXT("Epilogue")));
+		for (int32 Act = 1; Act <= 3; ++Act)
+		{
+			TestTrue(FString::Printf(TEXT("Act %d starts on a chapter"), Act), Bookended[Act].Chapters.Num() > 0 && Bookended[Act].Chapters[0].Id.StartsWith(TEXT("DK-")));
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyBlockingTest, "Cinemafy.Previs.ReadsYourBlocking", CinemafyTests::Flags)
+bool FCinemafyBlockingTest::RunTest(const FString& Parameters)
+{
+	using Previs = UCinemafyPrevisLibrary;
+	// Your staging, in plain words.
+	TArray<FCinemafyBlock> Blocks = Previs::ReadBlocking(TEXT("Tarrik and Lyessa lie on the bunk, cuddled, for the whole scene."), { TEXT("TARRIK"), TEXT("LYESSA") });
+	if (TestEqual(TEXT("One piece of blocking"), Blocks.Num(), 1))
+	{
+		const FCinemafyBlock& Bunk = Blocks[0];
+		TestEqual(TEXT("...for both of them"), Bunk.Characters.Num(), 2);
+		TestTrue(TEXT("...lying"), Bunk.bPoseGiven && Bunk.Pose == ECinemafyPose::Lie);
+		TestEqual(TEXT("...on the bunk"), Bunk.Place, FString(TEXT("bunk")));
+		TestTrue(TEXT("...cuddled: together"), Bunk.bTogether);
+	}
+	Blocks = Previs::ReadBlocking(TEXT("Kade sits at the console; Thane leans against the window. Her head on his chest."), { TEXT("KADE"), TEXT("ADMIRAL THANE") });
+	if (TestEqual(TEXT("Two people, two places (and a body part isn't a place)"), Blocks.Num(), 2))
+	{
+		TestTrue(TEXT("Kade sits at the console"), Blocks[0].Characters == TArray<FString>{ TEXT("KADE") } && Blocks[0].Pose == ECinemafyPose::Sit && Blocks[0].Place == TEXT("console"));
+		TestTrue(TEXT("Thane leans against the window"), Blocks[1].Characters == TArray<FString>{ TEXT("ADMIRAL THANE") } && Blocks[1].Pose == ECinemafyPose::Lean && Blocks[1].Place == TEXT("window"));
+	}
+	Blocks = Previs::ReadBlocking(TEXT("Mara finds Oren. They cuddle in bed."), { TEXT("MARA"), TEXT("OREN") });
+	TestTrue(TEXT("\"They\" are the last ones named, and \"in bed\" is lying in a bed"),
+		Blocks.Num() == 1 && Blocks[0].Characters.Num() == 2 && Blocks[0].Pose == ECinemafyPose::Lie && Blocks[0].bTogether && Blocks[0].Place == TEXT("bed"));
+
+	// From a Fountain note, held all scene: Mara doesn't walk off the bed.
+	const FString Script = TEXT(
+		"INT. DORM - NIGHT\n\n"
+		"[[BLOCKING: Mara and Oren lie on the bed together.]]\n\n"
+		"Mara walks to the door.\n\n"
+		"MARA\nStay.\n\n"
+		"OREN\nAlways.\n");
+	FString Title, Report;
+	const TArray<FCinemafyScriptAct> Acts = UCinemafyScriptLibrary::BreakDownScript(Script, true, 5, Title, Report);
+	if (!TestTrue(TEXT("One scene"), Acts.Num() == 1 && Acts[0].Chapters.Num() == 1 && Acts[0].Chapters[0].Scenes.Num() == 1))
+	{
+		return true;
+	}
+	const FCinemafyScriptScene& Dorm = Acts[0].Chapters[0].Scenes[0];
+	TestEqual(TEXT("The note is the scene's blocking"), Dorm.Blocking, FString(TEXT("Mara and Oren lie on the bed together.")));
+	TestFalse(TEXT("...and never reads as action"), Dorm.Lines.ContainsByPredicate([](const FCinemafyScriptLine& L) { return L.Text.Contains(TEXT("BLOCKING")) || L.Text.Contains(TEXT("lie on the bed")); }));
+	const TArray<FCinemafyBlock> Scene = Previs::BlockScene(Dorm);
+	TestTrue(TEXT("Both on the bed, lying, together"), Scene.Num() == 1 && Scene[0].Characters.Num() == 2 && Scene[0].Pose == ECinemafyPose::Lie && Scene[0].bTogether && Scene[0].bFromNotes);
+	TArray<FString> NotStaged;
+	const TArray<FCinemafyStagedBeat> Beats = Previs::StageScene(Dorm, NotStaged);
+	TestFalse(TEXT("Held by the blocking: no walk to the door"), Beats.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("MARA") && B.Prompt == TEXT("walk"); }));
+	TestTrue(TEXT("...and the report says so"), NotStaged.ContainsByPredicate([](const FString& Note) { return Note.Contains(TEXT("holds the blocking")); }));
+	TestTrue(TEXT("...but they still talk"), Beats.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("OREN") && B.Prompt == TEXT("say"); }));
+
+	// A pose the opening action sets, before anyone speaks.
+	FCinemafyScriptScene Bridge;
+	Bridge.Characters = { TEXT("KADE") };
+	FCinemafyScriptLine& Opening = Bridge.Lines.AddDefaulted_GetRef();
+	Opening.Kind = ECinemafyScriptLineKind::Action;
+	Opening.Text = TEXT("Kade sits in the command chair.");
+	const TArray<FCinemafyBlock> FromPage = Previs::BlockScene(Bridge);
+	TestTrue(TEXT("The opening action can pose someone too"), FromPage.Num() == 1 && FromPage[0].Pose == ECinemafyPose::Sit && FromPage[0].Place == TEXT("command chair") && !FromPage[0].bFromNotes);
+
+	// Partway through: walk over, then hold the pose from that beat on.
+	const FString Later = TEXT(
+		"INT. DORM - NIGHT\n\n"
+		"TARRIK\nCome here.\n\n"
+		"Lyessa lies down on the bunk beside Tarrik.\n\n"
+		"LYESSA\nOnly for a while.\n\n"
+		"Lyessa walks to the door.\n");
+	const TArray<FCinemafyScriptAct> LaterActs = UCinemafyScriptLibrary::BreakDownScript(Later, true, 5, Title, Report);
+	if (TestTrue(TEXT("One scene"), LaterActs.Num() == 1 && LaterActs[0].Chapters.Num() == 1 && LaterActs[0].Chapters[0].Scenes.Num() == 1))
+	{
+		NotStaged.Reset();
+		const TArray<FCinemafyStagedBeat> Lying = Previs::StageScene(LaterActs[0].Chapters[0].Scenes[0], NotStaged);
+		const int32 Walk = Lying.IndexOfByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("LYESSA") && B.Prompt == TEXT("walk") && B.Place == TEXT("bunk"); });
+		const int32 Down = Lying.IndexOfByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("LYESSA") && B.Pose == ECinemafyPose::Lie; });
+		TestTrue(TEXT("She walks to the bunk, then lies down"), Walk != INDEX_NONE && Down == Walk + 1 && Lying[Down].Place == TEXT("bunk"));
+		TestTrue(TEXT("...after Tarrik's line"), Walk != INDEX_NONE && Lying[Walk].WaitFor == TEXT("TARRIK"));
+		TestFalse(TEXT("...and stays there: no walk to the door"), Lying.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("LYESSA") && B.Place == TEXT("door"); }));
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyGameBibleTest, "Cinemafy.Golden.ReadsTheGameBible", CinemafyTests::Flags)
 bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 {
@@ -1750,3 +1954,55 @@ bool FCinemafyGameBibleTest::RunTest(const FString& Parameters)
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinemafyThingsThatSpeakTest, "Cinemafy.Director.ThingsThatSpeak", CinemafyTests::Flags)
+bool FCinemafyThingsThatSpeakTest::RunTest(const FString& Parameters)
+{
+	CinemafyTests::FTestScene Scene;
+	AStaticMeshActor* Ship = Scene.World->SpawnActor<AStaticMeshActor>();
+	AStaticMeshActor* Statue = Scene.World->SpawnActor<AStaticMeshActor>();
+	Statue->Tags.Add(TEXT("Cinemafy.Person"));
+	AActor* Console = Scene.World->SpawnActor<AActor>();
+	Console->Tags.Add(TEXT("Cinemafy.Thing"));
+
+	TestFalse(TEXT("A placeholder actor is a person"), UCinemafyFramingLibrary::IsThing(Scene.Kara));
+	TestTrue(TEXT("Something that only shows geometry is a thing"), UCinemafyFramingLibrary::IsThing(Ship));
+	TestFalse(TEXT("Tagged a person, it is one"), UCinemafyFramingLibrary::IsThing(Statue));
+	TestTrue(TEXT("Tagged a thing, it is one"), UCinemafyFramingLibrary::IsThing(Console));
+
+	TArray<FCinemafyLine> Lines = Scene.MakeConversation(4);
+	FCinemafyLine Radio;
+	Radio.Speaker = Ship;
+	Radio.Listener = Scene.Kara;
+	Radio.Duration = 4.f;
+	Radio.PauseAfter = 0.5f;
+	Lines.Insert(Radio, 2);
+	FCinemafyLine Reply;
+	Reply.Speaker = Scene.Kara;
+	Reply.Listener = Ship;
+	Reply.Duration = 3.f;
+	Lines.Insert(Reply, 3);
+
+	const FCinemafyDirectorStyle Style = UCinemafyDirectorLibrary::GetPresetStyle(ECinemafyDirectorPreset::ClassicHollywood);
+	const TArray<FCinemafyPlannedShot> Plan = UCinemafyDirectorLibrary::PlanScene(Lines, Style, 7);
+	bool bShipShown = false;
+	for (const FCinemafyPlannedShot& Shot : Plan)
+	{
+		if (Shot.LineIndex == 2 && Shot.Subject == Ship)
+		{
+			bShipShown = true;
+			TestEqual(TEXT("The ship is shown whole"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::Insert));
+		}
+		if (Shot.LineIndex != 2)
+		{
+			TestNotEqual(TEXT("People get people's shots"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::Insert));
+		}
+		TestNotEqual(TEXT("Two people and a ship aren't a group"), static_cast<int32>(Shot.ShotType), static_cast<int32>(ECinemafyShotType::GroupShot));
+		if (Shot.LineIndex == 3)
+		{
+			TestTrue(TEXT("Talking to the ship: no over-the-shoulder of a hull"), Shot.Counterpart != Ship || Shot.ShotType != ECinemafyShotType::OverTheShoulder);
+		}
+	}
+	TestTrue(TEXT("The ship that speaks is seen"), bShipShown);
+	return true;
+}

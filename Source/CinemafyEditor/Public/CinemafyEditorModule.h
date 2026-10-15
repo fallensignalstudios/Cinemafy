@@ -16,4 +16,5 @@ private:
 	FDelegateHandle ChoreoRequestHandle;
 	FDelegateHandle ScriptRequestHandle;
 	FDelegateHandle SequencerCreatedHandle;
+	FDelegateHandle PreExitHandle;
 };

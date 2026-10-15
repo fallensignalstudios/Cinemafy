@@ -21,6 +21,17 @@ public:
 	static bool SolveShot(const FCinemafyShotRequest& Request, FCinemafyShotSolution& OutSolution);
 
 	/**
+	 * Where a character's body is on the floor plan: their hips, at the actor's height. Follows an animation that
+	 * carries the mesh away from the actor (root motion on a clip), which the actor's own location doesn't.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static FVector GetSubjectTrackPoint(const AActor* Actor);
+
+	/** The actor's eyes are within 70 cm of their feet: lying down. Shots of them rise to look down at the face. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static bool IsLyingDown(const AActor* Actor);
+
+	/**
 	 * Like SolveShot, but checks the real world: if the camera would sit inside geometry or something
 	 * blocks the view of the subject, it tries nearby alternatives (swing the angle, step closer on a
 	 * wider lens, raise or lower) that keep the shot's intent and the 180-degree side.
@@ -54,6 +65,15 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
 	static FVector GetEyePoint(const AActor* Actor);
+
+	/**
+	 * Not a person: a ship, a console, a radio. Tag an actor "Cinemafy.Thing" or "Cinemafy.Person" to say; otherwise
+	 * pawns, anything with a skeletal mesh (its own or an attached stand-in's) and placeholders with nothing to see are
+	 * people, and an actor that shows only static meshes or other geometry is a thing. A thing that speaks is shown
+	 * whole on an insert, it isn't counted in the scene's cast, and it's left out of group shots.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Framing")
+	static bool IsThing(const AActor* Actor);
 
 	/**
 	 * Which side of the line of action between two characters a point is on: > 0 is the side

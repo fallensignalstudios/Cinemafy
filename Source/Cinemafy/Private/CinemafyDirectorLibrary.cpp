@@ -1,4 +1,5 @@
 #include "CinemafyDirectorLibrary.h"
+#include "GameFramework/Pawn.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyChoreographyLibrary.h"
 #include "GameFramework/Actor.h"
@@ -449,8 +450,34 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 	constexpr float MinShotLength = 0.8f;
 
 	TArray<FCinemafyPlannedShot> Shots;
+	if (Line.Speaker && Line.Listener && UCinemafyFramingLibrary::IsThing(Line.Listener) && !UCinemafyFramingLibrary::IsThing(Line.Speaker))
+	{
+		// Talking to a thing (into a radio, at a ship): their singles. No over-the-shoulder of a hull.
+		FCinemafyLine Alone = Line;
+		Alone.Listener = nullptr;
+		return PlanLine(Alone, LineIndex, Style, Random, Previous, bOpensScene, StartTime, SceneCast);
+	}
 	if (!Line.Speaker)
 	{
+		// A voice with no body (an announcement, a radio, V.O.): never black. Watch whoever hears it, else hold the
+		// last shot through it, else the first of the cast.
+		AActor* Hearer = Line.Listener ? Line.Listener.Get() : (Previous || SceneCast.Num() == 0 ? nullptr : SceneCast[0]);
+		if (Hearer)
+		{
+			FCinemafyLine Heard = Line;
+			Heard.Speaker = Hearer;
+			Heard.Listener = nullptr;
+			return PlanLine(Heard, LineIndex, Style, Random, Previous, bOpensScene, StartTime, SceneCast);
+		}
+		if (Previous)
+		{
+			FCinemafyPlannedShot Held = *Previous;
+			Held.StartTime = StartTime;
+			Held.Duration = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+			Held.LineIndex = LineIndex;
+			Held.bLineStart = true;
+			Shots.Add(Held);
+		}
 		return Shots;
 	}
 
@@ -465,6 +492,8 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		Intensity = FMath::Min(Intensity + 0.15f, 1.f);
 	}
 	const FVector2D LengthRange = FMath::Lerp(Style.CalmShotLength, Style.IntenseShotLength, Intensity);
+	// No flash cuts in a calm scene: the shortest shot scales with the pace (action keeps its own, cut on the hits).
+	const float MinLength = Line.bAction ? MinShotLength : FMath::Lerp(FMath::Max(MinShotLength, static_cast<float>(Style.CalmShotLength.X) * 0.5f), MinShotLength, Intensity);
 	float Remaining = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
 
 	// Cut on action: every impact becomes a cut a few frames early, so the hit lands in the new shot.
@@ -503,7 +532,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			// Action is cut by its impacts, not by a clock.
 			Length = NextActionCut ? *NextActionCut - SegmentStartInLine : Remaining;
 		}
-		else if (Remaining - Length < MinShotLength)
+		else if (Remaining - Length < MinLength)
 		{
 			Length = Remaining;
 		}
@@ -514,7 +543,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			float BestPause = -1.f;
 			for (const float Pause : Line.Analysis.PauseTimes)
 			{
-				const bool bLongEnough = Pause - SegmentStart >= MinShotLength && Remaining - (Pause - SegmentStart) >= MinShotLength;
+				const bool bLongEnough = Pause - SegmentStart >= MinLength && Remaining - (Pause - SegmentStart) >= MinLength;
 				if (bLongEnough && FMath::Abs(Pause - (SegmentStart + Length)) < 0.7f &&
 					(BestPause < 0.f || FMath::Abs(Pause - (SegmentStart + Length)) < FMath::Abs(BestPause - (SegmentStart + Length))))
 				{
@@ -546,7 +575,8 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		}
 
 		FString Why;
-		if (Line.Listener && Segment > 0 && (bBeat || Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f)))
+		// A reaction needs time to read: too short a piece stays on the speaker.
+		if (Line.Listener && Segment > 0 && (bBeat || (Length >= MinLength * 1.2f && Random.FRand() < Style.ReactionShotChance * (bInPause ? 1.6f : 1.f))))
 		{
 			Shot.Subject = Line.Listener;
 			Shot.Counterpart = Line.Speaker;
@@ -594,7 +624,7 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 			if (!Shot.Subject || (UCinemafyFramingLibrary::ShotNeedsCounterpart(Shot.ShotType) && (!Shot.Counterpart || Shot.Counterpart == Shot.Subject)))
 			{
 				// Nobody to share the frame with (or look through): the nearest single on the same subject.
-				Shot.Subject = Shot.Subject ? Shot.Subject : On;
+				if (!Shot.Subject) { Shot.Subject = On; }
 				Shot.ShotType = Shot.ShotType == ECinemafyShotType::POV ? ECinemafyShotType::MediumCloseUp : ECinemafyShotType::MediumShot;
 			}
 			Why = Line.ShotCall.IsEmpty() ? FString(TEXT("forced by the script")) : FString::Printf(TEXT("the script calls \"%s\""), *Line.ShotCall);
@@ -809,6 +839,31 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanLine(const FCinemafyL
 		Time += Length;
 		Remaining -= Length;
 	}
+
+	// The one speaking isn't a person (a carrier on the radio, a console, a ship): show the thing, framed whole, then
+	// watch whoever hears it. Not a close-up on a hull.
+	if (UCinemafyFramingLibrary::IsThing(Line.Speaker))
+	{
+		for (FCinemafyPlannedShot& Shot : Shots)
+		{
+			if (Shot.bLineStart || !Line.Listener)
+			{
+				Shot.ShotType = ECinemafyShotType::Insert;
+				Shot.Subject = Line.Speaker;
+				Shot.Counterpart = Line.Listener;
+				Shot.bIsReaction = false;
+				Shot.Reason = FString::Printf(TEXT("Line %d: Insert on %s (it speaks: shown whole, not as a face)"), LineIndex + 1, *ActorName(Line.Speaker));
+			}
+			else
+			{
+				Shot.ShotType = ECinemafyShotType::MediumCloseUp;
+				Shot.Subject = Line.Listener;
+				Shot.Counterpart = Line.Speaker;
+				Shot.bIsReaction = true;
+				Shot.Reason = FString::Printf(TEXT("Line %d: Medium Close-Up on %s, hearing %s"), LineIndex + 1, *ActorName(Line.Listener), *ActorName(Line.Speaker));
+			}
+		}
+	}
 	return Shots;
 }
 
@@ -835,9 +890,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 	TMap<int32, TArray<AActor*>> CastByScene;
 	for (const FCinemafyLine& Line : Lines)
 	{
+		// People only: a ship on the radio doesn't make two people a group (or stretch a group shot out to it).
 		TArray<AActor*>& SceneCast = CastByScene.FindOrAdd(Line.SceneId);
-		if (Line.Speaker) { SceneCast.AddUnique(Line.Speaker); }
-		if (Line.Listener) { SceneCast.AddUnique(Line.Listener); }
+		if (Line.Speaker && !UCinemafyFramingLibrary::IsThing(Line.Speaker)) { SceneCast.AddUnique(Line.Speaker); }
+		if (Line.Listener && !UCinemafyFramingLibrary::IsThing(Line.Listener)) { SceneCast.AddUnique(Line.Listener); }
 	}
 	TArray<FCinemafyPlannedShot> Plan;
 	float Time = 0.f;
@@ -902,9 +958,10 @@ TArray<FCinemafyPlannedShot> UCinemafyDirectorLibrary::PlanScene(const TArray<FC
 		FCinemafyPlannedShot& Held = Plan[Index];
 		const FCinemafyPlannedShot& Next = Plan[Index + 1];
 		if (!Next.bLineStart || Next.TransitionIn != ECinemafyTransition::Cut || !IsTwoShot(Held.ShotType)
-			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex) || Lines[Next.LineIndex].bForceShot)
+			|| Held.ShotType == ECinemafyShotType::GroupShot || !Lines.IsValidIndex(Next.LineIndex) || Lines[Next.LineIndex].bForceShot
+			|| Lines[Next.LineIndex].bMoving || (Lines.IsValidIndex(Held.LineIndex) && Lines[Held.LineIndex].bMoving))
 		{
-			continue;
+			continue; // Nor across a walk: the next line's tracking shot would be lost to a two-shot framed before it.
 		}
 
 		const FCinemafyLine& NextLine = Lines[Next.LineIndex];

@@ -1599,6 +1599,15 @@ TArray<FCinemafyLine> UCinemafyChoreographyLibrary::BuildDirectorLines(const TAr
 				Line.Note += FString::Printf(TEXT(" [%s]"), *Delivery.Cue);
 			}
 			SpeechEnd = Beat.LineStartTime + Beat.LineDuration;
+			if (!Beat.HeardFrom.IsEmpty())
+			{
+				// Heard, not said: no body speaks it, and the camera watches the one hearing it.
+				Line.Speaker = nullptr;
+				Line.Listener = Performer;
+				Line.SpeakerName = FText::FromString(Beat.HeardFrom);
+				Line.Moment = ECinemafyMoment::Dialogue;
+				continue;
+			}
 			if (Line.Listener)
 			{
 				LastListener = Line.Listener;

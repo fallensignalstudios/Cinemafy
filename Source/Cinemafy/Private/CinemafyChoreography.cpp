@@ -2,6 +2,7 @@
 #include "CinemafyModule.h"
 #include "CinemafyPerformerProfile.h"
 #include "CinemafyProduction.h"
+#include "CinemafyPrevis.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
@@ -549,9 +550,75 @@ void ACinemafyChoreography::PostEditChangeProperty(FPropertyChangedEvent& Event)
 void ACinemafyChoreography::BeginPlay()
 {
 	Super::BeginPlay();
+	if (bPerformOnNextPlay)
+	{
+		// The player's pawn may not be spawned yet: hide it once the world is running.
+		GetWorldTimerManager().SetTimerForNextTick(this, &ACinemafyChoreography::HidePlayerForTake);
+	}
 	if (bPerformOnBeginPlay || bPerformOnNextPlay)
 	{
 		Perform();
+	}
+}
+
+void ACinemafyChoreography::TakePose(ECinemafyPose Pose, const FVector& Point)
+{
+	ACharacter* Character = Performer;
+	USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	if (!Mesh || Pose == ECinemafyPose::Stand)
+	{
+		return;
+	}
+	bHoldPose = true;
+	const USkeleton* Skeleton = Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+	UAnimSequenceBase* Clip = UCinemafyPrevisLibrary::FindPoseAnimation(Pose, Skeleton, false, 0);
+	const FString PoseName = StaticEnum<ECinemafyPose>()->GetNameStringByValue(static_cast<int64>(Pose));
+	if (!Clip)
+	{
+		AddEvent(ECinemafyPerformanceEventKind::BeatStart, true, FString::Printf(TEXT("no %s clip: stays standing (set Project Settings > Cinemafy > Staging > Pose Animations)"), *PoseName));
+		return;
+	}
+	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->GravityScale = 0.f;
+	}
+	if (UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
+	{
+		Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	}
+	Mesh->PlayAnimation(Clip, true);
+	PoseSettlePoint = Point;
+	PoseSettling = Pose;
+	PoseSettleFrames = 2;
+	AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("%s (%s)"), *PoseName.ToLower(), *Clip->GetName()));
+}
+
+void ACinemafyChoreography::HidePlayerForTake()
+{
+	APlayerController* Controller = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
+	if (!Pawn || Pawn->IsHidden())
+	{
+		return;
+	}
+	for (TActorIterator<ACinemafyChoreography> It(GetWorld()); It; ++It)
+	{
+		if (It->Performer == Pawn)
+		{
+			return; // The player is in the scene: they stay.
+		}
+	}
+	// Recording a take: the pawn at the Player Start would walk into the background of the cast's shots.
+	Pawn->SetActorHiddenInGame(true);
+	Pawn->SetActorEnableCollision(false);
+	Pawn->DisableInput(Controller);
+	if (ACharacter* Character = Cast<ACharacter>(Pawn))
+	{
+		if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+		{
+			Movement->DisableMovement();
+		}
 	}
 }
 
@@ -889,8 +956,13 @@ void ACinemafyChoreography::BuildRig()
 	}
 
 	EffectiveFallbackSpeeds = P ? P->FallbackSpeeds : FallbackSpeeds;
-	WiringReport = FString::Join(Report, TEXT("; "));
-	UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography wiring for %s: %s"), *GetNameSafe(Performer), *WiringReport);
+	// Wiring runs again with every beat: say so once, and again only when it changes.
+	const FString NewReport = FString::Join(Report, TEXT("; "));
+	if (NewReport != WiringReport)
+	{
+		WiringReport = NewReport;
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Choreography wiring for %s: %s"), *GetNameSafe(Performer), *WiringReport);
+	}
 }
 
 FString UCinemafyPerformerProfile::Validate(const ACharacter* Character) const
@@ -1263,6 +1335,34 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// A pose just taken: the clip has moved the body by now; put the hips over the point, just above what's there.
+	if (PoseSettleFrames >= 0 && Performer && --PoseSettleFrames < 0)
+	{
+		const USkeletalMeshComponent* Mesh = Performer->GetMesh();
+		FVector Hips = Mesh ? Mesh->Bounds.Origin : Performer->GetActorLocation();
+		for (const TCHAR* Bone : { TEXT("pelvis"), TEXT("Pelvis"), TEXT("hips"), TEXT("Hips") })
+		{
+			if (Mesh && Mesh->GetBoneIndex(Bone) != INDEX_NONE)
+			{
+				Hips = Mesh->GetBoneLocation(Bone);
+				break;
+			}
+		}
+		float Surface = PoseSettlePoint.Z;
+		FHitResult Hit;
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyTakePose), false, Performer);
+		if (GetWorld()->LineTraceSingleByChannel(Hit, PoseSettlePoint + FVector(0.f, 0.f, 150.f), PoseSettlePoint - FVector(0.f, 0.f, 300.f), ECC_Visibility, Query))
+		{
+			Surface = Hit.ImpactPoint.Z;
+		}
+		FVector Move(PoseSettlePoint.X - Hips.X, PoseSettlePoint.Y - Hips.Y, 0.f);
+		if (PoseSettling == ECinemafyPose::Lie || PoseSettling == ECinemafyPose::Sit)
+		{
+			Move.Z = Surface + (PoseSettling == ECinemafyPose::Lie ? 14.f : 10.f) - Hips.Z;
+		}
+		Performer->SetActorLocation(Performer->GetActorLocation() + Move, false, nullptr, ETeleportType::TeleportPhysics);
+	}
+
 	if (!bPerforming)
 	{
 		UWorld* World = GetWorld();
@@ -1458,16 +1558,18 @@ void ACinemafyChoreography::StartLine()
 		LastAddressed = Listener;
 	}
 
+	// A heard line (an announcement, a radio) comes from nowhere in particular and carries the voice's name.
+	const bool bHeard = !Beat.HeardFrom.IsEmpty();
 	if (Beat.DialogueAudio)
 	{
-		LineAudio = UGameplayStatics::SpawnSoundAttached(Beat.DialogueAudio, Performer->GetRootComponent());
+		LineAudio = bHeard ? UGameplayStatics::SpawnSound2D(this, Beat.DialogueAudio) : UGameplayStatics::SpawnSoundAttached(Beat.DialogueAudio, Performer->GetRootComponent());
 	}
 	UWorld* World = GetWorld();
 	if (bShowSubtitlesWhilePerforming && !Text.IsEmpty() && World)
 	{
 		if (UCinemafySubtitleSubsystem* Subtitles = World->GetSubsystem<UCinemafySubtitleSubsystem>())
 		{
-			Subtitles->ShowSubtitle(FText::FromString(Performer->GetActorNameOrLabel()), Text, Seconds);
+			Subtitles->ShowSubtitle(FText::FromString(bHeard ? Beat.HeardFrom : Performer->GetActorNameOrLabel()), Text, Seconds);
 		}
 	}
 	if (World)
@@ -1544,6 +1646,10 @@ void ACinemafyChoreography::StartBeat()
 
 	const FVector Here = Performer->GetActorLocation();
 	const FVector Point = GetBeatWorldLocation(CurrentBeat);
+	if (Beat.PoseHere != ECinemafyPose::Stand)
+	{
+		TakePose(Beat.PoseHere, Point);
+	}
 	const FVector TargetPoint = GetTargetPoint(Beat, CurrentBeat);
 	const float Distance = FVector::Dist2D(Here, TargetPoint);
 
@@ -1751,12 +1857,14 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 		}
 		if (!IsCueReady())
 		{
-			if (CueWaitTime > CueTimeout)
+			if (CueWaitTime <= CueTimeout)
 			{
-				FinishBeat(ECinemafyBeatOutcome::TimedOut, FString::Printf(TEXT("Waited %.0fs for %s's line, which never came (are they in the take, and do they have a line?)"),
-					CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat))));
+				return;
 			}
-			return;
+			// A cue that never comes doesn't take this beat's own line down with it: say so, and go ahead.
+			AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("waited %.0fs for %s's line, which never came (are they in the take, and do they have a line?): went ahead"),
+				CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat))));
+			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: %s waited %.0fs for %s's line, which never came; went ahead."), *GetNameSafe(Performer), CueTimeout, *GetNameSafe(GetCueActor(CurrentBeat)));
 		}
 		bWaitingForCue = false;
 		AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("cue from %s"), *GetNameSafe(GetCueActor(CurrentBeat))));
@@ -1782,6 +1890,13 @@ void ACinemafyChoreography::TickBeat(float DeltaSeconds)
 	{
 	case EPhase::Approach:
 	{
+		if (bHoldPose)
+		{
+			// Posed (lying, seated): they act from where they are.
+			Phase = EPhase::Face;
+			PhaseTime = 0.f;
+			return;
+		}
 		// Blocked: report it honestly instead of running into the wall forever (or pretending we arrived).
 		StuckTimer += DeltaSeconds;
 		if (StuckTimer > 1.2f)
@@ -2185,6 +2300,10 @@ bool ACinemafyChoreography::SteerTo(const FVector& Destination, float Radius, fl
 
 bool ACinemafyChoreography::FaceToward(const FVector& Point, float DeltaSeconds)
 {
+	if (bHoldPose)
+	{
+		return true; // Lying on a bed, seated: turning in place would spin them on it.
+	}
 	const FVector Direction = (Point - Performer->GetActorLocation()).GetSafeNormal2D();
 	if (Direction.IsNearlyZero())
 	{

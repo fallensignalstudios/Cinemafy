@@ -1,4 +1,5 @@
 #include "CinemafyEditorLibrary.h"
+#include "CinemafyDialog.h"
 #include "CinemafyChoreoTools.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyScript.h"
@@ -8,11 +9,16 @@
 #include "GameFramework/Character.h"
 #include "CinemafyModule.h"
 #include "CinemafySequencerUtils.h"
+#include "CinemafyMood.h"
+#include "CinemafyPrevis.h"
 #include "CinemafyCameraLibrary.h"
 #include "CinemafyFramingLibrary.h"
 #include "CinemafyCameraFeelComponent.h"
 #include "CinemafyCameraMoveComponent.h"
 #include "CinemafyFollowComponent.h"
+#include "Tracks/MovieScene3DTransformTrack.h"
+#include "Sections/MovieScene3DTransformSection.h"
+#include "Channels/MovieSceneDoubleChannel.h"
 #include "Sound/SoundWave.h"
 #include "Tracks/MovieSceneAudioTrack.h"
 #include "Animation/AnimSequenceBase.h"
@@ -82,6 +88,7 @@
 #include "MovieSceneObjectBindingID.h"
 #include "Tracks/MovieSceneCameraCutTrack.h"
 #include "Tracks/MovieSceneSkeletalAnimationTrack.h"
+#include "Sections/MovieSceneSkeletalAnimationSection.h"
 
 #define LOCTEXT_NAMESPACE "CinemafyEditor"
 
@@ -396,7 +403,7 @@ int32 UCinemafyEditorLibrary::AddSelectedCamerasToSequence()
 {
 	if (!CinemafySequencer::GetOpenSequence())
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open a Level Sequence in Sequencer first."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoSequence", "Open a Level Sequence in Sequencer first."));
 		return 0;
 	}
 
@@ -437,7 +444,7 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 
 	if (Characters.Num() != 2 || Cameras.Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LineCheckSelection",
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("LineCheckSelection",
 			"Select exactly two characters (the line of action runs between them) and the cameras you want to check."));
 		return -1;
 	}
@@ -461,7 +468,7 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 	const TArray<AActor*>& Offenders = (NegativeSide.Num() <= PositiveSide.Num()) ? NegativeSide : PositiveSide;
 	if (Offenders.Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckClean",
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckClean",
 			"All {0} cameras are on the same side of the line between {1} and {2}. Cut away!"),
 			Cameras.Num(), FText::FromString(Characters[0]->GetActorLabel()), FText::FromString(Characters[1]->GetActorLabel())));
 		return 0;
@@ -480,7 +487,7 @@ int32 UCinemafyEditorLibrary::CheckLineOfActionForSelection()
 	}
 	GEditor->NoteSelectionChange();
 
-	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckCrossed",
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("LineCheckCrossed",
 		"{0} camera(s) are across the line from the rest (now selected). Cutting between the two sides will flip screen direction:{1}\n\nMove them across, or bridge the jump with a shot on the line or a camera move that crosses it on screen."),
 		Offenders.Num(), FText::FromString(Names)));
 	return Offenders.Num();
@@ -589,7 +596,7 @@ bool UCinemafyEditorLibrary::SetUpGameplayBlendForOpenSequence(float BlendInSeco
 	UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
 	if (!CutTrack || CutTrack->GetAllSections().Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("NoCuts", "Open a Level Sequence with a camera cut track first (Create Shot adds one for you)."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("NoCuts", "Open a Level Sequence with a camera cut track first (Create Shot adds one for you)."));
 		return false;
 	}
 
@@ -707,13 +714,50 @@ namespace
 			}
 		}
 
+		// Cuts to Cinemafy cameras ("CAM_...") that no longer exist: an earlier staging's director made them and its
+		// cameras are gone. Left in, they pile up under the new cut and drop the view to the player wherever they win.
+		UMovieScene* MovieScene = Sequence->GetMovieScene();
+		const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer();
+		const bool bCanResolve = Sequencer.IsValid() && CinemafySequencer::GetOpenSequence() == Sequence;
+		TSet<FGuid> DeadCameras;
+		auto IsDeadCamera = [&](const FGuid& Guid)
+		{
+			if (!bCanResolve || !MovieScene)
+			{
+				return false;
+			}
+			const FMovieScenePossessable* Possessable = MovieScene->FindPossessable(Guid);
+			if (!Possessable || !Possessable->GetName().StartsWith(TEXT("CAM_")))
+			{
+				return false;
+			}
+			for (const TWeakObjectPtr<UObject>& Bound : Sequencer->FindBoundObjects(Guid, MovieSceneSequenceID::Root))
+			{
+				if (Bound.IsValid())
+				{
+					return false;
+				}
+			}
+			return true;
+		};
+
 		TArray<UMovieSceneSection*> ToRemove;
 		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
 		{
 			const UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
-			if (Cut && DirectorBindings.Contains(Cut->GetCameraBindingID().GetGuid()))
+			if (!Cut)
+			{
+				continue;
+			}
+			const FGuid Guid = Cut->GetCameraBindingID().GetGuid();
+			if (DirectorBindings.Contains(Guid))
 			{
 				ToRemove.Add(Section);
+			}
+			else if (IsDeadCamera(Guid))
+			{
+				ToRemove.Add(Section);
+				DeadCameras.Add(Guid);
 			}
 		}
 
@@ -721,6 +765,31 @@ namespace
 		for (UMovieSceneSection* Section : ToRemove)
 		{
 			CutTrack->RemoveSection(*Section);
+		}
+		if (DeadCameras.Num() > 0)
+		{
+			Sequence->Modify();
+			MovieScene->Modify();
+			for (const FGuid& Guid : DeadCameras)
+			{
+				// The camera's components and tracks go with it.
+				TArray<FGuid> Children;
+				for (int32 Index = 0; Index < MovieScene->GetPossessableCount(); ++Index)
+				{
+					if (MovieScene->GetPossessable(Index).GetParent() == Guid)
+					{
+						Children.Add(MovieScene->GetPossessable(Index).GetGuid());
+					}
+				}
+				for (const FGuid& Child : Children)
+				{
+					Sequence->UnbindPossessableObjects(Child);
+					MovieScene->RemovePossessable(Child);
+				}
+				Sequence->UnbindPossessableObjects(Guid);
+				MovieScene->RemovePossessable(Guid);
+			}
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: dropped %d camera cut(s) to %d deleted camera(s) from earlier stagings."), ToRemove.Num(), DeadCameras.Num());
 		}
 		return ToRemove.Num();
 	}
@@ -760,6 +829,8 @@ namespace
 		if (Section)
 		{
 			Section->SetRange(TRange<FFrameNumber>::All());
+			// Whatever the project's default: when the sequence stops, the camera and cast go back as they were.
+			Section->SetCompletionMode(EMovieSceneCompletionMode::RestoreState);
 			Track->AddSection(*Section);
 		}
 		return Section;
@@ -771,6 +842,212 @@ namespace
 		FFrameNumber End;
 		const FCinemafyPlannedShot* Shot = nullptr;
 	};
+
+	const TCHAR* const CameraTrackName = TEXT("Cinemafy Camera Track");
+
+	/** The camera's own transform tracks (Cinemafy's, or Sequencer's default Transform): the camera's position is keyed by us. */
+	TArray<UMovieScene3DTransformTrack*> CameraTransformTracks(UMovieScene* MovieScene, const FGuid& Binding)
+	{
+		TArray<UMovieScene3DTransformTrack*> Found;
+		const UMovieScene* ConstMovieScene = MovieScene;
+		if (const FMovieSceneBinding* Existing = Binding.IsValid() ? ConstMovieScene->FindBinding(Binding) : nullptr)
+		{
+			for (UMovieSceneTrack* Track : Existing->GetTracks())
+			{
+				if (UMovieScene3DTransformTrack* Transform = Cast<UMovieScene3DTransformTrack>(Track))
+				{
+					Found.Add(Transform);
+				}
+			}
+		}
+		return Found;
+	}
+
+	/**
+	 * Takes a camera off its earlier tracking keys: back to where it was framed (the first key of the last bake, which
+	 * is always the framed position) with the track gone, so it can be reused or re-framed cleanly.
+	 */
+	void ResetCameraTracking(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera)
+	{
+		const FGuid Binding = CinemafySequencer::FindBinding(Sequence, Camera);
+		for (UMovieScene3DTransformTrack* Track : CameraTransformTracks(MovieScene, Binding))
+		{
+			if (Track->GetDisplayName().ToString() != CameraTrackName)
+			{
+				continue;
+			}
+			const TArray<UMovieSceneSection*>& Sections = Track->GetAllSections();
+			if (Sections.Num() > 0)
+			{
+				const TArrayView<FMovieSceneDoubleChannel*> Channels = Sections[0]->GetChannelProxy().GetChannels<FMovieSceneDoubleChannel>();
+				if (Channels.Num() >= 6 && Channels[0]->GetNumKeys() > 0)
+				{
+					auto First = [&Channels](int32 Index) { return Channels[Index]->GetValues()[0].Value; };
+					Camera->Modify();
+					Camera->SetActorLocationAndRotation(FVector(First(0), First(1), First(2)), FRotator(First(4), First(5), First(3)));
+				}
+			}
+			MovieScene->RemoveTrack(*Track);
+		}
+	}
+
+	/**
+	 * Cameras keep people in frame when they move during the shot, whether they walk (the take moves the actor) or an
+	 * animation carries the body (root motion on a clip): the sequence is played through each shot and the camera is
+	 * keyed. Walk-and-talk shots ride along at the offset they were framed at. Other shots hold their spot and pan and
+	 * tilt to keep the face where the shot put it (a small dead zone, eased like an operator would), and dolly after
+	 * someone who walks more than a metre or so away. A shot nobody moves in gets no keys. Returns how many shots moved.
+	 */
+	int32 BakeCameraTracking(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera, const TArray<FCameraShotWindow>& Windows,
+		const TSharedPtr<ISequencer>& Sequencer)
+	{
+		if (!Camera || !Sequencer.IsValid() || Sequencer->GetFocusedMovieSceneSequence() != Sequence || Windows.Num() == 0)
+		{
+			return 0;
+		}
+		const FGuid Binding = CinemafySequencer::FindBinding(Sequence, Camera);
+		if (!Binding.IsValid())
+		{
+			return 0;
+		}
+		const FFrameRate TickResolution = MovieScene->GetTickResolution();
+		const FTransform Rest = Camera->GetActorTransform();
+		const float Step = 0.2f;
+		struct FCameraKey { FFrameNumber Frame; FVector Location; FRotator Rotation; };
+		TArray<FCameraKey> Keys;
+		int32 Moved = 0;
+		TArray<FCameraShotWindow> Sorted = Windows;
+		Sorted.Sort([](const FCameraShotWindow& A, const FCameraShotWindow& B) { return A.Start < B.Start; });
+		for (const FCameraShotWindow& Window : Sorted)
+		{
+			const FCinemafyPlannedShot* Shot = Window.Shot;
+			AActor* Subject = Shot ? Shot->Subject.Get() : nullptr;
+			if (Keys.Num() > 0 && Keys.Last().Frame >= Window.Start)
+			{
+				continue; // Overlapping use of one camera: the earlier shot's keys stand.
+			}
+			Keys.Add({ Window.Start, Rest.GetLocation(), Rest.Rotator() });
+			if (!Subject)
+			{
+				continue;
+			}
+			const bool bTracking = Shot->ShotType == ECinemafyShotType::TrackingLead || Shot->ShotType == ECinemafyShotType::TrackingFollow;
+			const double Ticks = static_cast<double>((Window.End - Window.Start).Value);
+			const int32 Samples = FMath::Clamp(FMath::CeilToInt(TickResolution.AsSeconds(FFrameTime(Window.End - Window.Start)) / Step), 1, 900);
+			FVector Body0 = FVector::ZeroVector;
+			FTransform Offset = FTransform::Identity;
+			FRotator Aim0 = FRotator::ZeroRotator;
+			FVector Carried = FVector::ZeroVector;
+			FVector Location = Rest.GetLocation();
+			FRotator Rotation = Rest.Rotator();
+			bool bShotMoved = false;
+			for (int32 Sample = 0; Sample <= Samples; ++Sample)
+			{
+				const FFrameNumber Frame = Window.Start + FFrameNumber(static_cast<int32>(FMath::RoundToDouble(Ticks * Sample / Samples)));
+				Sequencer->SetLocalTimeDirectly(FFrameTime(Frame));
+				Sequencer->ForceEvaluate();
+				const FVector Body = UCinemafyFramingLibrary::GetSubjectTrackPoint(Subject);
+				const FVector Eye = UCinemafyFramingLibrary::GetEyePoint(Subject);
+				const FTransform SubjectFrame(FRotator(0.f, Subject->GetActorRotation().Yaw, 0.f), Body);
+				if (Sample == 0)
+				{
+					Body0 = Body;
+					Offset = Rest.GetRelativeTransform(SubjectFrame);
+					Aim0 = (Eye - Rest.GetLocation()).Rotation();
+					continue;
+				}
+				FVector WantLocation;
+				FRotator WantRotation;
+				if (bTracking)
+				{
+					// Riding along at the framed offset.
+					const FTransform Along = Offset * SubjectFrame;
+					WantLocation = Along.GetLocation();
+					WantRotation = Along.Rotator();
+				}
+				else
+				{
+					// Dolly after them once they've gone more than 1.2 m from where the shot was framed.
+					const FVector Travel = FVector(Body.X - Body0.X, Body.Y - Body0.Y, 0.f);
+					const float Distance = Travel.Size();
+					const FVector Want = Distance > 120.f ? Travel / Distance * (Distance - 120.f) : FVector::ZeroVector;
+					Carried = FMath::VInterpTo(Carried, Want, Step, 2.5f);
+					WantLocation = Rest.GetLocation() + Carried;
+					// Pan and tilt to keep their eyes where the shot put them, past a 2 degree dead zone.
+					const FRotator Aim = (Eye - WantLocation).Rotation();
+					auto Beyond = [](float Degrees) { return FMath::Abs(Degrees) < 2.f ? 0.f : Degrees - FMath::Sign(Degrees) * 2.f; };
+					WantRotation = Rest.Rotator();
+					WantRotation.Yaw += Beyond(FRotator::NormalizeAxis(Aim.Yaw - Aim0.Yaw));
+					WantRotation.Pitch = FMath::Clamp(WantRotation.Pitch + Beyond(FRotator::NormalizeAxis(Aim.Pitch - Aim0.Pitch)), -85.f, 85.f);
+				}
+				// Eased toward it, like an operator: no snapping on a step.
+				const float Ease = bTracking ? 6.f : 4.f;
+				Location = FMath::VInterpTo(Location, WantLocation, Step, Ease);
+				Rotation = FMath::RInterpTo(Rotation, WantRotation, Step, Ease);
+				bShotMoved |= !Location.Equals(Rest.GetLocation(), 3.f) || !Rotation.Equals(Rest.Rotator(), 0.5f);
+				Keys.Add({ Frame, Location, Rotation });
+			}
+			Moved += bShotMoved ? 1 : 0;
+		}
+		Camera->SetActorTransform(Rest);
+		for (UMovieScene3DTransformTrack* Track : CameraTransformTracks(MovieScene, Binding))
+		{
+			if (Track->GetDisplayName().ToString() == CameraTrackName)
+			{
+				MovieScene->RemoveTrack(*Track);
+			}
+		}
+		if (Moved == 0)
+		{
+			return 0; // Nobody moved: the camera holds where it was framed.
+		}
+
+		// Sequencer's own Transform track would pin it: ours drives the camera now.
+		CinemafySequencer::MuteBindingTracks(MovieScene, Binding, TEXT("MovieScene3DTransformTrack"));
+		UMovieScene3DTransformTrack* Track = MovieScene->AddTrack<UMovieScene3DTransformTrack>(Binding);
+		Track->SetDisplayName(FText::FromString(CameraTrackName));
+		UMovieScene3DTransformSection* Section = Cast<UMovieScene3DTransformSection>(Track->CreateNewSection());
+		if (!Section)
+		{
+			return 0;
+		}
+		// Bounded to the keys, and restoring the camera after: no state left behind outside the cut.
+		Section->SetRange(TRange<FFrameNumber>(Keys[0].Frame, Keys.Last().Frame + 1));
+		Section->SetCompletionMode(EMovieSceneCompletionMode::RestoreState);
+		Track->AddSection(*Section);
+		const TArrayView<FMovieSceneDoubleChannel*> Channels = Section->GetChannelProxy().GetChannels<FMovieSceneDoubleChannel>();
+		if (Channels.Num() < 9)
+		{
+			return 0;
+		}
+		for (int32 Index = 6; Index < 9; ++Index)
+		{
+			Channels[Index]->SetDefault(1.0);
+		}
+		// Unwound angles, so a pan across 180 degrees doesn't spin the long way round between keys.
+		FRotator Previous = Keys[0].Rotation;
+		for (const FCameraKey& Key : Keys)
+		{
+			FRotator Rotation = Key.Rotation;
+			Rotation.Yaw = Previous.Yaw + FRotator::NormalizeAxis(Rotation.Yaw - Previous.Yaw);
+			Rotation.Pitch = Previous.Pitch + FRotator::NormalizeAxis(Rotation.Pitch - Previous.Pitch);
+			Rotation.Roll = Previous.Roll + FRotator::NormalizeAxis(Rotation.Roll - Previous.Roll);
+			Previous = Rotation;
+			Channels[0]->AddCubicKey(Key.Frame, Key.Location.X);
+			Channels[1]->AddCubicKey(Key.Frame, Key.Location.Y);
+			Channels[2]->AddCubicKey(Key.Frame, Key.Location.Z);
+			Channels[3]->AddCubicKey(Key.Frame, Rotation.Roll);
+			Channels[4]->AddCubicKey(Key.Frame, Rotation.Pitch);
+			Channels[5]->AddCubicKey(Key.Frame, Rotation.Yaw);
+		}
+		// The keys drive it now; the live follow rig (for the Story Player's live scenes) would fight them here.
+		if (UCinemafyFollowComponent* Follow = Camera->FindComponentByClass<UCinemafyFollowComponent>())
+		{
+			Follow->Modify();
+			Follow->Weight = 0.f;
+		}
+		return Moved;
+	}
 
 	/** Keys a camera's Move Progress: 0 -> 1 across each moving shot, held at 0 on the others. */
 	void BakeCameraMoves(ULevelSequence* Sequence, UMovieScene* MovieScene, ACineCameraActor* Camera, const TArray<FCameraShotWindow>& Windows)
@@ -1079,6 +1356,8 @@ namespace
 	{
 		struct FPlacement { USkeletalMeshComponent* Mesh; UAnimSequenceBase* Clip; FFrameNumber Start; FFrameNumber End; };
 		TArray<FPlacement> Placements;
+		// Cast clips over a recorded take: where the take's own body animation steps aside for them, per mesh.
+		TMap<USkeletalMeshComponent*, TArray<TRange<FFrameNumber>>> OverTake;
 
 		const FFrameRate TickResolution = MovieScene->GetTickResolution();
 		const float Blend = 0.35f;
@@ -1088,8 +1367,29 @@ namespace
 		TMap<const USkeleton*, TArray<FCinemafyMoveCandidate>> CandidatesBySkeleton;
 		TMap<AActor*, bool> Recorded;
 		TMap<USkeletalMeshComponent*, TArray<FSoftObjectPath>> Recent;
+		static const FName PosedTag(TEXT("Cinemafy.Posed"));
 		auto CastClip = [&](AActor* Actor, const FCinemafyLine& Line, int32 LineIndex, bool bSpeaking, float From, float To)
 		{
+			if (Actor && Actor->Tags.Contains(PosedTag))
+			{
+				return; // Lying on the bed, seated: a standing gesture would pull them out of the pose.
+			}
+			// Or posed partway through the take (lay down beside him): from that beat on, no standing gestures.
+			UWorld* ActorWorld = Actor ? Actor->GetWorld() : nullptr;
+			for (TActorIterator<ACinemafyChoreography> It(ActorWorld); ActorWorld && It; ++It)
+			{
+				if (It->Performer != Actor)
+				{
+					continue;
+				}
+				for (const FCinemafyChoreoBeat& Beat : It->Beats)
+				{
+					if (Beat.PoseHere != ECinemafyPose::Stand && Beat.StartTime >= 0.f && Beat.StartTime <= To)
+					{
+						return;
+					}
+				}
+			}
 			USkeletalMeshComponent* Mesh = FindBodyMesh(Actor);
 			const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
 			if (!Skeleton)
@@ -1100,10 +1400,6 @@ namespace
 			if (!bRecorded)
 			{
 				bRecorded = &Recorded.Add(Actor, HasChoreographyTake(Sequence, MovieScene, Actor));
-			}
-			if (*bRecorded)
-			{
-				return;
 			}
 			TArray<FCinemafyMoveCandidate>* Candidates = CandidatesBySkeleton.Find(Skeleton);
 			if (!Candidates)
@@ -1141,6 +1437,11 @@ namespace
 				Used.RemoveAt(0);
 			}
 			Placements.Add({ Mesh, Clip, SceneStart + TickResolution.AsFrameNumber(From), SceneStart + TickResolution.AsFrameNumber(To) });
+			if (*bRecorded)
+			{
+				// A still line in a recorded take: the take is standing there, so the line's clip plays over it.
+				OverTake.FindOrAdd(Mesh).Add(TRange<FFrameNumber>(Placements.Last().Start, Placements.Last().End));
+			}
 			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: line %d cast %s as %s (%s, %s)."), LineIndex, *Clip->GetName(),
 				*GetNameSafe(Actor), bSpeaking ? TEXT("speaking") : TEXT("listening"),
 				*StaticEnum<ECinemafyEmotion>()->GetNameStringByValue(static_cast<int64>(UCinemafyDirectorLibrary::ReadLineTone(Line))));
@@ -1186,6 +1487,54 @@ namespace
 				}
 			}
 			Time += Length;
+		}
+
+		// People the blocking posed hold their pose clip the whole scene (Previs tagged them "Cinemafy.Pose.Lie.Together.0").
+		TSet<AActor*> Posed;
+		for (const FCinemafyLine& Line : Lines)
+		{
+			for (AActor* Actor : { Line.Speaker.Get(), Line.Listener.Get() })
+			{
+				if (Actor && Actor->Tags.Contains(PosedTag))
+				{
+					Posed.Add(Actor);
+				}
+			}
+		}
+		for (AActor* Actor : Posed)
+		{
+			for (const FName& Tag : Actor->Tags)
+			{
+				TArray<FString> Parts;
+				Tag.ToString().ParseIntoArray(Parts, TEXT("."), true);
+				if (Parts.Num() != 5 || Parts[1] != TEXT("Pose"))
+				{
+					continue;
+				}
+				const int64 PoseValue = StaticEnum<ECinemafyPose>()->GetValueByNameString(Parts[2]);
+				USkeletalMeshComponent* Mesh = FindBodyMesh(Actor);
+				const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+				UAnimSequenceBase* Clip = PoseValue == INDEX_NONE ? nullptr
+					: UCinemafyPrevisLibrary::FindPoseAnimation(static_cast<ECinemafyPose>(PoseValue), Skeleton, Parts[3] == TEXT("Together"), FCString::Atoi(*Parts[4]));
+				if (!Clip || !Mesh)
+				{
+					continue; // A lying stand-in is laid flat on the actor itself; standing needs nothing.
+				}
+				// From the first frame to the last ("for the whole scene"), not from the first line.
+				const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
+				const FFrameNumber Begin = FMath::Min(SceneStart, Playback.GetLowerBoundValue());
+				const FFrameNumber End = FMath::Max(SceneStart + TickResolution.AsFrameNumber(FMath::Max(Time, 0.2f)), Playback.GetUpperBoundValue());
+				Placements.Add({ Mesh, Clip, Begin, End });
+				bool* bRecorded = Recorded.Find(Actor);
+				if (!bRecorded)
+				{
+					bRecorded = &Recorded.Add(Actor, HasChoreographyTake(Sequence, MovieScene, Actor));
+				}
+				if (*bRecorded)
+				{
+					OverTake.FindOrAdd(Mesh).Add(TRange<FFrameNumber>(Begin, End));
+				}
+			}
 		}
 
 		TMap<USkeletalMeshComponent*, UMovieSceneSkeletalAnimationTrack*> Tracks;
@@ -1234,6 +1583,66 @@ namespace
 				Section->Easing.ManualEaseInDuration = Ease;
 				Section->Easing.bManualEaseOut = true;
 				Section->Easing.ManualEaseOutDuration = Ease;
+			}
+		}
+
+		// Under those clips, the recorded take fades out and back (its weight), so the two don't play half and half.
+		const int32 EaseTicks = TickResolution.AsFrameNumber(Blend).Value;
+		for (TPair<USkeletalMeshComponent*, TArray<TRange<FFrameNumber>>>& Pair : OverTake)
+		{
+			const FGuid Binding = CinemafySequencer::FindBinding(Sequence, Pair.Key->GetOwner());
+			const FGuid MeshBinding = CinemafySequencer::BindObject(Sequence, Pair.Key);
+			// Back-to-back lines are one stretch, so the take doesn't pop back in between them.
+			TArray<TRange<FFrameNumber>>& Ranges = Pair.Value;
+			Ranges.Sort([](const TRange<FFrameNumber>& A, const TRange<FFrameNumber>& B) { return A.GetLowerBoundValue() < B.GetLowerBoundValue(); });
+			TArray<TRange<FFrameNumber>> Merged;
+			for (const TRange<FFrameNumber>& Range : Ranges)
+			{
+				if (Merged.Num() > 0 && Range.GetLowerBoundValue() <= Merged.Last().GetUpperBoundValue() + EaseTicks * 2)
+				{
+					Merged.Last() = TRange<FFrameNumber>(Merged.Last().GetLowerBoundValue(), FMath::Max(Merged.Last().GetUpperBoundValue(), Range.GetUpperBoundValue()));
+				}
+				else
+				{
+					Merged.Add(Range);
+				}
+			}
+			const UMovieScene* ConstMovieScene = MovieScene;
+			for (const FGuid& Owner : { Binding, MeshBinding })
+			{
+				const FMovieSceneBinding* Found = Owner.IsValid() ? ConstMovieScene->FindBinding(Owner) : nullptr;
+				if (!Found)
+				{
+					continue;
+				}
+				for (UMovieSceneTrack* Track : Found->GetTracks())
+				{
+					if (!Track || !Track->IsA<UMovieSceneSkeletalAnimationTrack>() || Track->GetDisplayName().ToString() != TEXT("Cinemafy Take"))
+					{
+						continue;
+					}
+					for (UMovieSceneSection* Section : Track->GetAllSections())
+					{
+						UMovieSceneSkeletalAnimationSection* Take = Cast<UMovieSceneSkeletalAnimationSection>(Section);
+						if (!Take)
+						{
+							continue;
+						}
+						Take->Modify();
+						FMovieSceneFloatChannel& Weight = Take->Params.Weight;
+						Weight.Reset();
+						Weight.SetDefault(1.f);
+						for (const TRange<FFrameNumber>& Range : Merged)
+						{
+							const FFrameNumber In = Range.GetLowerBoundValue();
+							const FFrameNumber Out = Range.GetUpperBoundValue();
+							Weight.AddLinearKey(In, 1.f);
+							Weight.AddLinearKey(In + EaseTicks, 0.f);
+							Weight.AddLinearKey(FMath::Max(Out - EaseTicks, In + EaseTicks), 0.f);
+							Weight.AddLinearKey(Out, 1.f);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1324,7 +1733,10 @@ namespace
 			const FFrameNumber Cut = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
 			const FFrameNumber Half = TickResolution.AsFrameNumber(Shot.TransitionDuration * 0.5f);
 
-			if (Shot.TransitionIn == ECinemafyTransition::FadeThroughBlack)
+			// The first shot has nothing to dissolve, wipe or whip from: the overlay would capture an empty frame (a
+			// white flash). It fades in from black instead; a dip to white stays a dip.
+			const bool bNothingBefore = Index == 0 && IsOverlayTransition(Shot.TransitionIn) && Shot.TransitionIn != ECinemafyTransition::DipToWhite;
+			if (Shot.TransitionIn == ECinemafyTransition::FadeThroughBlack || bNothingBefore)
 			{
 				if (FMovieSceneFloatChannel* Channel = GetFadeChannel())
 				{
@@ -1460,13 +1872,23 @@ namespace
 	}
 }
 
+void UCinemafyEditorLibrary::BeginScriptedCall()
+{
+	CinemafyDialog::SetQuiet(true);
+}
+
+void UCinemafyEditorLibrary::EndScriptedCall()
+{
+	CinemafyDialog::SetQuiet(false);
+}
+
 int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Director)
 {
 	ULevelSequence* Sequence = CinemafySequencer::GetOpenSequence();
 	UMovieScene* MovieScene = Sequence ? Sequence->GetMovieScene() : nullptr;
 	if (!Director || !MovieScene)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoSequence", "Open the Level Sequence you want the scene cut into, then hit Direct."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoSequence", "Open the Level Sequence you want the scene cut into, then hit Direct."));
 		return 0;
 	}
 
@@ -1479,7 +1901,9 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 
 	TArray<FCinemafyLine> DirectedLines = Director->GetDirectedLines();
 
-	// Who's walking? Play through the sequence and see how far each speaker travels during their line.
+	// Who's walking? Play through the sequence and see how far the people in each line travel during it: the speaker
+	// and the listener, by their bodies (an animation can carry the mesh away from the actor), sampled all the way
+	// through (a walk out and back, or a walk in the pause after the words, counts).
 	if (const TSharedPtr<ISequencer> Sequencer = CinemafySequencer::GetOpenSequencer())
 	{
 		const FQualifiedFrameTime OriginalTime = Sequencer->GetLocalTime();
@@ -1488,16 +1912,30 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 		float Time = 0.f;
 		for (FCinemafyLine& Line : DirectedLines)
 		{
-			if (Line.Speaker && !Line.bMoving)
+			const float Length = FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+			if (!Line.bMoving && (Line.Speaker || Line.Listener))
 			{
-				Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time)));
-				Sequencer->ForceEvaluate();
-				const FVector From = Line.Speaker->GetActorLocation();
-				Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time + Line.Duration)));
-				Sequencer->ForceEvaluate();
-				Line.bMoving = FVector::Dist2D(From, Line.Speaker->GetActorLocation()) > 150.f;
+				TMap<AActor*, FVector> From;
+				float Farthest = 0.f;
+				const int32 Samples = FMath::Clamp(FMath::CeilToInt(Length / 0.25f), 1, 120);
+				for (int32 Sample = 0; Sample <= Samples; ++Sample)
+				{
+					Sequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Time + Length * Sample / Samples)));
+					Sequencer->ForceEvaluate();
+					for (AActor* Person : { Line.Speaker.Get(), Line.Listener.Get() })
+					{
+						if (!Person)
+						{
+							continue;
+						}
+						const FVector Here = UCinemafyFramingLibrary::GetSubjectTrackPoint(Person);
+						const FVector& Start = From.FindOrAdd(Person, Here);
+						Farthest = FMath::Max(Farthest, FVector::Dist2D(Start, Here));
+					}
+				}
+				Line.bMoving = Farthest > 150.f;
 			}
-			Time += FMath::Max(Line.Duration + Line.PauseAfter, 0.2f);
+			Time += Length;
 		}
 		Sequencer->SetLocalTimeDirectly(ConvertFrameTime(OriginalTime.Time, OriginalTime.Rate, TickResolution));
 		Sequencer->ForceEvaluate();
@@ -1533,8 +1971,24 @@ int32 UCinemafyEditorLibrary::DirectSceneInSequencer(ACinemafySceneDirector* Dir
 	}
 	if (NewPlan.Num() == 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("DirectNoLines", "Add some lines to the director's script (each needs a Speaker)."));
 		return 0;
+	}
+	// An establishing shot first: the subject the scene is about, whole, for its first seconds.
+	if (Director->EstablishingSubject && NewPlan[0].Duration > Director->EstablishingSeconds + 0.8f)
+	{
+		FCinemafyPlannedShot Establishing = NewPlan[0];
+		Establishing.ShotType = ECinemafyShotType::Insert;
+		Establishing.Subject = Director->EstablishingSubject;
+		Establishing.Counterpart = nullptr;
+		Establishing.Duration = Director->EstablishingSeconds;
+		Establishing.bIsReaction = false;
+		Establishing.Reason = FString::Printf(TEXT("Establishing: %s"), *Director->EstablishingSubject->GetActorNameOrLabel());
+		NewPlan[0].StartTime += Establishing.Duration;
+		NewPlan[0].Duration -= Establishing.Duration;
+		NewPlan[0].TransitionIn = ECinemafyTransition::Cut;
+		NewPlan[0].bLineStart = false;
+		NewPlan.Insert(Establishing, 0);
 	}
 
 	const FScopedTransaction Transaction(LOCTEXT("DirectScene", "Cinemafy: Direct Scene"));
@@ -1618,6 +2072,12 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		}
 	}
 
+	// Last cut's tracking keys go first: each camera back where it was framed.
+	for (const TPair<FName, ACineCameraActor*>& Pair : ExistingCameras)
+	{
+		ResetCameraTracking(Sequence, MovieScene, Pair.Value);
+	}
+
 	const FFrameRate TickResolution = MovieScene->GetTickResolution();
 	const FFrameNumber SceneStart = bAtLastSceneStart ? FFrameNumber(Director->LastSceneStartTick) : CinemafySequencer::GetPlayheadTick(MovieScene);
 	FFrameNumber SceneEnd = SceneStart;
@@ -1630,28 +2090,160 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	const bool bFrameAtShotTime = FramingSequencer.IsValid() && FramingSequencer->GetFocusedMovieSceneSequence() == Sequence;
 	const FQualifiedFrameTime FramingRestoreTime = bFrameAtShotTime ? FramingSequencer->GetLocalTime() : FQualifiedFrameTime();
 
+	UMovieSceneCameraCutSection* PreviousCut = nullptr;
+	ACineCameraActor* PreviousCamera = nullptr;
 	for (int32 ShotIndex = 0; ShotIndex < Plan.Num(); ++ShotIndex)
 	{
 		const FCinemafyPlannedShot& Shot = Plan[ShotIndex];
-		const FName ShotTag(*FString::Printf(TEXT("Cinemafy.Shot.%s.%d.%s.%s.%d"), *Director->GetName(), static_cast<int32>(Shot.ShotType),
+		FName ShotTag(*FString::Printf(TEXT("Cinemafy.Shot.%s.%d.%s.%s.%d"), *Director->GetName(), static_cast<int32>(Shot.ShotType),
 			Shot.Subject ? *Shot.Subject->GetName() : TEXT("-"), Shot.Counterpart ? *Shot.Counterpart->GetName() : TEXT("-"), Director->bFlipSide ? 1 : 0));
 
 		ACineCameraActor* Camera = ExistingCameras.FindRef(ShotTag);
+		if (bFrameAtShotTime)
+		{
+			FramingSequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Shot.StartTime)));
+			FramingSequencer->ForceEvaluate();
+		}
+		FCinemafyShotRequest Request;
+		Request.ShotType = Shot.ShotType;
+		Request.Subject = Shot.Subject;
+		Request.Counterpart = Shot.Counterpart;
+		Request.Group = Shot.Group;
+		Request.bUseRecommendedLens = false;
+		Request.Lens = Shot.Lens;
+		Request.bFlipSide = Director->bFlipSide;
+		// A thing (a ship on the radio) no camera can see from where people are: stay on whoever hears it.
+		if (Shot.ShotType == ECinemafyShotType::Insert && Shot.Counterpart && UCinemafyFramingLibrary::IsThing(Shot.Subject))
+		{
+			FCinemafyShotSolution Seen;
+			bool bSeen = false;
+			UCinemafyFramingLibrary::SolveShotAvoidingObstacles(Director->GetWorld(), Request, Seen, bSeen);
+			if (!bSeen)
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: no clear view of %s from anywhere near %s (shot %d), so that line stays on %s. Move a window's collision off Visibility, or place a camera on it by hand."),
+					*Shot.Subject->GetActorNameOrLabel(), *Shot.Counterpart->GetActorNameOrLabel(), ShotIndex + 1, *Shot.Counterpart->GetActorNameOrLabel());
+				Request.ShotType = ECinemafyShotType::MediumCloseUp;
+				Request.Subject = Shot.Counterpart;
+				Request.Counterpart = Shot.Subject;
+				Request.bUseRecommendedLens = true;
+				ShotTag = FName(*(ShotTag.ToString() + TEXT(".Hearer")));
+				Camera = ExistingCameras.FindRef(ShotTag);
+			}
+		}
+		// The last shot hands back to gameplay: of the framings that still show this shot's people properly and keep
+		// the screen side, the one looking most nearly the way the gameplay camera does, on its own camera, so the cut
+		// back isn't a reverse-angle flip. The angle is a preference inside the framing rules, not a rule over them:
+		// the shot isn't swung round into an empty wide, and doesn't cross the line.
+		if (ShotIndex == Plan.Num() - 1 && Director->HandBackTo && Shot.Subject)
+		{
+			const float WantYaw = Director->HandBackTo->GetActorRotation().Yaw;
+			// The player, if they're in the shot: the gameplay camera is behind them, so over their shoulder is the
+			// natural hand-back.
+			AActor* Player = Director->HandBackTo;
+			if (!Player->IsA<APawn>())
+			{
+				AActor* Parent = Player->GetAttachParentActor();
+				Player = Parent && Parent->IsA<APawn>() ? Parent : (Player->GetOwner() && Player->GetOwner()->IsA<APawn>() ? Player->GetOwner() : Player);
+			}
+			AActor* Other = nullptr;
+			if (Player == Shot.Subject)
+			{
+				Other = Shot.Counterpart;
+			}
+			else if (Player == Shot.Counterpart || Shot.Group.Contains(Player))
+			{
+				Other = Shot.Subject;
+			}
+			if (Other && UCinemafyFramingLibrary::IsThing(Other))
+			{
+				Other = nullptr;
+			}
+
+			TArray<TPair<FCinemafyShotRequest, float>> Tries; // A framing and what changing to it costs.
+			for (float Angle = -30.f; Angle <= 30.f; Angle += 10.f)
+			{
+				FCinemafyShotRequest Try = Request;
+				Try.AngleOffset = Angle;
+				Tries.Add({ Try, FMath::Abs(Angle) * 0.3f });
+			}
+			if (Other)
+			{
+				for (float Angle = -20.f; Angle <= 20.f; Angle += 10.f)
+				{
+					FCinemafyShotRequest Try = Request;
+					Try.ShotType = ECinemafyShotType::OverTheShoulder;
+					Try.Subject = Other;
+					Try.Counterpart = Player;
+					Try.Group.Reset();
+					Try.bUseRecommendedLens = true;
+					Try.AngleOffset = Angle;
+					Tries.Add({ Try, 10.f + FMath::Abs(Angle) * 0.3f });
+				}
+			}
+			float BestScore = TNumericLimits<float>::Max();
+			float BestDelta = 0.f;
+			FCinemafyShotRequest Best = Request;
+			for (const TPair<FCinemafyShotRequest, float>& Try : Tries)
+			{
+				FCinemafyShotSolution Solved;
+				if (!UCinemafyFramingLibrary::SolveShot(Try.Key, Solved))
+				{
+					continue;
+				}
+				const float Delta = FMath::Abs(FRotator::NormalizeAxis(Solved.CameraTransform.Rotator().Yaw - WantYaw));
+				const bool bClear = UCinemafyFramingLibrary::IsShotClear(Director->GetWorld(), Try.Key, Solved);
+				const float Score = Delta + Try.Value + (bClear ? 0.f : 60.f);
+				if (Score < BestScore)
+				{
+					BestScore = Score;
+					BestDelta = Delta;
+					Best = Try.Key;
+				}
+			}
+			Request = Best;
+			ShotTag = FName(*FString::Printf(TEXT("%s.HandBack.%d"), *ShotTag.ToString(), static_cast<int32>(Request.ShotType)));
+			Camera = ExistingCameras.FindRef(ShotTag);
+			Director->HandBackYawDelta = BestDelta;
+			if (BestDelta > 45.f)
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the last shot looks %.0f degrees from the gameplay camera (%s): no framing of %s that keeps the screen side gets closer. Put %s in the last shot, or end the scene on a line said to them, for an over-the-shoulder hand-back."),
+					BestDelta, *Director->HandBackTo->GetActorLabel(), *Shot.Subject->GetActorNameOrLabel(), *Player->GetActorNameOrLabel());
+			}
+			else
+			{
+				UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: the last shot looks %.0f degrees from the gameplay camera (%s)."), BestDelta, *Director->HandBackTo->GetActorLabel());
+			}
+		}
+		// Where the subject stood when the camera was framed: a reused camera is re-framed if they've moved since
+		// (a new take put them elsewhere), and keeps its hand tweaks if they haven't.
+		const FVector SubjectAt = Shot.Subject ? UCinemafyFramingLibrary::GetSubjectTrackPoint(Shot.Subject) : FVector::ZeroVector;
+		const FName AtTag(*FString::Printf(TEXT("Cinemafy.FramedAt.%d_%d_%d"), FMath::RoundToInt(SubjectAt.X), FMath::RoundToInt(SubjectAt.Y), FMath::RoundToInt(SubjectAt.Z)));
+		auto FramedFar = [&SubjectAt](const ACineCameraActor* Existing)
+		{
+			for (const FName& Tag : Existing->Tags)
+			{
+				TArray<FString> Parts;
+				const FString Text = Tag.ToString();
+				if (Text.StartsWith(TEXT("Cinemafy.FramedAt.")) && Text.Mid(18).ParseIntoArray(Parts, TEXT("_"), true) == 3)
+				{
+					return FVector::Dist(SubjectAt, FVector(FCString::Atoi(*Parts[0]), FCString::Atoi(*Parts[1]), FCString::Atoi(*Parts[2]))) > 60.f;
+				}
+			}
+			return true; // Framed before Cinemafy remembered where: frame it again.
+		};
+		if (Camera && bFrameAtShotTime && Shot.Subject && FramedFar(Camera))
+		{
+			FCinemafyShotSolution Solution;
+			bool bClearView = false;
+			if (UCinemafyFramingLibrary::SolveShotAvoidingObstacles(Camera->GetWorld(), Request, Solution, bClearView))
+			{
+				Camera->Modify();
+				Camera->SetActorTransform(Solution.CameraTransform);
+				UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: re-framed %s (its subject moved since it was framed)."), *Camera->GetActorLabel());
+			}
+		}
 		if (!Camera)
 		{
-			if (bFrameAtShotTime)
-			{
-				FramingSequencer->SetLocalTimeDirectly(FFrameTime(SceneStart + TickResolution.AsFrameNumber(Shot.StartTime)));
-				FramingSequencer->ForceEvaluate();
-			}
-			FCinemafyShotRequest Request;
-			Request.ShotType = Shot.ShotType;
-			Request.Subject = Shot.Subject;
-			Request.Counterpart = Shot.Counterpart;
-			Request.Group = Shot.Group;
-			Request.bUseRecommendedLens = false;
-			Request.Lens = Shot.Lens;
-			Request.bFlipSide = Director->bFlipSide;
 			Camera = CreateShot(Request, false);
 			if (!Camera)
 			{
@@ -1661,6 +2253,11 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 			Camera->Tags.Add(ShotTag);
 			ExistingCameras.Add(ShotTag, Camera);
 		}
+		if (Shot.Subject)
+		{
+			Camera->Tags.RemoveAll([](const FName& Tag) { return Tag.ToString().StartsWith(TEXT("Cinemafy.FramedAt.")); });
+			Camera->Tags.Add(AtTag);
+		}
 
 		Director->LastPlanCameras[ShotIndex] = Camera;
 
@@ -1668,11 +2265,11 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		if (Shot.ShotType == ECinemafyShotType::TrackingLead || Shot.ShotType == ECinemafyShotType::TrackingFollow)
 		{
 			UCinemafyFollowComponent* Follow = FindOrAddComponent<UCinemafyFollowComponent>(Camera, TEXT("CinemafyFollow"));
-			if (!Follow->Target)
-			{
-				Follow->Target = Shot.Subject;
-				Follow->CaptureOffset();
-			}
+			// Captured fresh each cut (the subject may stand somewhere else in this take); baked keys switch it off below.
+			Follow->Modify();
+			Follow->Target = Shot.Subject;
+			Follow->Weight = 1.f;
+			Follow->CaptureOffset();
 		}
 
 		const FCinemafyDirectorStyle& Style = DirectorStyle;
@@ -1695,20 +2292,96 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 
 		const FFrameNumber Start = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime);
 		const FFrameNumber End = SceneStart + TickResolution.AsFrameNumber(Shot.StartTime + Shot.Duration);
+		SceneEnd = FMath::Max(SceneEnd, End);
+
+		// A cut to the same picture is no cut: the same camera again, or another one standing in the same place with
+		// the same lens, just carries on the shot before.
+		auto SameSetup = [](const ACineCameraActor* A, const ACineCameraActor* B)
+		{
+			if (A == B)
+			{
+				return true;
+			}
+			if (!A || !B)
+			{
+				return false;
+			}
+			const float Lens = FMath::Abs(A->GetCineCameraComponent()->CurrentFocalLength - B->GetCineCameraComponent()->CurrentFocalLength);
+			return Lens < 1.f && FVector::Dist(A->GetActorLocation(), B->GetActorLocation()) < 25.f
+				&& A->GetActorQuat().AngularDistance(B->GetActorQuat()) < FMath::DegreesToRadians(3.f);
+		};
+		if (PreviousCut && PreviousCamera && Start <= PreviousCut->GetExclusiveEndFrame() + 1 && SameSetup(Camera, PreviousCamera))
+		{
+			PreviousCut->SetRange(TRange<FFrameNumber>(PreviousCut->GetInclusiveStartFrame(), End));
+			if (TArray<FCameraShotWindow>* Windows = CameraWindows.Find(PreviousCamera); Windows && Windows->Num() > 0)
+			{
+				Windows->Last().End = End;
+			}
+			Director->LastPlanCameras[ShotIndex] = PreviousCamera;
+			UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s (same setup as the shot before: carried on, no cut)"), *Shot.Reason);
+			continue;
+		}
 		if (UMovieSceneCameraCutSection* Cut = CutTrack->AddNewCameraCut(UE::MovieScene::FRelativeObjectBindingID(Binding), Start))
 		{
 			Cut->SetRange(TRange<FFrameNumber>(Start, End));
+			PreviousCut = Cut;
+			PreviousCamera = Camera;
 		}
-		SceneEnd = FMath::Max(SceneEnd, End);
 		CameraWindows.FindOrAdd(Camera).Add({ Start, End, &Shot });
 
 		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %s"), *Shot.Reason);
 	}
 
+	// Housekeeping on the cut track: this director's cuts stay inside the scene (the track can stretch a first cut back
+	// to frame 0), and back-to-back cuts to the same camera become one.
+	{
+		TSet<FGuid> Ours;
+		for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
+		{
+			Ours.Add(CinemafySequencer::FindBinding(Sequence, Pair.Key));
+		}
+		TArray<UMovieSceneCameraCutSection*> Cuts;
+		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
+		{
+			UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+			if (Cut && Ours.Contains(Cut->GetCameraBindingID().GetGuid()) && Cut->HasStartFrame() && Cut->HasEndFrame())
+			{
+				Cuts.Add(Cut);
+			}
+		}
+		Cuts.Sort([](const UMovieSceneCameraCutSection& A, const UMovieSceneCameraCutSection& B) { return A.GetInclusiveStartFrame() < B.GetInclusiveStartFrame(); });
+		CutTrack->Modify();
+		UMovieSceneCameraCutSection* Kept = nullptr;
+		for (UMovieSceneCameraCutSection* Cut : Cuts)
+		{
+			const FFrameNumber From = FMath::Max(Cut->GetInclusiveStartFrame(), SceneStart);
+			const FFrameNumber To = FMath::Min(Cut->GetExclusiveEndFrame(), SceneEnd);
+			if (To <= From)
+			{
+				CutTrack->RemoveSection(*Cut);
+				continue;
+			}
+			if (Kept && Kept->GetCameraBindingID().GetGuid() == Cut->GetCameraBindingID().GetGuid() && From <= Kept->GetExclusiveEndFrame())
+			{
+				Kept->SetRange(TRange<FFrameNumber>(Kept->GetInclusiveStartFrame(), FMath::Max(To, Kept->GetExclusiveEndFrame())));
+				CutTrack->RemoveSection(*Cut);
+				continue;
+			}
+			Cut->SetRange(TRange<FFrameNumber>(From, To));
+			Kept = Cut;
+		}
+	}
+
+	int32 Tracked = 0;
 	for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
 	{
 		BakeCameraMoves(Sequence, MovieScene, Pair.Key, Pair.Value);
 		BakeRackFocus(Sequence, MovieScene, Pair.Key, Pair.Value);
+		Tracked += BakeCameraTracking(Sequence, MovieScene, Pair.Key, Pair.Value, FramingSequencer);
+	}
+	if (Tracked > 0)
+	{
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy Director: %d shot(s) follow someone who moves during them."), Tracked);
 	}
 	BakeEmotions(Sequence, MovieScene, EffectiveLines, SceneStart);
 
@@ -1763,11 +2436,82 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 		FramingSequencer->ForceEvaluate();
 	}
 
-	// Make sure the whole scene fits in the playback range.
+	// The playback range is the cut: the whole scene fits, and nothing plays on past the last shot (a take keeps
+	// recording after its last line, and with no camera that tail plays black). But it never cuts off anything else
+	// in the sequence, and with Keep Playback Range it only ever grows.
 	const TRange<FFrameNumber> Playback = MovieScene->GetPlaybackRange();
-	if (Playback.GetUpperBoundValue() < SceneEnd)
+	FFrameNumber ContentEnd = SceneEnd;
+	for (const UMovieSceneSection* Section : MovieScene->GetAllSections())
 	{
-		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), SceneEnd));
+		const UMovieSceneTrack* Track = Section ? Section->GetTypedOuter<UMovieSceneTrack>() : nullptr;
+		const bool bCinemafys = !Track || Track->IsA<UMovieSceneCameraCutTrack>() || Track->GetDisplayName().ToString().Contains(TEXT("Cinemafy"));
+		if (!bCinemafys && Section->HasEndFrame())
+		{
+			ContentEnd = FMath::Max(ContentEnd, Section->GetExclusiveEndFrame());
+		}
+	}
+	const FFrameNumber NewEnd = Director->bKeepPlaybackRange ? FMath::Max(Playback.GetUpperBoundValue(), SceneEnd) : ContentEnd;
+	if (Playback.GetUpperBoundValue() != NewEnd && NewEnd > Playback.GetLowerBoundValue())
+	{
+		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Playback.GetLowerBoundValue(), NewEnd));
+	}
+
+	// Every frame that plays has a camera: with the range kept wider than the scene, the frames before the first cut
+	// and after the last would show whatever the player's own view is. Our first and last cuts stretch to the range;
+	// someone else's leave a warning instead.
+	{
+		const TRange<FFrameNumber> Range = MovieScene->GetPlaybackRange();
+		TSet<FGuid> Ours;
+		for (const TPair<ACineCameraActor*, TArray<FCameraShotWindow>>& Pair : CameraWindows)
+		{
+			Ours.Add(CinemafySequencer::FindBinding(Sequence, Pair.Key));
+		}
+		UMovieSceneCameraCutSection* First = nullptr;
+		UMovieSceneCameraCutSection* Final = nullptr;
+		for (UMovieSceneSection* Section : CutTrack->GetAllSections())
+		{
+			UMovieSceneCameraCutSection* Cut = Cast<UMovieSceneCameraCutSection>(Section);
+			if (!Cut || !Cut->HasStartFrame() || !Cut->HasEndFrame() || !Cut->IsActive())
+			{
+				continue;
+			}
+			if (!First || Cut->GetInclusiveStartFrame() < First->GetInclusiveStartFrame())
+			{
+				First = Cut;
+			}
+			if (!Final || Cut->GetExclusiveEndFrame() > Final->GetExclusiveEndFrame())
+			{
+				Final = Cut;
+			}
+		}
+		const FFrameRate Display = MovieScene->GetDisplayRate();
+		auto Frames = [&](FFrameNumber Ticks) { return FFrameRate::TransformTime(FFrameTime(Ticks), TickResolution, Display).RoundToFrame().Value; };
+		if (First && First->GetInclusiveStartFrame() > Range.GetLowerBoundValue())
+		{
+			if (Ours.Contains(First->GetCameraBindingID().GetGuid()))
+			{
+				First->Modify();
+				First->SetRange(TRange<FFrameNumber>(Range.GetLowerBoundValue(), First->GetExclusiveEndFrame()));
+			}
+			else
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the first %d frame(s) of the playback range have no camera cut (gameplay's own view shows)."),
+					Frames(First->GetInclusiveStartFrame() - Range.GetLowerBoundValue()));
+			}
+		}
+		if (Final && Final->GetExclusiveEndFrame() < Range.GetUpperBoundValue())
+		{
+			if (Ours.Contains(Final->GetCameraBindingID().GetGuid()))
+			{
+				Final->Modify();
+				Final->SetRange(TRange<FFrameNumber>(Final->GetInclusiveStartFrame(), Range.GetUpperBoundValue()));
+			}
+			else
+			{
+				UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy Director: the last %d frame(s) of the playback range have no camera cut (gameplay's own view shows)."),
+					Frames(Range.GetUpperBoundValue() - Final->GetExclusiveEndFrame()));
+			}
+		}
 	}
 
 	CinemafySequencer::NotifyChanged();
@@ -1776,6 +2520,45 @@ int32 UCinemafyEditorLibrary::BakeDirectorPlan(ACinemafySceneDirector* Director,
 	GEditor->SelectNone(false, true);
 	GEditor->SelectActor(Director, true, true);
 	return Plan.Num();
+}
+
+bool UCinemafyEditorLibrary::SetShotLock(ACinemafySceneDirector* Director, int32 ShotIndex, bool bLocked)
+{
+	if (!Director || !Director->LastPlan.IsValidIndex(ShotIndex))
+	{
+		return false;
+	}
+	if (Director->LastPlan[ShotIndex].bLocked != bLocked)
+	{
+		const FScopedTransaction Transaction(LOCTEXT("SetLock", "Cinemafy: Lock Shot"));
+		Director->Modify();
+		Director->LastPlan[ShotIndex].bLocked = bLocked;
+		SCinemafyShotBrowser::RefreshActive();
+	}
+	return true;
+}
+
+bool UCinemafyEditorLibrary::OpenSequenceForEditing(ULevelSequence* Sequence)
+{
+	if (!Sequence || !GEditor)
+	{
+		return false;
+	}
+	if (CinemafySequencer::GetOpenSequence() != Sequence)
+	{
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Sequence);
+	}
+	return CinemafySequencer::GetOpenSequence() == Sequence;
+}
+
+int32 UCinemafyEditorLibrary::DirectSequence(ACinemafySceneDirector* Director, ULevelSequence* Sequence)
+{
+	if (!OpenSequenceForEditing(Sequence))
+	{
+		UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy: couldn't open %s in Sequencer to cut the scene into it."), *GetNameSafe(Sequence));
+		return 0;
+	}
+	return DirectSceneInSequencer(Director);
 }
 
 bool UCinemafyEditorLibrary::ToggleShotLock(ACinemafySceneDirector* Director, int32 ShotIndex)
@@ -2001,7 +2784,7 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 	const UMovieSceneCameraCutTrack* CutTrack = MovieScene ? Cast<UMovieSceneCameraCutTrack>(MovieScene->GetCameraCutTrack()) : nullptr;
 	if (!Director || !Sequencer.IsValid() || !CutTrack)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnNoSequence", "Open a Level Sequence with camera cuts in Sequencer: the director will study its edit."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnNoSequence", "Open a Level Sequence with camera cuts in Sequencer: the director will study its edit."));
 		return 0;
 	}
 
@@ -2080,7 +2863,7 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 
 	if (Observed.Num() < 3)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnTooFew", "Not enough recognizable shots to learn from (need at least 3 cuts with characters in frame)."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("LearnTooFew", "Not enough recognizable shots to learn from (need at least 3 cuts with characters in frame)."));
 		return Observed.Num();
 	}
 
@@ -2169,7 +2952,7 @@ int32 UCinemafyEditorLibrary::LearnDirectorStyleFromSequence(ACinemafySceneDirec
 	}
 	Summary += FString::Printf(TEXT("\nShot length: median %.1fs (quick %.1fs, long %.1fs)\nLens bias: %+d  |  Low angles: %d  |  Moving shots: %d\nOpens wide: %s\n\nThe director's style is now Custom. Hit Direct to cut a scene your way."),
 		P50, P10, P90, Style.LensBias, LowAngle, Moving, Style.bEstablishingShot ? TEXT("yes") : TEXT("no"));
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Summary));
 	return Observed.Num();
 }
 
@@ -2520,7 +3303,7 @@ int32 UCinemafyEditorLibrary::CheckSequenceContinuity()
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	if (!Sequencer.IsValid() || !CutTrack || !World)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("ContinuityNoSequence", "Open a Level Sequence with camera cuts in Sequencer to check its continuity."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("ContinuityNoSequence", "Open a Level Sequence with camera cuts in Sequencer to check its continuity."));
 		return -1;
 	}
 
@@ -2644,7 +3427,7 @@ int32 UCinemafyEditorLibrary::CheckSequenceContinuity()
 			UE_LOG(LogCinemafy, Warning, TEXT("Cinemafy continuity: %s"), *Issue);
 		}
 	}
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Report));
 	return Issues.Num();
 }
 
@@ -2733,7 +3516,7 @@ int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Direc
 	TArray<FString> Rows;
 	if (!Director || !FFileHelper::LoadFileToStringArray(Rows, *CsvPath) || Rows.Num() < 2)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvMissing", "Couldn't read a script from {0}. It needs a header row and at least one line."), FText::FromString(CsvPath)));
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvMissing", "Couldn't read a script from {0}. It needs a header row and at least one line."), FText::FromString(CsvPath)));
 		return -1;
 	}
 
@@ -2750,7 +3533,7 @@ int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Direc
 	const int32 DurationCol = Column(TEXT("Duration"));
 	if (SpeakerCol == INDEX_NONE)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("CsvNoSpeaker", "The script needs a Speaker column."));
+		CinemafyDialog::Open(EAppMsgType::Ok, LOCTEXT("CsvNoSpeaker", "The script needs a Speaker column."));
 		return -1;
 	}
 
@@ -2822,7 +3605,7 @@ int32 UCinemafyEditorLibrary::ImportDirectorScript(ACinemafySceneDirector* Direc
 
 	if (Unmatched > 0)
 	{
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvUnmatched",
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CsvUnmatched",
 			"Imported {0} lines. {1} speaker name(s) didn't match an actor label in the level; set those Speakers by hand."),
 			Director->Lines.Num(), Unmatched));
 	}
@@ -2906,12 +3689,18 @@ ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorFromSelection
 	TArray<AActor*> Characters;
 	for (AActor* Actor : GetSelectedActorsInOrder())
 	{
-		if (Actor->FindComponentByClass<USkeletalMeshComponent>())
+		// A pawn counts even with no mesh of its own (some character systems build the visible body at runtime).
+		if (Actor->FindComponentByClass<USkeletalMeshComponent>() || Actor->IsA<APawn>())
 		{
 			Characters.Add(Actor);
 		}
 	}
+	return CreateSceneDirectorForActors(Characters, Style);
+}
 
+ACinemafySceneDirector* UCinemafyEditorLibrary::CreateSceneDirectorForActors(const TArray<AActor*>& InCharacters, ECinemafyDirectorPreset Style)
+{
+	TArray<AActor*> Characters = InCharacters.FilterByPredicate([](const AActor* Actor) { return Actor != nullptr; });
 	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	if (!World)
 	{
@@ -3103,7 +3892,7 @@ UCinemafyMoveLibrary* UCinemafyEditorLibrary::CreateMoveLibraryFromFolder(const 
 
 	FAssetRegistryModule::AssetCreated(Library);
 	Package->MarkPackageDirty();
-	FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("MoveLibraryMade",
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("MoveLibraryMade",
 		"Made {0} with {1} move(s). Set it as the Move Library on your choreographies, and add your own keywords to any entry."),
 		FText::FromString(AssetName), Library->Moves.Num()));
 	return Library;
@@ -3366,7 +4155,7 @@ UCinemafyScriptProject* UCinemafyEditorLibrary::ImportScriptWithDialog()
 		TArray<UObject*> ToSync = { Project };
 		GEditor->SyncBrowserToObjects(ToSync);
 		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Project);
-		FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
+		CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Project->BreakdownReport.Left(2000)));
 	}
 	return Project;
 }
@@ -3521,6 +4310,8 @@ namespace CinemafyScriptEditor
 	 * the scene's transition in on its first line. */
 	TArray<FCinemafyLine> BuildDirectorLines(UWorld* World, const FCinemafyScriptScene& Scene, TArray<AActor*>& OutPerformers, int32& OutUnmatched)
 	{
+		// With no parenthetical, a line plays its own words, else the scene's mood (a love scene isn't Neutral).
+		FString SceneMood = UCinemafyMoodLibrary::ReadSceneMood(Scene, ECinemafyTimeOfDay::Unknown).Mood;
 		TArray<FCinemafyLine> Lines;
 		FString PreviousSpeaker;
 		AActor* PreviousActor = nullptr;
@@ -3572,7 +4363,8 @@ namespace CinemafyScriptEditor
 			// A face performance made from this audio (MetaHuman lip-sync) plays instead of the Talk curves.
 			Line.FaceAnimation = ScriptLine.HasCurrentFace() ? ScriptLine.FaceAnimation.LoadSynchronous() : nullptr;
 			// How it's played, from the parenthetical: feeling, intensity (and so the face, body casting and cut).
-			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDelivery(ScriptLine.Direction, ScriptLine.Text);
+			const FCinemafyDelivery Delivery = UCinemafyScriptLibrary::ReadDeliveryInMood(ScriptLine.Direction, ScriptLine.Text, SceneMood);
+			SceneMood = UCinemafyScriptLibrary::MoodAfterLine(SceneMood, Delivery);
 			if (Delivery.bHasEmotion)
 			{
 				Line.bSetEmotion = true;

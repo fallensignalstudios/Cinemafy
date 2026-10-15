@@ -127,6 +127,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Animation", meta = (ContentDir))
 	TArray<FDirectoryPath> SearchFolders;
 
+	/**
+	 * The performer holds the pose they were placed in (lying on a bed, seated): they never turn or walk, they only
+	 * say their lines and play their gestures in place. Previs sets it for characters the blocking poses.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography")
+	bool bHoldPose = false;
+
 	/** Include this performer when Perform & Record is pressed on any choreography (multi-character scenes). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Choreography|Take")
 	bool bIncludeInTakes = true;
@@ -352,6 +359,12 @@ public:
 	TArray<TArray<FTransform>> PartnerTransforms;
 
 	virtual void BeginPlay() override;
+
+	/** A take is the cast's: the game's own player pawn (spawned at the Player Start) is hidden and held still. */
+	void HidePlayerForTake();
+
+	/** Goes into a pose here (a beat's Pose Here): the pose clip on the mesh, held from now on, settled onto Point. */
+	void TakePose(ECinemafyPose Pose, const FVector& Point);
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
@@ -361,6 +374,11 @@ public:
 #endif
 
 private:
+	/** A pose just taken: once the clip has moved the body, put the hips over this point (frames left to wait). */
+	FVector PoseSettlePoint = FVector::ZeroVector;
+	int32 PoseSettleFrames = -1;
+	ECinemafyPose PoseSettling = ECinemafyPose::Stand;
+
 	enum class EPhase : uint8 { Start, Approach, Settle, Face, Act, Done };
 
 	void BuildRig();

@@ -31,7 +31,15 @@ def _tool(fn):
     @functools.wraps(inner)
     def wrapper(*args, **kwargs):
         _note_automation()
-        return inner(*args, **kwargs)
+        # No modal dialogs while a tool runs: they'd hang the call. Messages go to the log and a toast instead.
+        quiet = hasattr(unreal.CinemafyEditorLibrary, 'begin_scripted_call')
+        if quiet:
+            unreal.CinemafyEditorLibrary.begin_scripted_call()
+        try:
+            return inner(*args, **kwargs)
+        finally:
+            if quiet:
+                unreal.CinemafyEditorLibrary.end_scripted_call()
 
     return toolset_registry.tool_call(staticmethod(wrapper) if is_static else wrapper)
 _seq_lib = unreal.LevelSequenceEditorBlueprintLibrary
@@ -62,31 +70,76 @@ class CinemafyTools(unreal.ToolsetDefinition):
         """
         if len(characters) < 2:
             raise ValueError('A scene needs at least two characters.')
-        director = CinemafyTools._with_selection(
-            characters, lambda: _lib.create_scene_director_from_selection(style))
+        director = _lib.create_scene_director_for_actors(characters, style)
         if director is None:
             raise RuntimeError('Cinemafy could not create a director for these characters.')
         return director
 
     @_tool
     @staticmethod
-    def direct_scene(director: unreal.CinemafySceneDirector) -> list[unreal.CinemafyPlannedShot]:
+    def direct_scene(director: unreal.CinemafySceneDirector, sequence_path: str = '') -> list[unreal.CinemafyPlannedShot]:
         """Plans the director's scene and bakes cameras and timed camera cuts into the open Level
         Sequence from the playhead, replacing this director's previous cuts. Cameras are reused
         across takes, so hand tweaks survive.
 
         Args:
             director: The director to run.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             The planned shots in order, each with the director's reason for it.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         if not any(line.speaker for line in director.lines):
             raise ValueError('The director has no lines with a Speaker.')
         if _lib.direct_scene_in_sequencer(director) <= 0:
             raise RuntimeError('The director planned no shots.')
         return list(director.last_plan)
+
+    @_tool
+    @staticmethod
+    def export_for_playback(sequence_path: str, destination_path: str = '', spawnable_cameras: bool = True) -> str:
+        """Bakes a directed sequence into a copy with no runtime dependency on Cinemafy, for a game that plays
+        cutscenes through its own system. Camera tracking, moves, handheld feel and focus become plain keys
+        (transform, Manual Focus Distance, focal length) every frame; cameras become plain CineCameraActors with no
+        Cinemafy components (spawnables owned by the sequence with spawnable_cameras, so the map needn't be saved);
+        the director binding, its transition cues and Cinemafy component bindings (talk curves, gaze) are removed.
+        The source sequence and its previs cameras are left as they are. Save the new asset afterwards.
+
+        Args:
+            sequence_path: The directed Level Sequence (/Game path).
+            destination_path: Where to write the copy ("/Game/Cinematics/Z05_Final"). Empty: beside the source,
+                named <source>_Playback.
+            spawnable_cameras: Make the cameras spawnables owned by the sequence.
+
+        Returns:
+            What was baked and removed, and the new asset's path.
+        """
+        source = unreal.load_asset(sequence_path)
+        if not isinstance(source, unreal.LevelSequence):
+            raise ValueError(f'No Level Sequence at {sequence_path}.')
+        result = _lib.export_sequence_for_playback(source, destination_path, spawnable_cameras)
+        # Out-params come back as a tuple: (return value, out_report).
+        sequence, report = result if isinstance(result, tuple) else (result, '')
+        if sequence is None:
+            raise RuntimeError(f'Export failed: {report}')
+        if 'FAILED:' in report:
+            raise RuntimeError(f'Export wrote {sequence.get_path_name()} but not as asked: {report}')
+        return report
+
+    @_tool
+    @staticmethod
+    def set_shot_lock(director: unreal.CinemafySceneDirector, shot_index: int, locked: bool) -> None:
+        """Locks or unlocks one shot of the last cut (rerolls and re-cuts keep locked shots). Unlike
+        toggle_shot_lock, calling it twice is safe.
+
+        Args:
+            director: The director.
+            shot_index: Index into the director's last plan.
+            locked: True to lock, False to unlock.
+        """
+        CinemafyTools._require_shot(director, shot_index)
+        _lib.set_shot_lock(director, shot_index, locked)
 
     @_tool
     @staticmethod
@@ -105,13 +158,14 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
-    def clear_directed_shots(director: unreal.CinemafySceneDirector) -> None:
+    def clear_directed_shots(director: unreal.CinemafySceneDirector, sequence_path: str = '') -> None:
         """Removes the director's camera cuts from the open Level Sequence. Its cameras are kept.
 
         Args:
             director: The director whose cuts to remove.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         _lib.clear_directed_shots(director)
 
     @_tool
@@ -132,17 +186,18 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @_tool
     @staticmethod
     def swap_shot_for_alternate(director: unreal.CinemafySceneDirector,
-                                shot_index: int) -> list[unreal.CinemafyPlannedShot]:
+                                shot_index: int, sequence_path: str = '') -> list[unreal.CinemafyPlannedShot]:
         """Replaces one shot with the director's next-best alternative, locks it and re-bakes.
 
         Args:
             director: The director.
             shot_index: Index into the director's last plan.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             The updated planned shots.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         CinemafyTools._require_shot(director, shot_index)
         if not _lib.swap_shot_for_alternate(director, shot_index):
             raise RuntimeError(f'Shot {shot_index} has no alternative.')
@@ -151,18 +206,19 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @_tool
     @staticmethod
     def nudge_shot_cut(director: unreal.CinemafySceneDirector, shot_index: int,
-                       delta_seconds: float) -> list[unreal.CinemafyPlannedShot]:
+                       delta_seconds: float, sequence_path: str = '') -> list[unreal.CinemafyPlannedShot]:
         """Moves the cut at the start of a shot, locks the shots on both sides and re-bakes.
 
         Args:
             director: The director.
             shot_index: Index into the director's last plan. Must not be the first shot.
             delta_seconds: How far to move the cut. Negative is earlier.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             The updated planned shots.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         CinemafyTools._require_shot(director, shot_index)
         if shot_index == 0:
             raise ValueError('The first shot has no cut before it to move.')
@@ -189,17 +245,18 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @_tool
     @staticmethod
     def load_take(director: unreal.CinemafySceneDirector,
-                  take_index: int) -> list[unreal.CinemafyPlannedShot]:
+                  take_index: int, sequence_path: str = '') -> list[unreal.CinemafyPlannedShot]:
         """Restores a saved take and re-bakes it where the scene was.
 
         Args:
             director: The director.
             take_index: Index into the director's Takes.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             The restored planned shots.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         if not 0 <= take_index < len(director.takes):
             raise ValueError(f'take_index {take_index} is out of range (director has {len(director.takes)} takes).')
         if not _lib.load_director_take(director, take_index):
@@ -212,7 +269,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @staticmethod
     def create_shot(subject: unreal.Actor, shot_type: unreal.CinemafyShotType,
                     counterpart: unreal.Actor | None = None, flip_side: bool = False,
-                    add_to_sequence: bool = True) -> unreal.CineCameraActor:
+                    add_to_sequence: bool = True, sequence_path: str = '') -> unreal.CineCameraActor:
         """Spawns a Cine Camera framed, lensed and eye-focused for a coverage shot, always on the
         same side of the 180-degree line for a given flip_side.
 
@@ -222,6 +279,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
             counterpart: Who the subject is talking to. Needed for two-shots and over-the-shoulders.
             flip_side: Which side of the line of action. Keep it the same for every shot in a scene.
             add_to_sequence: Also add the camera to the open Level Sequence with a cut at the playhead.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             The new camera.
@@ -229,7 +287,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
         if subject is None:
             raise ValueError('subject is required.')
         if add_to_sequence:
-            CinemafyTools._require_open_sequence()
+            CinemafyTools._require_open_sequence(sequence_path)
         request = unreal.CinemafyShotRequest()
         request.shot_type = shot_type
         request.subject = subject
@@ -371,24 +429,37 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @_tool
     @staticmethod
     def set_up_gameplay_blend(blend_in_seconds: float = 1.0, blend_out_seconds: float = 1.0,
-                              include_animations: bool = True) -> None:
+                              include_animations: bool = True, sequence_path: str = '',
+                              director: unreal.CinemafySceneDirector = None) -> str:
         """Makes the open Level Sequence blend in from and back out to the gameplay camera.
 
         Args:
             blend_in_seconds: Ease from the gameplay camera into the first cut.
             blend_out_seconds: Ease from the last cut back to the gameplay camera.
             include_animations: Also ease characters' first and last animation sections.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
+            director: The scene's director: with its Hand Back To set, the report says how far (yaw) the last shot
+                looks from the gameplay camera. Set hand_back_to on the director before directing to keep it small.
+
+        Returns:
+            What was set up, and the hand-back yaw difference when known.
         """
-        sequence = CinemafyTools._require_open_sequence()
+        sequence = CinemafyTools._require_open_sequence(sequence_path)
         if not sequence.find_tracks_by_type(unreal.MovieSceneCameraCutTrack):
             raise ValueError('The open Level Sequence has no camera cuts.')
         if not _lib.set_up_gameplay_blend_for_open_sequence(blend_in_seconds, blend_out_seconds, include_animations):
             raise RuntimeError('Could not set up the gameplay blend.')
+        report = f'Gameplay blend: {blend_in_seconds:.1f} s in, {blend_out_seconds:.1f} s out.'
+        if director is not None and director.get_editor_property('hand_back_to') is not None:
+            delta = director.get_editor_property('hand_back_yaw_delta')
+            report += f' The last shot looks {delta:.0f} degrees from the gameplay camera'
+            report += ' (a reverse-angle flip on the cut back: consider a longer blend out).' if delta > 90 else '.'
+        return report
 
     @_tool
     @staticmethod
     def render_camera_frame(camera: unreal.CineCameraActor, frame: int, file_path: str,
-                            width: int = 1280) -> str:
+                            width: int = 1280, sequence_path: str = '') -> str:
         """Moves the open Level Sequence's playhead to a frame and renders what the camera sees there
         (its lens, letterbox and grade) to a PNG. Eye Focus is solved for that frame. The playhead
         stays at that frame.
@@ -398,12 +469,13 @@ class CinemafyTools(unreal.ToolsetDefinition):
             frame: Frame in the sequence's display rate.
             file_path: Absolute path of the .png to write. Existing files are overwritten.
             width: Image width in pixels. Height follows the camera's aspect ratio.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             The path of the written image.
         """
         import os
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         if width < 16:
             raise ValueError('width must be at least 16 pixels.')
         if not file_path.lower().endswith('.png') or not os.path.isabs(file_path):
@@ -949,6 +1021,68 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
+    def set_blocking(project: unreal.CinemafyScriptProject, scene_id: str, blocking: str) -> str:
+        """Sets a scene's blocking: the director's staging in plain words, kept apart from the script's text and across
+        re-imports. Previs puts people where and how it says, for the whole scene, and they hold it (no walking).
+        Poses: lie / sit / kneel / lean / stand; "together" (cuddled, side by side, in each other's arms) puts them
+        close. Places are Cinemafy Marks or set pieces by name ("the bunk"); a mark's Pose fills in when the words
+        don't say. Example: "Tarrik and Lyessa lie on the bunk, cuddled, for the whole scene."
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id ("SCOR-03-CS01").
+            blocking: The staging in plain words. Empty clears it (Previs goes back to the action lines).
+
+        Returns:
+            How Cinemafy reads it: who, where, what pose, together or not.
+        """
+        return unreal.CinemafyStoryLibrary.set_scene_blocking(project, scene_id, blocking)
+
+    @_tool
+    @staticmethod
+    def set_pose_animation(pose: str, clip_path: str = '', partner_path: str = '') -> str:
+        """Sets the clip a blocking pose holds (Project Settings > Cinemafy > Staging), saved to the project config.
+        With partner_path, sets a pair made for two (Together Animations: clip_path plays on the first person named,
+        partner_path on the second), used when blocking puts two people together. An empty clip_path clears it.
+
+        Args:
+            pose: Stand, Sit, Lie, Kneel or Lean.
+            clip_path: The animation's object path ("/Game/Romantic/Lie-1_1").
+            partner_path: The partner's half of a pair, for two people together.
+
+        Returns:
+            The pose clips now set.
+        """
+        value = getattr(unreal.CinemafyPose, pose.strip().upper(), None)
+        if value is None:
+            return f'Unknown pose "{pose}": Stand, Sit, Lie, Kneel or Lean.'
+        clip = unreal.load_asset(clip_path) if clip_path else None
+        if clip_path and clip is None:
+            return f'No animation at {clip_path}.'
+        if partner_path:
+            partner = unreal.load_asset(partner_path)
+            if partner is None:
+                return f'No animation at {partner_path}.'
+            return unreal.CinemafyStoryLibrary.set_together_animation(value, clip, partner)
+        return unreal.CinemafyStoryLibrary.set_pose_animation(value, clip)
+
+    @_tool
+    @staticmethod
+    def describe_blocking(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
+        """How Cinemafy reads a scene's blocking (its notes, plus poses its opening action sets): who goes where, in
+        what pose, together or not. Use it to check blocking before previs_scene.
+
+        Args:
+            project: The Script Project asset.
+            scene_id: The scene's id.
+
+        Returns:
+            The blocking as Cinemafy reads it.
+        """
+        return unreal.CinemafyStoryLibrary.describe_blocking(project, scene_id)
+
+    @_tool
+    @staticmethod
     def scene_contract(project: unreal.CinemafyScriptProject, scene_id: str) -> str:
         """A game scene's contract from its script bible: presentation, trigger, entry state, who has control before
         and after, what it commits, the handoff, camera notes, and its gameplay-bridge inserts (address one as
@@ -1148,18 +1282,19 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
-    def edit_at_playhead(operation: str) -> bool:
+    def edit_at_playhead(operation: str, sequence_path: str = '') -> bool:
         """Runs a Premiere-style edit on the open Level Sequence at the playhead. Ripple edits move every
         track after the edit.
 
         Args:
             operation: One of razor, razor_all, ripple_delete, trim_start, trim_end, roll_earlier,
                 roll_later, roll_to_playhead, swap_next, next_cut, previous_cut.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             True if the edit was made.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         edit = unreal.CinemafyEditLibrary
         operations = {
             'razor': lambda: edit.razor_at_playhead(False),
@@ -1181,7 +1316,7 @@ class CinemafyTools(unreal.ToolsetDefinition):
     @_tool
     @staticmethod
     def add_transition_at_nearest_cut(transition: unreal.CinemafyTransition, seconds: float = 0.7,
-                                      wipe_direction: unreal.CinemafyWipeDirection = unreal.CinemafyWipeDirection.ALTERNATE) -> bool:
+                                      wipe_direction: unreal.CinemafyWipeDirection = unreal.CinemafyWipeDirection.ALTERNATE, sequence_path: str = '') -> bool:
         """Puts a transition on the cut nearest the playhead: wipe (straight, iris, clock), dissolve,
         fade through black, dip to white or whip pan.
 
@@ -1189,17 +1324,18 @@ class CinemafyTools(unreal.ToolsetDefinition):
             transition: The transition type.
             seconds: Its length.
             wipe_direction: For wipes and whips. Alternate cycles like the classic serials.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             True if it was added.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         return unreal.CinemafyEditLibrary.add_transition_at_nearest_cut(transition, seconds, wipe_direction)
 
     @_tool
     @staticmethod
     def add_title_at_playhead(style: unreal.CinemafyTitleStyle, title: str, subtitle: str = '', body: str = '',
-                              seconds: float = 4.0) -> bool:
+                              seconds: float = 4.0, sequence_path: str = '') -> bool:
         """Adds a title card at the playhead: lower third, location card, chapter card, centered title or
         opening crawl (subtitle = intro line, body = the crawl's paragraphs).
 
@@ -1209,11 +1345,12 @@ class CinemafyTools(unreal.ToolsetDefinition):
             subtitle: Role / time of day / crawl intro line.
             body: Crawl text.
             seconds: How long it's up.
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             True if it was added.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         card = unreal.CinemafyTitleCard()
         card.set_editor_property('style', style)
         card.set_editor_property('title', title)
@@ -1224,16 +1361,17 @@ class CinemafyTools(unreal.ToolsetDefinition):
 
     @_tool
     @staticmethod
-    def duck_music_under_dialogue(duck_decibels: float = -10.0) -> int:
+    def duck_music_under_dialogue(duck_decibels: float = -10.0, sequence_path: str = '') -> int:
         """Dips the sequence's music under every other sound (dialogue), with smooth ramps.
 
         Args:
             duck_decibels: How far to dip (negative dB).
+            sequence_path: The Level Sequence to work in (/Game path); it's opened in Sequencer. Empty = the open one.
 
         Returns:
             How many dips were keyed.
         """
-        CinemafyTools._require_open_sequence()
+        CinemafyTools._require_open_sequence(sequence_path)
         return unreal.CinemafyEditLibrary.duck_music_under_dialogue(duck_decibels, 0.3)
 
     @staticmethod
@@ -1260,10 +1398,18 @@ class CinemafyTools(unreal.ToolsetDefinition):
         return max(distance + focus.focus_offset, 15.0)
 
     @staticmethod
-    def _require_open_sequence() -> unreal.LevelSequence:
+    def _require_open_sequence(sequence_path: str = '') -> unreal.LevelSequence:
+        """The Level Sequence to work in: the one at sequence_path (opened in Sequencer), else the open one."""
+        if sequence_path:
+            wanted = unreal.load_asset(sequence_path)
+            if not isinstance(wanted, unreal.LevelSequence):
+                raise ValueError(f'No Level Sequence at {sequence_path}.')
+            if not unreal.CinemafyEditorLibrary.open_sequence_for_editing(wanted):
+                raise RuntimeError(f'Could not open {sequence_path} in Sequencer.')
+            return wanted
         sequence = _seq_lib.get_current_level_sequence()
         if sequence is None:
-            raise RuntimeError('No Level Sequence is open in Sequencer. Open one first.')
+            raise RuntimeError('No Level Sequence is open in Sequencer. Open one first, or pass sequence_path.')
         return sequence
 
     @staticmethod

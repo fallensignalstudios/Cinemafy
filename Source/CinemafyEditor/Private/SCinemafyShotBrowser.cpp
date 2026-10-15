@@ -588,12 +588,13 @@ void SCinemafyShotBrowser::AttachDirectorNotes()
 	const FFrameRate TickResolution = OpenSequence->GetMovieScene()->GetTickResolution();
 	const FFrameNumber SceneStart(Director->LastSceneStartTick);
 	const int32 Tolerance = FMath::Max(1, TickResolution.AsFrameNumber(0.05).Value);
-	const FName Tag = Director->GetDirectorTag();
+	// (Not "Tag": SWidget has a member of that name, and UE 5.8 treats shadowing it as an error.)
+	const FName DirectorTag = Director->GetDirectorTag();
 
 	for (const TSharedRef<FCinemafyShot>& Shot : Shots)
 	{
 		const AActor* Camera = Shot->Camera.Get();
-		if (!Camera || !Camera->Tags.Contains(Tag))
+		if (!Camera || !Camera->Tags.Contains(DirectorTag))
 		{
 			continue;
 		}

@@ -18,9 +18,9 @@ Try it with [samples/TheBridge.fountain](samples/TheBridge.fountain).
 
 | Script style | What Cinemafy picks up |
 | --- | --- |
-| Screenplay / Fountain | Scene headings (`INT.`, `EXT.`, `INT./EXT.`, `I/E`, forced `.HEADING`), character cues (`KADE`, `THANE (V.O.)`, `@Name`), parentheticals, transitions (`CUT TO:`, `FADE OUT.`), `# act` / `## chapter` sections, `=` synopses, the title page. It ignores boneyard and `[[notes]]`. |
+| Screenplay / Fountain | Scene headings (`INT.`, `EXT.`, `INT./EXT.`, `I/E`, forced `.HEADING`), character cues (`KADE`, `THANE (V.O.)`, `@Name`), parentheticals, transitions (`CUT TO:`, `FADE OUT.`), `# act` / `## chapter` sections, `=` synopses, the title page. It ignores boneyard and `[[notes]]`, except `[[BLOCKING: ...]]`, your staging for the scene (see [Blocking](STORYTELLING.md#5-blocking-how-you-see-it)). |
 | Final Draft (`.fdx`) | Scene Heading, Character, Parenthetical, Dialogue, Action and Transition paragraphs, and act breaks. |
-| Game scripts | `KADE: line` dialogue, `[Scene: Hangar]` / `SCENE 12: Hangar` markers, and `MISSION 3: Blackout`, `CHAPTER 2`, `LEVEL`, `QUEST` or `EPISODE` markers, even with no blank lines. |
+| Game scripts | `KADE: line` dialogue, `[Scene: Hangar]` / `SCENE 12: Hangar` markers, and `MISSION 3: Blackout`, `CHAPTER 2`, `LEVEL`, `QUEST` or `EPISODE` markers, even with no blank lines. A chapter marker carries a number (`MISSION 3`, `CHAPTER ONE`, `PART IV`). |
 | Act markers | `ACT ONE`, `ACT 2`, `PART III`, `PROLOGUE`, `EPILOGUE`, `COLD OPEN`, or `#` sections. |
 
 ## PDF screenplays
@@ -41,7 +41,15 @@ Writers' conventions it reads:
 - **A scene id on the line under a heading** (`SCOR-01-CS01`): that becomes the scene's permanent id, exactly as
   in a script bible.
 - **A coded chapter header** (`SCOR 01   THE MANTLE`): a chapter with id `SCOR-01`, titled "The Mantle".
-- **`PROLOGUE` / `EPILOGUE`**: bookends. The story proper starts at the first chapter after the prologue.
+- **`PROLOGUE` / `EPILOGUE`**: bookends. The story proper starts at the first chapter after the prologue. If the
+  script marks no acts of its own, the story between the bookends still gets three inferred acts, each starting on
+  a chapter.
+- **`ON SCREEN:`** (also `SUPER:`, `CHYRON:`, `CAPTION:`, `TITLE CARD:`, `HUD:`, `READOUT:`): it and every line
+  under it, up to the next blank line, is text shown on screen. Those lines become display lines (subtitled, in the
+  string table), never speakers, chapters or scenes. So `MISSION ASSESSMENT: OPERATIONAL SUCCESS` is a readout,
+  not a mission.
+- **Colons in prose:** once a script writes its speech under caps cues, a `Something: more` line in the action is
+  read as action, not as dialogue.
 
 When the scenes carry a script bible's ids and the bible's Markdown sits beside the screenplay (or is set as
 **Act Map File**), the screenplay takes the bible's acts. **Compare Scripts** (`compare_scripts`) then cross-checks
@@ -98,7 +106,7 @@ Choices, diverts and flags go right in the script:
 - `-> target` to divert
 - `~ flag` to set a flag, and `? flag` to make a scene conditional
 
-They are played in game by the Story Player. See [STORYTELLING](STORYTELLING.md#8-games-the-story-player)
+They are played in game by the Story Player. See [STORYTELLING](STORYTELLING.md#9-games-the-story-player)
 and `samples/Mutiny_Branching.txt`.
 
 ## Line ids and voice-over
@@ -106,6 +114,12 @@ and `samples/Mutiny_Branching.txt`.
 Every dialogue line gets a stable **line id**: speaker initials plus a hash of who says what. Voice-over
 files, subtitles and localization key on it, and recorded or scratch audio stays attached to its line
 across re-imports.
+
+**Voices with no body** are heard and subtitled, never staged: `(V.O.)` lines, and speakers whose name says they're
+a voice (`SHIP ANNOUNCEMENT`, `UNIDENTIFIED VOICE`, `TRANSPORT SYSTEM`, `CONSOLE`, `CIVIC NARRATOR`, a radio, an
+intercom). Their cast entry is marked **Voice Only**: no character class, mark, walk or reaction shot, and nobody in
+the take waits on them for a cue. In the cut, the camera watches whoever hears the line (or holds the last shot).
+A cue for several people (`TARRIK AND SELENE`) counts as a line for each of them, not as a cast member of its own.
 
 ## Parentheticals
 
@@ -246,6 +260,10 @@ Cinemafy walks the scenes in order and keeps what has to stay true for each spea
 | Dead | dies, is killed, `X kills Y` | (permanent) |
 
 Pronouns (*she*, *he*) refer to the last character named in the paragraph.
+
+A character counts as in a scene when they speak, or when their whole name (or, for `ADMIRAL THANE`, just "Thane")
+appears with a capital: "her hand" isn't `DEAD HAND`. A death needs a character as its subject ("Thane dies",
+"Kade kills Thane", "He is killed"): "her channel dies" and "the dead console" kill nobody.
 
 Each scene shows:
 

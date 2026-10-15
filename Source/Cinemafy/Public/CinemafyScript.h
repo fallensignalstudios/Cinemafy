@@ -421,6 +421,14 @@ struct CINEMAFY_API FCinemafyScriptScene
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene", meta = (MultiLine = true))
 	FString Synopsis;
 
+	/**
+	 * Your staging, in plain words, kept apart from the script's text: "Tarrik and Lyessa lie on the bunk, cuddled,
+	 * for the whole scene." Previs puts people where and how it says (it wins over the action lines). From a Fountain
+	 * note ([[BLOCKING: ...]]), a bible's staging field, or the Story Board; kept across re-imports.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene", meta = (MultiLine = true))
+	FString Blocking;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
 	TArray<FCinemafyScriptLine> Lines;
 
@@ -741,6 +749,22 @@ public:
 	static FCinemafyDelivery ReadDelivery(const FString& Direction, const FString& Text);
 
 	/**
+	 * ReadDelivery, and when the page gives no direction and the words settle nothing ("I love you" does; "Yes." doesn't),
+	 * the scene's mood sets a gentle baseline: a romantic scene plays tender, a sad one sad, a tense one uneasy.
+	 * Mood is a Scene Mood's word (calm, tense, action, sad, warm, romantic, triumphant, eerie, alarm).
+	 */
+	/** The scene's mood after a line: a warm scene whose words turn dark (fear, grief, anger) plays tense from there. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FString MoodAfterLine(const FString& Mood, const FCinemafyDelivery& Line);
+
+	/** The direction a scene's mood stands for when a line has none ("romantic" -> "tender"); empty for calm. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FString MoodDirection(const FString& Mood);
+
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static FCinemafyDelivery ReadDeliveryInMood(const FString& Direction, const FString& Text, const FString& Mood);
+
+	/**
 	 * Reads a camera direction: framings ("CLOSE ON THANE", "WIDE", "TWO SHOT", "OVER KADE'S SHOULDER", "LOW ANGLE ON",
 	 * "KADE'S POV", "INSERT - THE DATAPAD", "ANGLE ON"), moves ("SLOW PUSH IN ON", "PULL BACK TO REVEAL", "CRANE UP",
 	 * "ARC AROUND", "CRASH ZOOM"), the camera's feel ("HANDHELD", "LOCKED OFF") and "BACK TO SCENE". False when the
@@ -793,6 +817,18 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Cinemafy|Script")
 	static FString CompareScripts(const TArray<FCinemafyScriptAct>& A, const TArray<FCinemafyScriptAct>& B, int32& OutMatching);
+
+	/**
+	 * A voice with no body on set: (V.O.) lines, and speakers that are announcements, systems, intercoms, radios,
+	 * narrators or unseen voices ("SHIP ANNOUNCEMENT", "UNIDENTIFIED VOICE"). They're heard and subtitled, never cast,
+	 * marked, walked or cut to.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static bool IsVoiceOnly(const FString& Speaker, const FString& Direction);
+
+	/** The people behind a cue: "TARRIK AND SELENE" -> TARRIK, SELENE; "KADE" -> KADE; "ALL" -> nobody in particular. */
+	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")
+	static TArray<FString> PeopleInCue(const FString& Speaker);
 
 	/** "SCOR-01-CS01#2" -> "SCOR-01-CS01" and 2 (1-based); a plain id -> itself and 0. */
 	UFUNCTION(BlueprintPure, Category = "Cinemafy|Script")

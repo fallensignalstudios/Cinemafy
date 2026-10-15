@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "CinemafyProduction.h"
 #include "CinemafyChoreographyTypes.generated.h"
 
 class USoundBase;
@@ -371,6 +372,20 @@ struct CINEMAFY_API FCinemafyChoreoBeat
 	/** How the line is said ("(coldly)", "(shouting)"): sets its feeling and intensity when the director cuts it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
 	FString LineDirection;
+
+	/**
+	 * From this beat on the performer holds a pose (lies down on the bunk, sits on the bench): the mesh plays the
+	 * pose's clip, the body settles onto the beat's point, and they stop walking and turning. Stand = no change.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat")
+	ECinemafyPose PoseHere = ECinemafyPose::Stand;
+
+	/**
+	 * A line this performer hears rather than says: a voice with no body ("SHIP ANNOUNCEMENT", a radio, V.O.). It plays
+	 * unattached with that name on the subtitle, the lips stay still, and the director watches this performer hearing it.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line")
+	FString HeardFrom;
 
 	/** Wait for exactly this line of theirs (1 = their first line in the take); 0 = the next line they finish. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beat|Line", meta = (ClampMin = "0"))

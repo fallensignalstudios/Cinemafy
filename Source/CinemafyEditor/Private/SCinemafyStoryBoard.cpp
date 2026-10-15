@@ -81,9 +81,13 @@ namespace CinemafyStoryBoardUI
 		}
 	}
 
-	FString AskText(const FText& Title, const FText& Hint)
+	FString AskText(const FText& Title, const FText& Hint, const FString& Initial = FString(), bool* bOutOk = nullptr)
 	{
 		FString Result;
+		if (bOutOk)
+		{
+			*bOutOk = false;
+		}
 		TSharedPtr<SEditableTextBox> Box;
 		TSharedRef<SWindow> Window = SNew(SWindow)
 			.Title(Title)
@@ -99,11 +103,16 @@ namespace CinemafyStoryBoardUI
 				[
 					SAssignNew(Box, SEditableTextBox)
 					.HintText(Hint)
-					.OnTextCommitted_Lambda([&Result, WeakWindow](const FText& Text, ETextCommit::Type Type)
+					.Text(FText::FromString(Initial))
+					.OnTextCommitted_Lambda([&Result, bOutOk, WeakWindow](const FText& Text, ETextCommit::Type Type)
 					{
 						if (Type == ETextCommit::OnEnter)
 						{
 							Result = Text.ToString();
+							if (bOutOk)
+							{
+								*bOutOk = true;
+							}
 							if (TSharedPtr<SWindow> Pinned = WeakWindow.Pin())
 							{
 								Pinned->RequestDestroyWindow();
@@ -115,9 +124,13 @@ namespace CinemafyStoryBoardUI
 				[
 					SNew(SButton)
 					.Text(NSLOCTEXT("CinemafyStoryBoard", "Ok", "OK"))
-					.OnClicked_Lambda([&Result, &Box, WeakWindow]()
+					.OnClicked_Lambda([&Result, &Box, bOutOk, WeakWindow]()
 					{
 						Result = Box.IsValid() ? Box->GetText().ToString() : FString();
+						if (bOutOk)
+						{
+							*bOutOk = true;
+						}
 						if (TSharedPtr<SWindow> Pinned = WeakWindow.Pin())
 						{
 							Pinned->RequestDestroyWindow();
@@ -474,6 +487,10 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 			Tip += TEXT("\nCamera: ") + Game.CameraNotes;
 		}
 	}
+	if (!Scene.Blocking.IsEmpty())
+	{
+		Tip += TEXT("\nBlocking: ") + Scene.Blocking;
+	}
 
 	Card->AddSlot().AutoHeight().Padding(4.f, 4.f, 4.f, 0.f)
 	[
@@ -624,6 +641,17 @@ TSharedRef<SWidget> SCinemafyStoryBoard::MakeCard(const FCinemafyScriptScene& Sc
 					Entry(FText::Format(LOCTEXT("OpenInsert", "Insert {0}: Open its sequence"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::OpenSceneSequence(P, InsertId); });
 					Entry(FText::Format(LOCTEXT("DirectInsert", "Insert {0}: New Scene Director"), Insert), [InsertId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, InsertId); });
 				}
+				Entry(LOCTEXT("Blocking", "Blocking: how you see it staged..."), [SceneId](UCinemafyScriptProject* P)
+				{
+					const FCinemafyScriptScene* Scene = P->FindScene(SceneId);
+					bool bOk = false;
+					const FString Text = CinemafyStoryBoardUI::AskText(LOCTEXT("BlockingTitle", "Blocking"),
+						LOCTEXT("BlockingHint", "Tarrik and Lyessa lie on the bunk, cuddled, for the whole scene."), Scene ? Scene->Blocking : FString(), &bOk);
+					if (bOk)
+					{
+						FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(UCinemafyStoryLibrary::SetSceneBlocking(P, SceneId, Text)));
+					}
+				});
 				Entry(LOCTEXT("Continuity", "Dress the cast for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::ApplySceneContinuity(P, SceneId); });
 				Entry(LOCTEXT("NewDirector", "New Scene Director from the script"), [SceneId](UCinemafyScriptProject* P) { UCinemafyEditorLibrary::CreateDirectorForScene(P, SceneId); });
 				Entry(LOCTEXT("ScratchScene", "Scratch voices for this scene"), [SceneId](UCinemafyScriptProject* P) { UCinemafyStoryLibrary::GenerateScratchVoices(P, SceneId, true); });

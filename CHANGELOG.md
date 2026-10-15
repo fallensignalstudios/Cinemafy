@@ -1,5 +1,157 @@
 # Changelog
 
+## 0.21.0: "Vertical slice, round 2"
+- **Export really makes spawnable cameras:** the copy is reopened before its cameras are converted (Sequencer converts
+  from what a binding resolves to, and it still held the old cameras), only conversions that happened are counted,
+  and the export checks the saved result: any camera still a possessable is named and the report says `FAILED:`
+  (`export_for_playback` raises).
+- **Only things are things:** a speaker gets the "shown whole, then whoever hears it" treatment only when it really
+  isn't a person: tagged `Cinemafy.Thing`, or showing only geometry. Pawns, anything with a skeletal mesh (or an
+  attached stand-in), placeholders and actors tagged `Cinemafy.Person` are people again (`IsThing` in Blueprint).
+- **Things aren't cast:** a ship on the radio no longer makes two people a group, stretches group shots out to it, or
+  gets over-the-shoulders when someone talks back to it (their singles instead).
+- **Big things are seen from where people are:** an insert on something large (a ship, a building) frames it whole
+  from just behind and above whoever hears it, on a lens that fits it, and tries all the way round them, higher.
+  If no camera can see it, there's no "best guess" facing a wall: the line stays on its listener, with a warning.
+- **Group shots are the people together:** things and anyone 15 m or more away are left out of the frame.
+- **Hand-back is a preference, not a rule:** the last shot keeps its framing and screen side and turns at most 30
+  degrees toward gameplay's view, or goes over the player's shoulder when the player is in it. When neither gets
+  within 45 degrees, it says so (and what would help) instead of swinging round into an empty wide.
+- **Every kept frame has a camera:** with Keep Playback Range, the first and last cuts stretch to the range (or, if
+  they aren't Cinemafy's, a warning counts the frames left to gameplay's view).
+- **Quitting with Sequencer open:** Cinemafy lets go of Sequencer and its choreography mode at engine pre-exit, while
+  everything is still alive.
+- **Tests:** `Cinemafy.Director.ThingsThatSpeak`.
+
+## 0.20.0: "Vertical slice"
+Notes from the first run in a real game project.
+- **Builds on 5.8:** a Shot Browser local no longer shadows `SWidget::Tag`.
+- **No modal dialogs from scripts:** Cinemafy's message boxes become log lines and toasts when called from Python,
+  MCP, a commandlet or an unattended editor, so an agent's call never hangs on an OK button. Every MCP tool runs
+  quiet. Pre-flight logs its checks instead of asking.
+- **Explicit targets:** `CreateSceneDirectorForActors`, `OpenSequenceForEditing`, `DirectSequence` and
+  `SetShotLock` act on what you name, not on the selection or whatever Sequencer has open. About a dozen MCP tools
+  take a `sequence_path`; new `set_shot_lock`. Create From Selection takes pawns too.
+- **No cut to the same picture:** consecutive shots with the same setup (same camera, or within 25 cm, 3 degrees and
+  1 mm of focal length) are merged into one.
+- **Tidy cuts and range:** cuts are clamped to the scene and back-to-back cuts to one camera are merged. The
+  playback range respects content that isn't Cinemafy's, and **Keep Playback Range** only lets it grow. Cinemafy's
+  sections restore state when the sequence ends.
+- **Hand back to gameplay:** set the director's **Hand Back To** (the player's camera or pawn) and the last shot is
+  picked to match its side and angle (crossing the line costs it), on its own camera; **Hand Back Yaw Delta** says
+  how far gameplay's camera still has to turn. `set_up_gameplay_blend` takes a `director` and reports it.
+- **Things that speak:** a speaker that isn't a pawn (a terminal, a radio, a ship) gets an insert on itself, then
+  reactions on whoever listens.
+- **Establishing shots:** **Establishing Subject** (and **Establishing Seconds**) opens the scene on a place or thing.
+- **Two-shots favour their subject:** they swing toward whoever the shot is for (further when people stand apart),
+  with more room, and aim a little toward them.
+- **Headless subjects:** eyes are looked for on attached actors too (a stand-in body on a pawn), and a pawn whose
+  eyes have to be guessed is warned about once.
+- **No flash cuts:** the shortest shot grows with a calm style, and a reaction needs a little more than that.
+- **Export for Playback:** `ExportSequenceForPlayback` (MCP `export_for_playback`) makes a copy of a sequence that
+  needs nothing from Cinemafy at runtime, for a game with its own cutscene player: every camera's tracking, moves,
+  handheld feel and focus are played through and baked to plain keys each frame, on plain CineCameraActor copies
+  (spawnable by default, so the map needn't be saved). The director, its transition cues and the talk/gaze
+  component tracks are left out of the copy. The original stays as the previs.
+- **Tests:** the render test skips under `-nullrhi`, the mannequin eye test skips without the mannequin.
+- **Shutdown:** the editor module leaves menus and notifications alone once the engine has already torn them down.
+
+## 0.19.0: "How you see it"
+- **Blocking:** your staging per scene, in plain words, kept apart from the script and across re-imports: "Tarrik and
+  Lyessa lie on the bunk, cuddled, for the whole scene." Write it in the Story Board (**Blocking: how you see it
+  staged...**), as a Fountain note `[[BLOCKING: ...]]`, as a bible's `blocking` / `staging` field, or over MCP
+  (`set_blocking`, `describe_blocking`). Without notes, a pose the opening action sets ("Kade sits in the command
+  chair.") counts too.
+- **Poses:** Stand, Sit, Lie, Kneel, Lean. Previs puts each block's people at its place (a mark, or a set piece by
+  name) in its pose, side by side, close when they're together, and they hold it all scene: their choreography's new
+  **Hold Pose** keeps them from walking or turning, and walks the page gives them are left out (and reported).
+- **Marks have a Pose:** blocking that names a place takes the mark's pose; beds read as lying, chairs as sitting.
+  Pre-flight finds blocking with no place on set and places a mark, already posed.
+- **Pose clips:** Project Settings > Cinemafy > Staging > Pose Animations (one per pose) and Together Animations
+  (pairs made for two), else found by name. The clip plays across the scene in the cut, a recorded take's body
+  steps aside for it, and posed people don't get standing gesture clips. Lying with no clip: laid flat as a stand-in.
+- **The camera looks down at people lying down:** shots of anyone blocked lying, or whose eyes are near the bed,
+  rise above them (`IsLyingDown`).
+- **Posed in the editor:** a pose clip plays on the character right in the level (looping), so it's there from the
+  first frame, the take records it, and the cameras aim at the posed head. Releasing the pose puts their own
+  Animation Blueprint back.
+- **Clips land on the mark:** a pack's clip that carries the body off its root (a lying couple's hips a metre back,
+  at the height of the bed it was made on) is moved until the hips sit over the spot, just above the surface.
+- **Pairs share the spot:** two clips made for each other put both people on the one spot (the clips place the
+  bodies). By name, a clip's partner is found too ("Lie-1_1" / "Lie-1_1_1", "_A" / "_B", "Male" / "Female").
+- **Pose clips over MCP:** `set_pose_animation` (and `SetPoseAnimation` / `SetTogetherAnimation` in Blueprint).
+- **Tone:** tender is warm and quiet (Neutral, soft), not Happy, so a love scene doesn't laugh through; "I love you"
+  plays tender; danger in the words ("afraid", "assassin", "die", "blood") plays worried whoever says it; and once a
+  warm scene's words turn dark, the rest of it plays tense (`MoodAfterLine`).
+- **Poses partway through:** "Lyessa lies down on the bunk beside Tarrik." after a few lines walks her there, then
+  she goes into the pose (the mesh plays the pose clip and the body settles onto the bed, in the take itself) and
+  holds it from that beat on. No place named: beside whoever the line names. The cut gives her no standing
+  gestures from then on.
+- **The player's pawn sits takes out:** recording a take hides the game's own pawn (spawned at the Player Start) and
+  holds it still, unless the player is in the scene.
+- **Cameras follow people who move:** every shot is played through when the scene is cut, and a camera whose
+  subject moves is keyed (a "Cinemafy Camera Track"): walk-and-talk shots ride along at their framed offset; other
+  shots hold their spot and pan and tilt to keep the face where the shot put it (eased, with a small dead zone),
+  and dolly after someone who walks more than a metre or so off. Shots nobody moves in stay locked off.
+  - Movement is read from the body (the hips), not just the actor, so an animation that carries the mesh (root
+    motion on a clip) is followed too: the live follow rig (`GetSubjectTrackPoint`) and the moving-line check use it.
+  - Lines count as moving when the speaker *or* the listener travels more than 1.5 m at any point in the line (and
+    its pause), not just between its two ends.
+  - A reused camera is re-framed when its subject stands somewhere else in the new take (it keeps your hand tweaks
+    when they don't); walk-and-talk rigs re-capture their offset every cut.
+  - A two-shot no longer holds through a walk, and merging lines in a take keeps the walk.
+- New test: `Cinemafy.Previs.ReadsYourBlocking`.
+
+## 0.18.0: "The fine print"
+Fixes from staging a 420-page game screenplay end to end.
+- **Reading:**
+  - `ON SCREEN:` (and `SUPER:`, `CHYRON:`, `CAPTION:`, `TITLE CARD:`, `HUD:`, `READOUT:`) blocks are display lines
+    up to the next blank line, not speakers, chapters or scenes.
+  - Chapter markers need a number: `MISSION ASSESSMENT: OPERATIONAL SUCCESS` no longer starts a chapter.
+  - A screenplay that writes speech under cues no longer reads `The contrast settles: ...` in its action as dialogue.
+  - Cast in a scene: speakers, plus whole names (or a titled name's own name) written with a capital. Single words
+    of longer names ("hand", "dead", "and") no longer pull characters into scenes.
+  - Group cues (`TARRIK AND SELENE`) credit each speaker and aren't cast members of their own.
+  - Deaths need a character as the subject: "her channel dies", "his scream dies", "the dead console" kill nobody.
+  - Between a prologue and an epilogue, the story gets three inferred acts on chapter starts (if the script marks none).
+- **Voices:** announcements, systems, consoles, narrators, unseen voices and `(V.O.)` lines are voice-only: a
+  **Voice Only** cast flag, no template character, mark or walk, and nobody waits on them for a cue. The cut watches
+  whoever hears the line instead of going black.
+- **Takes:**
+  - A recorded take keeps when each line was said, so its director lines keep their text, audio and tone
+    (they were all empty, 0.3 Neutral).
+  - A cue that never comes no longer takes the waiting character's own line with it: after the timeout they go ahead.
+- **Set dressing:** body parts, picture words ("foreground") and fragments ("heart instead of") aren't props.
+- **Pre-flight:** Fix All places a start mark for every character it brings in (including the ones it casts as the
+  template), not one per run. Spawned cast stand on their marks instead of falling through the floor. Fix All builds
+  the cast before casting it.
+- **Re-staging:** Previs drops bindings from earlier takes whose actors are gone before it spawns anyone, so a new
+  character given an old object name doesn't inherit the old take. (Only bindings with Cinemafy Take tracks.)
+- **Talking characters meet in the middle** instead of walking into each other.
+- **The cut is the playback range:** the sequence ends at the last shot instead of playing the take's black tail.
+- **Pre-flight:** warns when the level has no Player Start (the game's pawn would spawn at the origin during the
+  take), with a fix that places one off set, on real floor (the farthest point up to 30 m past the set with ground
+  under it, traced from just above the set's floor so a ceiling isn't taken for one).
+- A possessive isn't a death: "kills Selene's Frost" kills the Frost.
+- **Voices in the take:** a voice-only line (an announcement, a radio) is heard by whoever just spoke (else the next to
+  speak): it plays unattached with the voice's name on the subtitle, the hearer's lips stay still, it paces the take
+  and gives the next line its cue, and the cut watches the hearer.
+- **Group cues on set:** `TARRIK AND SELENE` is played by the first of them.
+- **Casting over recorded takes:** still lines in a recorded take get a performance for their tone too. The take's
+  own body animation fades out under the cast clip and back after it, instead of the take skipping casting.
+- **Tone without parentheticals:** a line with no direction plays its own words ("I love you" tender, "You are afraid"
+  worried, "I am serious" determined), and otherwise the scene's mood, a notch softer than a written direction:
+  romantic plays tender, sad plays sad, tense and eerie uneasy, alarm anxious, action firm, warm and triumphant warm.
+  A written direction always wins. Scratch reads, the script's director and recorded takes all follow it
+  (`ReadDeliveryInMood`, `MoodDirection`).
+- **Re-cutting drops dead cameras:** cuts to Cinemafy cameras deleted since an earlier staging (and their bindings)
+  are removed when a director cuts the scene, so they can't pile up under the new cut and drop the view to the player.
+- **No white flash on an opening Dissolve:** the first shot has nothing to dissolve, wipe or whip from, so it fades
+  in from black (a dip to white stays a dip).
+- Choreography wiring is logged once per performer, not on every beat.
+- Mac (clang) build fix in the director.
+- New test: `Cinemafy.Script.ReadsTheFinePrint`.
+
 ## 0.17.0: "Printed pages"
 - **PDF screenplays:**
   - Import Script takes a `.pdf`. Its text comes from `pdftotext` (poppler: `brew install poppler` on a Mac), and

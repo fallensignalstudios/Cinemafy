@@ -196,6 +196,24 @@ namespace CinemafyScriptText
 		return false;
 	}
 
+	/** "ONE", "IV", "TWELVE": the number in "CHAPTER ONE" / "PART IV". */
+	bool IsChapterNumberWord(const FString& Word)
+	{
+		const FString Up = Word.ToUpper().Replace(TEXT(":"), TEXT("")).Replace(TEXT("."), TEXT(""));
+		if (Up.IsEmpty())
+		{
+			return false;
+		}
+		bool bRoman = Up.Len() <= 6;
+		for (const TCHAR C : Up)
+		{
+			bRoman &= C == TEXT('I') || C == TEXT('V') || C == TEXT('X') || C == TEXT('L');
+		}
+		return bRoman || IsAnyOf(Up, { TEXT("ONE"), TEXT("TWO"), TEXT("THREE"), TEXT("FOUR"), TEXT("FIVE"), TEXT("SIX"), TEXT("SEVEN"), TEXT("EIGHT"),
+			TEXT("NINE"), TEXT("TEN"), TEXT("ELEVEN"), TEXT("TWELVE"), TEXT("THIRTEEN"), TEXT("FOURTEEN"), TEXT("FIFTEEN"), TEXT("SIXTEEN"), TEXT("SEVENTEEN"),
+			TEXT("EIGHTEEN"), TEXT("NINETEEN"), TEXT("TWENTY"), TEXT("FIRST"), TEXT("SECOND"), TEXT("THIRD"), TEXT("FINAL"), TEXT("ZERO") });
+	}
+
 	/** "CHAPTER 3", "Mission 4: Blackout", "LEVEL 2 - THE DOCKS", "EPISODE 1". */
 	bool IsChapterMarker(const FString& Trim, FString& OutTitle)
 	{
@@ -209,12 +227,30 @@ namespace CinemafyScriptText
 			return false;
 		}
 		const FString Rest = Trim.Mid(First.Len()).TrimStartAndEnd();
-		if (Rest.IsEmpty() || !(FChar::IsDigit(Rest[0]) || FChar::IsUpper(Rest[0]) || Rest[0] == TEXT(':')))
+		if (Rest.IsEmpty() || !(FChar::IsDigit(Rest[0]) || Rest[0] == TEXT(':') || Rest[0] == TEXT('#') || IsChapterNumberWord(FirstWord(Rest))))
 		{
+			// "MISSION ASSESSMENT: SUCCESS" is a readout, not a chapter: a marker carries a number.
 			return false;
 		}
 		OutTitle = IsAllCaps(Trim) ? TitleCase(Trim) : Trim;
 		return true;
+	}
+
+	/** "ON SCREEN:", "SUPER:", "CHYRON: ..." open a block of text shown on screen (up to the next blank line). */
+	bool IsDisplayOpener(const FString& Trim, FString& OutRest)
+	{
+		static const TCHAR* Openers[] = { TEXT("ON SCREEN:"), TEXT("ON-SCREEN:"), TEXT("ON SCREEN TEXT:"), TEXT("ON-SCREEN TEXT:"), TEXT("TEXT ON SCREEN:"),
+			TEXT("SCREEN TEXT:"), TEXT("SUPER:"), TEXT("SUPERIMPOSE:"), TEXT("SUPERIMPOSED:"), TEXT("CHYRON:"), TEXT("TITLE CARD:"), TEXT("CAPTION:"),
+			TEXT("ON THE SCREEN:"), TEXT("HUD:"), TEXT("DISPLAY:"), TEXT("READOUT:") };
+		for (const TCHAR* Opener : Openers)
+		{
+			if (Trim.StartsWith(Opener, ESearchCase::IgnoreCase))
+			{
+				OutRest = Trim.Mid(FCString::Strlen(Opener)).TrimStartAndEnd();
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** A coded chapter header: "SCOR 01   THE MANTLE", "EP 3 - THE LONG NIGHT" -> code "SCOR-01" and title "The Mantle". */
@@ -550,7 +586,10 @@ namespace CinemafyScriptText
 		return true;
 	}
 
-	/** Strips Fountain boneyard (slash-star ... star-slash) and notes ([[ ]]). */
+	/** Starts the line a [[BLOCKING: ...]] note leaves behind for the reader. */
+	const TCHAR* const BlockingMarker = TEXT("\x02") TEXT("BLOCKING ");  // (split: "\x02B" would read as one hex escape)
+
+	/** Strips Fountain boneyard (slash-star ... star-slash) and notes ([[ ]]), keeping [[BLOCKING: ...]] notes. */
 	FString StripComments(const FString& Text)
 	{
 		FString Out;
@@ -567,6 +606,16 @@ namespace CinemafyScriptText
 			if (Text[Index] == TEXT('[') && Index + 1 < Text.Len() && Text[Index + 1] == TEXT('['))
 			{
 				const int32 End = Text.Find(TEXT("]]"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Index + 2);
+				// [[BLOCKING: ...]] / [[STAGING: ...]] is the writer's staging for the scene: kept, on a line of its own.
+				const FString Note = Text.Mid(Index + 2, (End == INDEX_NONE ? Text.Len() : End) - Index - 2).TrimStartAndEnd();
+				for (const TCHAR* Tag : { TEXT("BLOCKING:"), TEXT("STAGING:"), TEXT("BLOCK:") })
+				{
+					if (Note.StartsWith(Tag, ESearchCase::IgnoreCase))
+					{
+						Out += TEXT("\n") + FString(BlockingMarker) + Note.Mid(FCString::Strlen(Tag)).Replace(TEXT("\n"), TEXT(" ")).TrimStartAndEnd() + TEXT("\n");
+						break;
+					}
+				}
 				Index = End == INDEX_NONE ? Text.Len() : End + 2;
 				continue;
 			}
@@ -906,12 +955,46 @@ namespace CinemafyScriptBreakdown
 		FString Speaker, SpeakerDirection, PendingDirection;
 		bool bInDialogue = false;
 		bool bBlankBefore = true;
+		bool bOnScreen = false;
 		FCinemafyScriptLine* OpenAction = nullptr;
 
 		auto NextNonEmpty = [&Lines](int32 From) -> FString
 		{
 			return From < Lines.Num() ? Lines[From].TrimStartAndEnd() : FString();
 		};
+
+		// A screenplay (speech under caps cues) says who's talking with cues, so "The contrast settles: ..." in its
+		// action is prose, not a NAME: line. Count both ways of writing speech before reading.
+		bool bCuedScript = false;
+		{
+			int32 Cues = 0, Colons = 0;
+			bool bBlank = true, bDisplay = false;
+			for (int32 Scan = Index; Scan < Lines.Num(); ++Scan)
+			{
+				const FString Line = Lines[Scan].TrimStartAndEnd();
+				FString Rest, Speaker2, Text2, Direction2;
+				if (Line.IsEmpty())
+				{
+					bBlank = true;
+					bDisplay = false;
+					continue;
+				}
+				if (IsDisplayOpener(Line, Rest))
+				{
+					bDisplay = true;
+				}
+				else if (!bDisplay && bBlank && IsCue(Line) && !NextNonEmpty(Scan + 1).IsEmpty())
+				{
+					++Cues;
+				}
+				else if (!bDisplay && IsColonDialogue(Line, Speaker2, Text2, Direction2))
+				{
+					++Colons;
+				}
+				bBlank = false;
+			}
+			bCuedScript = Cues >= 8 && Cues >= Colons;
+		}
 
 		for (; Index < Lines.Num(); ++Index)
 		{
@@ -920,11 +1003,41 @@ namespace CinemafyScriptBreakdown
 			{
 				bInDialogue = false;
 				bBlankBefore = true;
+				bOnScreen = false;
 				OpenAction = nullptr;
+				continue;
+			}
+			if (Trim.StartsWith(BlockingMarker))
+			{
+				// The writer's staging: it belongs to the scene it sits in (or the next one, before any heading).
+				const FString Note = Trim.Mid(FCString::Strlen(BlockingMarker)).TrimStartAndEnd();
+				FString& Blocking = P.CurrentOrNew().Data.Blocking;
+				Blocking += (Blocking.IsEmpty() ? TEXT("") : TEXT(" ")) + Note;
 				continue;
 			}
 			const bool bWasBlank = bBlankBefore;
 			bBlankBefore = false;
+
+			// Text shown on screen ("ON SCREEN:" and the lines under it, up to a blank line): display lines, never
+			// speakers, chapters or scenes.
+			FString DisplayText;
+			const bool bOpensDisplay = !bInDialogue && IsDisplayOpener(Trim, DisplayText);
+			if (bOnScreen || bOpensDisplay)
+			{
+				bOnScreen = true;
+				if (!bOpensDisplay)
+				{
+					DisplayText = Trim;
+				}
+				if (!DisplayText.IsEmpty())
+				{
+					FCinemafyScriptLine& Line = P.CurrentOrNew().Data.Lines.AddDefaulted_GetRef();
+					Line.Kind = ECinemafyScriptLineKind::Display;
+					Line.Text = DisplayText;
+				}
+				OpenAction = nullptr;
+				continue;
+			}
 
 			// Story flow (games): "* choice -> target ~ flag ? condition", "-> divert", "~ flag", "? condition".
 			if ((Trim.StartsWith(TEXT("* ")) || Trim.StartsWith(TEXT("+ "))) && P.Scenes.Num() > 0)
@@ -1112,7 +1225,7 @@ namespace CinemafyScriptBreakdown
 			}
 
 			FString ColonSpeaker, ColonText, ColonDirection;
-			if (IsColonDialogue(Trim, ColonSpeaker, ColonText, ColonDirection))
+			if (!bCuedScript && IsColonDialogue(Trim, ColonSpeaker, ColonText, ColonDirection))
 			{
 				FCinemafyScriptLine& Line = P.CurrentOrNew().Data.Lines.AddDefaulted_GetRef();
 				Line.Kind = ECinemafyScriptLineKind::Dialogue;
@@ -1347,6 +1460,53 @@ TArray<FCinemafyScriptAct> UCinemafyScriptLibrary::BreakDownScript(const FString
 				}
 			}
 		}
+		// Between the bookends the story still has three acts: find them like an unmarked script's, on chapter starts.
+		for (int32 Act = 0; bInferActs && Act < ActStarts.Num(); ++Act)
+		{
+			const int32 First = ActStarts[Act];
+			const int32 End = Act + 1 < ActStarts.Num() ? ActStarts[Act + 1] : Scenes.Num();
+			if (ActTitles[Act] != TEXT("The Story") || End - First < 6)
+			{
+				continue;
+			}
+			const float From = StartFraction[First];
+			const float To = End < Scenes.Num() ? StartFraction[End] : 1.f;
+			auto OnChapter = [&](int32 Pick, int32 Min, int32 Max)
+			{
+				// The nearest chapter start, so an act never cuts a chapter in two.
+				int32 Best = Pick;
+				int32 BestDistance = MAX_int32;
+				for (int32 Index = Min; Index <= Max; ++Index)
+				{
+					if (Scenes[Index].bChapterMarked && FMath::Abs(Index - Pick) < BestDistance)
+					{
+						Best = Index;
+						BestDistance = FMath::Abs(Index - Pick);
+					}
+				}
+				return Best;
+			};
+			FString WhyOne, WhyTwo;
+			int32 One = PickBreak(Scenes, StartFraction, From + (To - From) * 0.25f, First + 1, End - 3, WhyOne);
+			One = One == INDEX_NONE ? INDEX_NONE : OnChapter(One, First + 1, End - 3);
+			int32 Two = One == INDEX_NONE ? INDEX_NONE : PickBreak(Scenes, StartFraction, From + (To - From) * 0.75f, One + 2, End - 1, WhyTwo);
+			Two = Two == INDEX_NONE ? INDEX_NONE : OnChapter(Two, One + 1, End - 1);
+			if (One == INDEX_NONE || Two == INDEX_NONE || One <= First || Two <= One)
+			{
+				continue;
+			}
+			ActTitles[Act] = TEXT("Act One: Setup");
+			ActWhy[Act] = TEXT("after the prologue (inferred: the script marks no acts of its own)");
+			ActStarts.Insert(Two, Act + 1);
+			ActTitles.Insert(TEXT("Act Three: Resolution"), Act + 1);
+			ActInferred.Insert(true, Act + 1);
+			ActWhy.Insert(TEXT("Act break near the three-quarter mark, on a chapter start: ") + WhyTwo, Act + 1);
+			ActStarts.Insert(One, Act + 1);
+			ActTitles.Insert(TEXT("Act Two: Confrontation"), Act + 1);
+			ActInferred.Insert(true, Act + 1);
+			ActWhy.Insert(TEXT("Act break near the quarter mark, on a chapter start: ") + WhyOne, Act + 1);
+			Act += 2;
+		}
 	}
 	else if (bInferActs && Scenes.Num() >= 6)
 	{
@@ -1492,18 +1652,92 @@ namespace CinemafyScriptContinuity
 {
 	using namespace CinemafyScriptText;
 
+	/** Text split like Normalize, keeping each word's case ("Thane's hand." -> "Thane", "s", "hand"). */
+	TArray<FString> CasedWords(const FString& Text)
+	{
+		TArray<FString> Words;
+		FString Word;
+		for (const TCHAR C : Text)
+		{
+			if (FChar::IsAlnum(C))
+			{
+				Word.AppendChar(C);
+			}
+			else if (!Word.IsEmpty())
+			{
+				Words.Add(MoveTemp(Word));
+				Word.Reset();
+			}
+		}
+		if (!Word.IsEmpty())
+		{
+			Words.Add(MoveTemp(Word));
+		}
+		return Words;
+	}
+
+	/** A cue for more than one speaker: "TARRIK AND SELENE", "KADE & THANE", "BOTH". */
+	bool IsGroupSpeaker(const FString& Name)
+	{
+		const FString Up = TEXT(" ") + Name.ToUpper() + TEXT(" ");
+		return Up.Contains(TEXT(" AND ")) || Up.Contains(TEXT(" & ")) || Up.Contains(TEXT("/")) || Up.Contains(TEXT(","))
+			|| IsAnyOf(Name.TrimStartAndEnd(), { TEXT("BOTH"), TEXT("ALL"), TEXT("EVERYONE"), TEXT("CROWD"), TEXT("VOICES"), TEXT("TOGETHER") });
+	}
+
+	/** The people in a cast list: group cues split into their speakers ("TARRIK AND SELENE" -> TARRIK, SELENE). */
+	TArray<FString> PeopleIn(const TArray<FString>& Speakers)
+	{
+		TArray<FString> People;
+		for (const FString& Speaker : Speakers)
+		{
+			if (!IsGroupSpeaker(Speaker))
+			{
+				People.AddUnique(Speaker);
+				continue;
+			}
+			TArray<FString> Parts;
+			Speaker.ToUpper().Replace(TEXT(" AND "), TEXT(",")).Replace(TEXT("&"), TEXT(",")).Replace(TEXT("/"), TEXT(",")).ParseIntoArray(Parts, TEXT(","), true);
+			for (FString& Part : Parts)
+			{
+				Part.TrimStartAndEndInline();
+				if (!Part.IsEmpty() && !IsGroupSpeaker(Part))
+				{
+					People.AddUnique(Part);
+				}
+			}
+		}
+		return People;
+	}
+
+	/** One character named in a sentence: who, and the words [Start, End) that named them. */
+	struct FNamed
+	{
+		FString Name;
+		int32 Start = 0;
+		int32 End = 0;
+	};
+
 	struct FCast
 	{
-		/** lowercase alias -> canonical name ("thane" -> "ADMIRAL THANE"). */
-		TMap<FString, FString> Aliases;
+		/** lowercase whole name -> canonical name ("admiral thane" -> "ADMIRAL THANE"). */
+		TMap<FString, FString> Names;
+		/** lowercase one-word short name -> canonical name ("thane" -> "ADMIRAL THANE"), matched only when capitalized. */
+		TMap<FString, FString> Short;
+		int32 LongestName = 1;
 
-		void Build(const TArray<FString>& Names)
+		void Build(const TArray<FString>& Speakers)
 		{
 			static const TSet<FString> Titles = { TEXT("the"), TEXT("admiral"), TEXT("captain"), TEXT("doctor"), TEXT("dr"), TEXT("mr"), TEXT("mrs"), TEXT("ms"),
 				TEXT("sergeant"), TEXT("sgt"), TEXT("commander"), TEXT("lieutenant"), TEXT("lt"), TEXT("general"), TEXT("young"), TEXT("old"), TEXT("officer"),
-				TEXT("agent"), TEXT("lord"), TEXT("lady"), TEXT("sir"), TEXT("king"), TEXT("queen"), TEXT("prince"), TEXT("princess"), TEXT("guard"), TEXT("man"), TEXT("woman") };
+				TEXT("agent"), TEXT("lord"), TEXT("lady"), TEXT("sir"), TEXT("king"), TEXT("queen"), TEXT("prince"), TEXT("princess"), TEXT("guard"), TEXT("man"),
+				TEXT("woman"), TEXT("high"), TEXT("emperor"), TEXT("empress"), TEXT("father"), TEXT("mother"), TEXT("brother"), TEXT("sister"), TEXT("master") };
+			// Words that start sentences or describe things: never a short name on their own.
+			static const TSet<FString> Common = { TEXT("and"), TEXT("good"), TEXT("bad"), TEXT("dead"), TEXT("hand"), TEXT("new"), TEXT("big"), TEXT("little"),
+				TEXT("first"), TEXT("second"), TEXT("last"), TEXT("one"), TEXT("two"), TEXT("ship"), TEXT("voice"), TEXT("system"), TEXT("radio"), TEXT("all"),
+				TEXT("both"), TEXT("then"), TEXT("now"), TEXT("still"), TEXT("silence"), TEXT("light"), TEXT("night"), TEXT("day"), TEXT("hope"), TEXT("grace") };
+			const TArray<FString> People = PeopleIn(Speakers);
 			TMap<FString, int32> WordUse;
-			for (const FString& Name : Names)
+			for (const FString& Name : People)
 			{
 				TArray<FString> Words;
 				Normalize(Name).ParseIntoArrayWS(Words);
@@ -1512,42 +1746,73 @@ namespace CinemafyScriptContinuity
 					WordUse.FindOrAdd(Word) += 1;
 				}
 			}
-			for (const FString& Name : Names)
+			for (const FString& Name : People)
 			{
 				const FString Full = Normalize(Name);
-				Aliases.Add(Full, Name);
 				TArray<FString> Words;
 				Full.ParseIntoArrayWS(Words);
-				for (const FString& Word : Words)
+				if (Words.Num() == 0)
 				{
-					if (Word.Len() >= 3 && !Titles.Contains(Word) && WordUse.FindRef(Word) == 1)
-					{
-						Aliases.Add(Word, Name);
-					}
+					continue;
+				}
+				Names.Add(Full, Name);
+				LongestName = FMath::Max(LongestName, Words.Num());
+				// "ADMIRAL THANE" is also "Thane"; "DEAD HAND" is only ever "Dead Hand".
+				TArray<FString> Own = Words.FilterByPredicate([](const FString& Word) { return !Titles.Contains(Word); });
+				if (Words.Num() > 1 && Own.Num() == 1 && Own[0].Len() >= 3 && !Common.Contains(Own[0]) && WordUse.FindRef(Own[0]) == 1)
+				{
+					Short.Add(Own[0], Name);
 				}
 			}
 		}
 
-		/** Characters named in a sentence (normalized words), in order. */
-		TArray<FString> Find(const TArray<FString>& Words) const
+		/** Characters named in some text, in order: whole names, or a short name written with a capital. */
+		TArray<FNamed> FindAll(const TArray<FString>& Cased) const
 		{
-			TArray<FString> Found;
-			for (int32 Index = 0; Index < Words.Num(); ++Index)
+			TArray<FNamed> Found;
+			for (int32 Index = 0; Index < Cased.Num(); ++Index)
 			{
-				// Two-word names first ("admiral thane").
-				if (Index + 1 < Words.Num())
+				int32 Length = 0;
+				FString Who;
+				FString Run;
+				for (int32 Count = 1; Count <= LongestName && Index + Count <= Cased.Num(); ++Count)
 				{
-					if (const FString* Two = Aliases.Find(Words[Index] + TEXT(" ") + Words[Index + 1]))
+					// Names are written with capitals in prose: "her dead hand" isn't DEAD HAND.
+					const FString& Word = Cased[Index + Count - 1];
+					if (!FChar::IsUpper(Word[0]) && !FChar::IsDigit(Word[0]) && !IsAnyOf(Word, { TEXT("the"), TEXT("of"), TEXT("and"), TEXT("de"), TEXT("van"), TEXT("von") }))
 					{
-						Found.AddUnique(*Two);
-						++Index;
-						continue;
+						break;
+					}
+					Run += (Count > 1 ? TEXT(" ") : TEXT("")) + Word.ToLower();
+					if (const FString* Whole = Names.Find(Run))
+					{
+						Who = *Whole;
+						Length = Count;
 					}
 				}
-				if (const FString* One = Aliases.Find(Words[Index]))
+				if (Who.IsEmpty() && FChar::IsUpper(Cased[Index][0]))
 				{
-					Found.AddUnique(*One);
+					if (const FString* One = Short.Find(Cased[Index].ToLower()))
+					{
+						Who = *One;
+						Length = 1;
+					}
 				}
+				if (!Who.IsEmpty())
+				{
+					Found.Add(FNamed{ Who, Index, Index + Length });
+					Index += Length - 1;
+				}
+			}
+			return Found;
+		}
+
+		TArray<FString> Find(const TArray<FString>& Cased) const
+		{
+			TArray<FString> Found;
+			for (const FNamed& Named : FindAll(Cased))
+			{
+				Found.AddUnique(Named.Name);
 			}
 			return Found;
 		}
@@ -1584,7 +1849,7 @@ namespace CinemafyScriptContinuity
 	}
 
 	/** Index just past a multi-word verb in Words, or INDEX_NONE. */
-	int32 FindVerb(const TArray<FString>& Words, std::initializer_list<const TCHAR*> Verbs)
+	int32 FindVerb(const TArray<FString>& Words, std::initializer_list<const TCHAR*> Verbs, int32* OutStart = nullptr)
 	{
 		for (const TCHAR* Verb : Verbs)
 		{
@@ -1599,6 +1864,10 @@ namespace CinemafyScriptContinuity
 				}
 				if (bMatch)
 				{
+					if (OutStart)
+					{
+						*OutStart = Index;
+					}
 					return Index + Parts.Num();
 				}
 			}
@@ -1662,9 +1931,7 @@ void UCinemafyScriptLibrary::TrackContinuity(TArray<FCinemafyScriptAct>& Acts)
 				{
 					if (Line.Kind == ECinemafyScriptLineKind::Action)
 					{
-						TArray<FString> Words;
-						Normalize(Line.Text).ParseIntoArrayWS(Words);
-						for (const FString& Name : CastNames.Find(Words))
+						for (const FString& Name : CastNames.Find(CasedWords(Line.Text)))
 						{
 							Scene.Characters.AddUnique(Name);
 						}
@@ -1748,13 +2015,20 @@ void UCinemafyScriptLibrary::TrackContinuity(TArray<FCinemafyScriptAct>& Acts)
 					Line.Text.Replace(TEXT("!"), TEXT(".")).Replace(TEXT("?"), TEXT(".")).ParseIntoArray(Sentences, TEXT(". "), true);
 					for (const FString& Sentence : Sentences)
 					{
+						const TArray<FString> Cased = CasedWords(Sentence);
 						TArray<FString> Words;
-						Normalize(Sentence).ParseIntoArrayWS(Words);
+						for (const FString& Word : Cased)
+						{
+							Words.Add(Word.ToLower());
+						}
 						if (Words.Num() == 0)
 						{
 							continue;
 						}
-						TArray<FString> Named = CastNames.Find(Words);
+						const TArray<FNamed> Mentions = CastNames.FindAll(Cased);
+						TArray<FString> Named = CastNames.Find(Cased);
+						const FString LastNamedBefore = Named.Num() > 0 ? Named[0] : LastNamed;
+						int32 VerbStartOut = INDEX_NONE;
 						FString Subject = Named.Num() > 0 ? Named[0] : FString();
 						if (Subject.IsEmpty() && IsAnyOf(Words[0], { TEXT("she"), TEXT("he"), TEXT("they"), TEXT("her"), TEXT("his") }))
 						{
@@ -1765,16 +2039,37 @@ void UCinemafyScriptLibrary::TrackContinuity(TArray<FCinemafyScriptAct>& Acts)
 							LastNamed = Named.Last();
 						}
 
-						// Deaths: "X kills Y" (Y dies), "X dies / is killed / falls dead".
+						// Deaths, only with a character as the verb's subject or object: "Kade kills Thane", "Thane dies", "He is
+						// killed". "Her channel dies" and "his scream dies" are things going quiet.
+						auto NamedEndingAt = [&Mentions](int32 At) { const FNamed* M = Mentions.FindByPredicate([At](const FNamed& N) { return N.End == At; }); return M ? M->Name : FString(); };
+						// "kills Selene's Frost" kills the Frost: a name with 's owns the object, it isn't the object.
+						auto NamedStartingAt = [&Mentions, &Words](int32 At)
+						{
+							const FNamed* M = Mentions.FindByPredicate([At](const FNamed& N) { return N.Start == At; });
+							return M && !(M->End < Words.Num() && Words[M->End] == TEXT("s")) ? M->Name : FString();
+						};
+						auto SubjectOf = [&](int32 VerbStart) -> FString
+						{
+							const FString Named2 = NamedEndingAt(VerbStart);
+							if (!Named2.IsEmpty())
+							{
+								return Named2;
+							}
+							// "He dies", "and she falls dead": a pronoun that starts the clause stands for the last one named.
+							const bool bPronoun = VerbStart > 0 && IsAnyOf(Words[VerbStart - 1], { TEXT("he"), TEXT("she") });
+							const bool bClauseStart = VerbStart == 1 || (VerbStart >= 2 && IsAnyOf(Words[VerbStart - 2], { TEXT("and"), TEXT("then"), TEXT("but"), TEXT("until") }));
+							return bPronoun && bClauseStart ? LastNamedBefore : FString();
+						};
 						const int32 Kills = FindVerb(Words, { TEXT("kills"), TEXT("executes"), TEXT("murders"), TEXT("slays") });
-						if (Kills != INDEX_NONE && Named.Num() >= 2)
+						const int32 Dies = FindVerb(Words, { TEXT("dies"), TEXT("is killed"), TEXT("falls dead"), TEXT("lies dead"), TEXT("is dead"),
+							TEXT("breathes his last"), TEXT("breathes her last"), TEXT("is slain") }, &VerbStartOut);
+						if (Kills != INDEX_NONE && !NamedStartingAt(Kills).IsEmpty())
 						{
-							Add(Named[1], TEXT("Dead"), TEXT("dead"), Sentence, true);
+							Add(NamedStartingAt(Kills), TEXT("Dead"), TEXT("dead"), Sentence, true);
 						}
-						else if (FindVerb(Words, { TEXT("dies"), TEXT("is killed"), TEXT("falls dead"), TEXT("lies dead"), TEXT("is dead"), TEXT("breathes his last"),
-							TEXT("breathes her last"), TEXT("is slain") }) != INDEX_NONE)
+						else if (Dies != INDEX_NONE)
 						{
-							Add(Subject, TEXT("Dead"), TEXT("dead"), Sentence, true);
+							Add(SubjectOf(VerbStartOut), TEXT("Dead"), TEXT("dead"), Sentence, true);
 						}
 
 						// Injuries, and getting patched up.
@@ -2141,6 +2436,11 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		Scene->DirectorLabel = Old.DirectorLabel;
 		Scene->MatchScore = Old.MatchScore;
 		Scene->Notes = Old.Notes;
+		// Blocking written in the editor stays; blocking the new script carries (a note, a bible field) replaces it.
+		if (Scene->Blocking.IsEmpty())
+		{
+			Scene->Blocking = Old.Blocking;
+		}
 		Scene->Takes = Old.Takes;
 		Scene->ReviewNotes = Old.ReviewNotes;
 		Scene->DailiesFolder = Old.DailiesFolder;
@@ -2221,7 +2521,11 @@ void UCinemafyScriptProject::BreakDown(const FString& ScriptText)
 		{
 			if (Line.Kind == ECinemafyScriptLineKind::Dialogue)
 			{
-				Lines.FindOrAdd(Line.Speaker) += 1;
+				// "TARRIK AND SELENE" is two cast members, not a third.
+				for (const FString& Person : UCinemafyScriptLibrary::PeopleInCue(Line.Speaker))
+				{
+					Lines.FindOrAdd(Person) += 1;
+				}
 			}
 		}
 	}
@@ -2486,6 +2790,9 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 			ECinemafyEmotion::Worried, true, 0.45f, 0.95f, 0.8f, false },
 		{ { TEXT("determined"), TEXT("firmly"), TEXT("firm"), TEXT("resolute"), TEXT("steely"), TEXT("commanding"), TEXT("defiant") },
 			ECinemafyEmotion::Determined, true, 0.7f, 0.95f, 1.f, false },
+		// Tender is warm and quiet, not happy: a love scene shouldn't laugh its way through.
+		{ { TEXT("tender"), TEXT("lovingly"), TEXT("fondly"), TEXT("gently"), TEXT("intimate"), TEXT("romantic"), TEXT("adoring") },
+			ECinemafyEmotion::Neutral, false, 0.35f, 0.9f, 0.75f, false },
 	};
 	if (!Words.IsEmpty())
 	{
@@ -2522,8 +2829,88 @@ FCinemafyDelivery UCinemafyScriptLibrary::ReadDelivery(const FString& Direction,
 		Delivery.Intensity = 0.9f;
 		Delivery.Rate = 1.1f;
 		Delivery.Cue = TEXT("shouted");
+		return Delivery;
+	}
+
+	// No direction: the line's own words, played gentler than a written direction would ask.
+	struct FWords
+	{
+		TArray<const TCHAR*> Phrases;
+		ECinemafyEmotion Emotion;
+		float Intensity;
+	};
+	// The first match wins: specific readings before the general ones. Neutral = tender (warm, quiet, no feeling named).
+	static const FWords Said[] = {
+		{ { TEXT("i love you"), TEXT("love you"), TEXT("my love"), TEXT("darling"), TEXT("beloved"), TEXT("my heart"), TEXT("kiss me"), TEXT("i missed you") },
+			ECinemafyEmotion::Neutral, 0.4f },
+		{ { TEXT("i m sorry"), TEXT("im sorry"), TEXT("forgive me"), TEXT("goodbye"), TEXT("i miss"), TEXT("they re gone"), TEXT("is dead"), TEXT("are dead") },
+			ECinemafyEmotion::Sad, 0.5f },
+		{ { TEXT("i hate"), TEXT("how dare"), TEXT("damn you"), TEXT("i ll kill"), TEXT("traitor") }, ECinemafyEmotion::Angry, 0.65f },
+		// Danger in the words, whoever's afraid: "You are afraid", "The assassin fired".
+		{ { TEXT("afraid"), TEXT("scared"), TEXT("fear"), TEXT("feared"), TEXT("fears"), TEXT("terrified"), TEXT("frightened"), TEXT("assassin"),
+			TEXT("assassins"), TEXT("murder"), TEXT("murdered"), TEXT("killed"), TEXT("kill"), TEXT("die"), TEXT("dying"), TEXT("dead"), TEXT("blood"),
+			TEXT("threat"), TEXT("danger") }, ECinemafyEmotion::Worried, 0.55f },
+		{ { TEXT("i am serious"), TEXT("i m serious"), TEXT("i swear"), TEXT("i promise"), TEXT("i will"), TEXT("never again"), TEXT("we must"), TEXT("i must") },
+			ECinemafyEmotion::Determined, 0.55f },
+	};
+	const FString Spoken = TEXT(" ") + CinemafyScriptText::Normalize(Text) + TEXT(" ");
+	for (const FWords& Entry : Said)
+	{
+		for (const TCHAR* Phrase : Entry.Phrases)
+		{
+			if (Spoken.Contains(FString::Printf(TEXT(" %s "), Phrase)))
+			{
+				Delivery.bHasEmotion = Entry.Emotion != ECinemafyEmotion::Neutral;
+				Delivery.Emotion = Entry.Emotion;
+				Delivery.Intensity = Entry.Intensity;
+				Delivery.Volume = Entry.Emotion == ECinemafyEmotion::Neutral ? 0.8f : 1.f;
+				Delivery.Cue = FString::Printf(TEXT("says \"%s\""), Phrase);
+				return Delivery;
+			}
+		}
 	}
 	return Delivery;
+}
+
+FString UCinemafyScriptLibrary::MoodDirection(const FString& Mood)
+{
+	return Mood == TEXT("romantic") ? TEXT("tender")
+		: Mood == TEXT("sad") ? TEXT("sadly")
+		: Mood == TEXT("tense") || Mood == TEXT("eerie") ? TEXT("uneasy")
+		: Mood == TEXT("alarm") ? TEXT("anxious")
+		: Mood == TEXT("action") ? TEXT("firmly")
+		: Mood == TEXT("warm") || Mood == TEXT("triumphant") ? TEXT("warmly")
+		: TEXT("");
+}
+
+FString UCinemafyScriptLibrary::MoodAfterLine(const FString& Mood, const FCinemafyDelivery& Line)
+{
+	// Once the words turn dark (fear, grief, anger), the rest of a warm scene plays uneasy, not tender.
+	const bool bDark = Line.bHasEmotion && (Line.Emotion == ECinemafyEmotion::Worried || Line.Emotion == ECinemafyEmotion::Fear
+		|| Line.Emotion == ECinemafyEmotion::Sad || Line.Emotion == ECinemafyEmotion::Angry);
+	const bool bWarm = Mood == TEXT("romantic") || Mood == TEXT("warm") || Mood == TEXT("calm") || Mood == TEXT("triumphant");
+	return bDark && bWarm ? FString(TEXT("tense")) : Mood;
+}
+
+FCinemafyDelivery UCinemafyScriptLibrary::ReadDeliveryInMood(const FString& Direction, const FString& Text, const FString& Mood)
+{
+	const FCinemafyDelivery Read = ReadDelivery(Direction, Text);
+	if (!Read.Cue.IsEmpty() || !Direction.TrimStartAndEnd().IsEmpty())
+	{
+		return Read;
+	}
+	// The scene's mood, as the direction a writer might have given, a notch softer.
+	const FString AsDirection = MoodDirection(Mood);
+	if (AsDirection.IsEmpty())
+	{
+		return Read;
+	}
+	FCinemafyDelivery FromMood = ReadDelivery(AsDirection, Text);
+	FromMood.Intensity = FMath::Min(FromMood.Intensity, 0.5f);
+	FromMood.Rate = FMath::Lerp(1.f, FromMood.Rate, 0.5f);
+	FromMood.Volume = FMath::Lerp(1.f, FromMood.Volume, 0.5f);
+	FromMood.Cue = FString::Printf(TEXT("%s scene"), *Mood);
+	return FromMood;
 }
 
 FString UCinemafyScriptLibrary::ComputeContentHash(const FCinemafyScriptScene& Scene)
@@ -3078,6 +3465,11 @@ namespace CinemafyBible
 			Game.ControlBefore = Str(Object, TEXT("control_before"));
 			Game.ControlAfter = Str(Object, TEXT("control_after"));
 			Game.CameraNotes = Str(Object, TEXT("camera_staging"));
+			Scene.Blocking = Str(Object, TEXT("blocking"));
+			if (Scene.Blocking.IsEmpty())
+			{
+				Scene.Blocking = Str(Object, TEXT("staging"));
+			}
 			Game.RequiredBeats = Strings(Object, TEXT("required_beats"));
 			Game.ExitState = Strings(Object, TEXT("exit_state"));
 			Game.Handoff = Str(Object, TEXT("handoff"));
@@ -3232,6 +3624,7 @@ namespace CinemafyBible
 					}
 				}
 				else if (Key.StartsWith(TEXT("Camera"))) { Game.CameraNotes = Value; }
+				else if (Key == TEXT("Blocking") || Key == TEXT("Staging")) { Scene.Blocking = Value; }
 				else if (Key.StartsWith(TEXT("Required"))) { Value.ParseIntoArray(Game.RequiredBeats, TEXT(";"), true); for (FString& Beat : Game.RequiredBeats) { Beat.TrimStartAndEndInline(); Beat.RemoveFromEnd(TEXT(".")); } }
 				else if (Key.StartsWith(TEXT("Return to play"))) { Game.Handoff = Value; bInScript = false; }
 				else if (Key.StartsWith(TEXT("Continuity"))) { Game.ContinuityNotes = Value; bInScript = false; }
@@ -3405,6 +3798,35 @@ namespace CinemafyBible
 		SplitInserts(Scene);
 		return Calls;
 	}
+}
+
+bool UCinemafyScriptLibrary::IsVoiceOnly(const FString& Speaker, const FString& Direction)
+{
+	using namespace CinemafyScriptText;
+	const FString How = Direction.ToUpper().Replace(TEXT(" "), TEXT(""));
+	if (How.Contains(TEXT("V.O")) || How.Contains(TEXT("(VO)")) || How == TEXT("VO") || How.Contains(TEXT("VOICEOVER")) || How.Contains(TEXT("PRE-LAP"))
+		|| How.Contains(TEXT("PRELAP")) || How.Contains(TEXT("RADIO")) || How.Contains(TEXT("FILTERED")) || How.Contains(TEXT("COMMS")) || How.Contains(TEXT("INTERCOM"))
+		|| How.Contains(TEXT("RECORDING")) || How.Contains(TEXT("ONTV")))
+	{
+		return true;
+	}
+	TArray<FString> Words;
+	Speaker.ToUpper().Replace(TEXT("'S"), TEXT("")).ParseIntoArrayWS(Words);
+	for (const FString& Word : Words)
+	{
+		if (IsAnyOf(Word, { TEXT("VOICE"), TEXT("VOICES"), TEXT("ANNOUNCEMENT"), TEXT("ANNOUNCER"), TEXT("PA"), TEXT("P.A."), TEXT("INTERCOM"), TEXT("SYSTEM"),
+			TEXT("COMPUTER"), TEXT("CONSOLE"), TEXT("TERMINAL"), TEXT("NARRATOR"), TEXT("RADIO"), TEXT("COMMS"), TEXT("COMM"), TEXT("LOUDSPEAKER"),
+			TEXT("BROADCAST"), TEXT("RECORDING"), TEXT("RECORDER"), TEXT("TANNOY"), TEXT("ALARM"), TEXT("TRANSMISSION"), TEXT("UNSEEN"), TEXT("OFFSCREEN"), TEXT("NEWSREADER"), TEXT("BROADCASTER") }))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+TArray<FString> UCinemafyScriptLibrary::PeopleInCue(const FString& Speaker)
+{
+	return CinemafyScriptContinuity::PeopleIn({ Speaker });
 }
 
 FString UCinemafyScriptLibrary::SplitInsertId(const FString& SceneId, int32& OutInsert)

@@ -1,4 +1,5 @@
 #include "CinemafyPreflight.h"
+#include "CinemafyDialog.h"
 #include "CinemafyChoreography.h"
 #include "CinemafyModule.h"
 #include "Misc/MessageDialog.h"
@@ -13,6 +14,7 @@
 #include "FileHelpers.h"
 #include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/PlayerStart.h"
 #include "LevelEditorViewport.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
@@ -221,6 +223,10 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 	{
 		AActor* Actor = UCinemafyStoryLibrary::FindCastActor(Project, Name, World);
 		const FCinemafyCastMember* Member = Project->FindCastMember(Name);
+		if (Member ? Member->bVoiceOnly : UCinemafyScriptLibrary::IsVoiceOnly(Name, FString()))
+		{
+			continue; // Heard, not seen.
+		}
 		if (Actor)
 		{
 			if (!Actor->IsA<ACharacter>())
@@ -245,6 +251,8 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 				ECinemafyFix::CastTemplateCharacter, Name, FString::Printf(TEXT("Cast as %s"), *Template->GetName()))
 			: MakeCheck(Id, ECinemafyCheckSeverity::Blocker, FString::Printf(TEXT("%s isn't on set and has no Character Class: place them in the level (labelled %s), or give their cast entry a Character Class."), *Name, *Name),
 				ECinemafyFix::OpenProject, FString(), TEXT("Open Cast & Sets")));
+		// Cast as the template, they're brought in too: their start marks go down in the same Fix All.
+		ToSpawn += Template ? 1 : 0;
 	}
 	if (ToSpawn > 0)
 	{
@@ -256,7 +264,8 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 		if (StartMarks < ToSpawn)
 		{
 			Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("%d character(s) will be brought in, but there are %d start mark(s): the rest line up at the world origin."), ToSpawn, StartMarks),
-				ECinemafyFix::PlaceMark, TEXT("start"), TEXT("Place a start mark")));
+				ECinemafyFix::PlaceMark, FString::Printf(TEXT("start:%d"), ToSpawn - StartMarks),
+				ToSpawn - StartMarks == 1 ? FString(TEXT("Place a start mark")) : FString::Printf(TEXT("Place %d start marks"), ToSpawn - StartMarks)));
 		}
 	}
 	// Set pieces the script mentions that the level doesn't have yet: one fix dresses them all.
@@ -273,6 +282,18 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("The script mentions set pieces the level doesn't have: %s."), *FString::Join(Undressed, TEXT(", "))),
 			ECinemafyFix::DressSet, FString(), TEXT("Dress the set")));
 	}
+	// The blocking's places: a mark (or set piece) for each, posed for it.
+	for (const FCinemafyBlock& Block : UCinemafyPrevisLibrary::BlockScene(*Scene))
+	{
+		if (!Block.Place.IsEmpty() && !PlaceExists(World, Block.Place, Scene->Location))
+		{
+			const FString PoseName = StaticEnum<ECinemafyPose>()->GetNameStringByValue(static_cast<int64>(Block.Pose));
+			Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, FString::Printf(TEXT("The blocking puts %s at the %s, but there's no mark or set piece called that%s."),
+				*FString::Join(Block.Characters, TEXT(" and ")), *Block.Place, Block.Pose == ECinemafyPose::Lie ? TEXT(" (put the mark on the bed, arrow toward the pillow)") : TEXT("")),
+				ECinemafyFix::PlaceMark, FString::Printf(TEXT("%s:1:%s"), *Block.Place, *PoseName), FString::Printf(TEXT("Place \"%s\""), *Block.Place)));
+			Places.Remove(Block.Place);
+		}
+	}
 	for (const FString& Place : Places)
 	{
 		if (!PlaceExists(World, Place, Scene->Location) && !Undressed.Contains(Place))
@@ -285,6 +306,12 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckScene(UCinemafyScriptProj
 	{
 		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, TEXT("No nav mesh in the level: moves can't path around things."),
 			ECinemafyFix::AddNavMesh, FString(), TEXT("Add a Nav Mesh")));
+	}
+	// Takes record in a play session: with no Player Start, the game's own pawn appears at the world origin, often on set.
+	if (!TActorIterator<APlayerStart>(World))
+	{
+		Checks.Add(MakeCheck(Id, ECinemafyCheckSeverity::Warning, TEXT("No Player Start in the level: when the take plays, the game's pawn spawns at the world origin, maybe in the middle of the scene."),
+			ECinemafyFix::AddPlayerStart, FString(), TEXT("Add a Player Start off set")));
 	}
 
 	// Voices.
@@ -358,7 +385,7 @@ TArray<FCinemafyCheck> UCinemafyPreflightLibrary::CheckProject(UCinemafyScriptPr
 	TArray<FString> Uncast;
 	for (const FCinemafyCastMember& Member : Project->CastMembers)
 	{
-		if (Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
+		if (!Member.bVoiceOnly && Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
 		{
 			Uncast.Add(Member.ScriptName);
 		}
@@ -459,35 +486,109 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 	}
 	case ECinemafyFix::PlaceMark:
 	{
-		const bool bStart = Check.FixArg == TEXT("start");
-		ACinemafyMark* Mark = UCinemafyStoryLibrary::PlaceMark(Check.FixArg, Scene ? Scene->Location : FString());
-		if (!Mark)
+		// "start:3" places three start marks: one for each character who'll be brought in.
+		// "start:3" places three start marks; "bunk:1:Lie" one mark posed for lying on.
+		TArray<FString> Parts;
+		Check.FixArg.ParseIntoArray(Parts, TEXT(":"), false);
+		const FString MarkName = Parts.Num() > 0 ? Parts[0] : Check.FixArg;
+		const int32 Count = Parts.Num() > 1 ? FMath::Clamp(FCString::Atoi(*Parts[1]), 1, 16) : 1;
+		const int64 PoseValue = Parts.Num() > 2 ? StaticEnum<ECinemafyPose>()->GetValueByNameString(Parts[2]) : INDEX_NONE;
+		const bool bStart = MarkName == TEXT("start");
+		int32 Placed = 0;
+		for (int32 Each = 0; Each < Count; ++Each)
 		{
-			return false;
-		}
-		// Side by side, not stacked, when several are placed in a row.
-		for (int32 Step = 0; Step < 20; ++Step)
-		{
-			bool bCrowded = false;
-			for (TActorIterator<ACinemafyMark> It(World); It; ++It)
-			{
-				bCrowded |= *It != Mark && FVector::Dist2D(It->GetActorLocation(), Mark->GetActorLocation()) < 80.f;
-			}
-			if (!bCrowded)
+			ACinemafyMark* Mark = UCinemafyStoryLibrary::PlaceMark(MarkName, Scene ? Scene->Location : FString());
+			if (!Mark)
 			{
 				break;
 			}
-			Mark->SetActorLocation(Mark->GetActorLocation() + FVector(0.f, 150.f, 0.f));
+			// Side by side, not stacked, when several are placed in a row.
+			for (int32 Step = 0; Step < 20; ++Step)
+			{
+				bool bCrowded = false;
+				for (TActorIterator<ACinemafyMark> It(World); It; ++It)
+				{
+					bCrowded |= *It != Mark && FVector::Dist2D(It->GetActorLocation(), Mark->GetActorLocation()) < 80.f;
+				}
+				if (!bCrowded)
+				{
+					break;
+				}
+				Mark->SetActorLocation(Mark->GetActorLocation() + FVector(0.f, 150.f, 0.f));
+			}
+			if (bStart)
+			{
+				Mark->bStartMark = true;
+				Mark->RerunConstructionScripts();
+			}
+			if (PoseValue != INDEX_NONE)
+			{
+				Mark->Pose = static_cast<ECinemafyPose>(PoseValue);
+			}
+			++Placed;
 		}
-		if (bStart)
-		{
-			Mark->bStartMark = true;
-			Mark->RerunConstructionScripts();
-		}
-		return true;
+		return Placed > 0;
 	}
 	case ECinemafyFix::AddNavMesh:
 		return HasNavMeshBounds(World) || AddNavMesh(World);
+	case ECinemafyFix::AddPlayerStart:
+	{
+		if (TActorIterator<APlayerStart>(World))
+		{
+			return true;
+		}
+		// Well clear of the set: 30 m past the far side of everything Cinemafy stages around.
+		FBox Set(ForceInit);
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (It->IsA<ACharacter>() || It->IsA<ACinemafyMark>())
+			{
+				Set += It->GetActorLocation();
+			}
+		}
+		const FVector Center = Set.IsValid ? Set.GetCenter() : FVector::ZeroVector;
+		const float Reach = Set.IsValid ? Set.GetExtent().Size2D() : 0.f;
+		// On real floor, out of the shot: the farthest point past the set's edge (up to 30 m out, in any direction)
+		// that has ground under it. A pawn that falls into the void when the scene hands the view back is no use.
+		// The floor: the lowest mark, else the lowest character's feet.
+		float FloorZ = Set.IsValid ? Set.Min.Z : 0.f;
+		for (TActorIterator<ACinemafyMark> It(World); It; ++It)
+		{
+			FloorZ = FMath::Min(FloorZ, It->GetActorLocation().Z);
+		}
+		FVector Where = FVector(Center.X, Center.Y, FloorZ + 100.f);
+		bool bFloor = false;
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyPlayerStart), false);
+		for (const float Out : { 3000.f, 2000.f, 1200.f, 600.f, 300.f })
+		{
+			for (int32 Side = 0; Side < 8 && !bFloor; ++Side)
+			{
+				const FVector Dir = FRotator(0.f, Side * 45.f - 90.f, 0.f).Vector();
+				// From just above the set's floor (marks sit on it), so a ceiling or a roof isn't taken for floor.
+				FVector Probe = Center + Dir * (Reach + Out);
+				Probe.Z = FloorZ;
+				FHitResult Hit;
+				if (World->LineTraceSingleByChannel(Hit, Probe + FVector(0.f, 0.f, 150.f), Probe - FVector(0.f, 0.f, 1500.f), ECC_Visibility, Query)
+					&& Hit.ImpactNormal.Z > 0.7f && Hit.ImpactPoint.Z < FloorZ + 100.f)
+				{
+					Where = Hit.ImpactPoint + FVector(0.f, 0.f, 100.f);
+					bFloor = true;
+				}
+			}
+			if (bFloor)
+			{
+				break;
+			}
+		}
+		const FScopedTransaction Transaction(LOCTEXT("AddPlayerStart", "Cinemafy: Add Player Start"));
+		FActorSpawnParameters Params;
+		APlayerStart* Start = World->SpawnActor<APlayerStart>(Where, FRotator::ZeroRotator, Params);
+		if (Start)
+		{
+			Start->SetActorLabel(TEXT("CinemafyPlayerStart_OffSet"));
+		}
+		return Start != nullptr;
+	}
 	case ECinemafyFix::ScratchVoices:
 		return UCinemafyStoryLibrary::GenerateScratchVoices(Project, Check.SceneId, false) > 0;
 	case ECinemafyFix::LipSync:
@@ -512,7 +613,7 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 		for (FCinemafyCastMember& Member : Project->CastMembers)
 		{
 			const bool bWanted = Check.FixArg.IsEmpty() || Member.ScriptName.Equals(Check.FixArg, ESearchCase::IgnoreCase);
-			if (bWanted && Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
+			if (bWanted && !Member.bVoiceOnly && Member.CharacterClass.IsNull() && !UCinemafyStoryLibrary::FindCastActor(Project, Member.ScriptName, World))
 			{
 				Member.CharacterClass = TSoftClassPtr<ACharacter>(Template);
 				++Given;
@@ -531,7 +632,14 @@ int32 UCinemafyPreflightLibrary::FixAll(UCinemafyScriptProject* Project, const T
 	int32 Fixed = 0;
 	bool bVoiced = false;
 	bool bUpdated = false;
-	for (const FCinemafyCheck& Check : Checks)
+	// Checks come worst first, but casting a template character needs the cast entries Build Cast & Sets makes:
+	// build the cast before anything else.
+	TArray<FCinemafyCheck> Ordered = Checks;
+	Ordered.StableSort([](const FCinemafyCheck& A, const FCinemafyCheck& B)
+	{
+		return A.Fix == ECinemafyFix::BuildCastAndSets && B.Fix != ECinemafyFix::BuildCastAndSets;
+	});
+	for (const FCinemafyCheck& Check : Ordered)
 	{
 		// Opening another level is a decision; the rest is safe to do in one go (once each for the big ones).
 		if (Check.Fix == ECinemafyFix::None || Check.Fix == ECinemafyFix::OpenLevel || Check.Fix == ECinemafyFix::OpenProject
@@ -569,6 +677,13 @@ FString UCinemafyPreflightLibrary::FormatChecks(const TArray<FCinemafyCheck>& Ch
 
 bool UCinemafyPreflightLibrary::ShowPreflight(UCinemafyScriptProject* Project, const FString& SceneId, const FText& Title, const FText& WhatHappens, const FText& GoLabel)
 {
+	if (!CinemafyDialog::IsInteractive())
+	{
+		// Scripted: no window to wait on. The findings go to the log, and the work goes ahead.
+		UE_LOG(LogCinemafy, Log, TEXT("Cinemafy pre-flight%s%s:\n%s"), SceneId.IsEmpty() ? TEXT("") : TEXT(" for "), *SceneId,
+			*FormatChecks(SceneId.IsEmpty() ? CheckProject(Project) : CheckScene(Project, SceneId)));
+		return true;
+	}
 	if (!Project || !FSlateApplication::IsInitialized())
 	{
 		return false;
@@ -790,7 +905,7 @@ void UCinemafyPreflightLibrary::PrevisWithPreflight(UCinemafyScriptProject* Proj
 		return;
 	}
 	const FString Report = UCinemafyStoryLibrary::PrevisScene(Project, SceneId, bRecord);
-	FMessageDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
+	CinemafyDialog::Open(EAppMsgType::Ok, FText::FromString(Report.Left(3000)));
 }
 
 #undef LOCTEXT_NAMESPACE

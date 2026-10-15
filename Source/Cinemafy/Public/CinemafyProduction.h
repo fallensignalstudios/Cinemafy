@@ -16,6 +16,17 @@ class UTextRenderComponent;
 class UCinemafyPerformerProfile;
 struct FCinemafyContinuityFact;
 
+/** How a character holds a place: on their feet, in a chair, on a bed, on their knees, against a wall. */
+UENUM(BlueprintType)
+enum class ECinemafyPose : uint8
+{
+	Stand  UMETA(DisplayName = "Stand"),
+	Sit    UMETA(DisplayName = "Sit"),
+	Lie    UMETA(DisplayName = "Lie"),
+	Kneel  UMETA(DisplayName = "Kneel"),
+	Lean   UMETA(DisplayName = "Lean")
+};
+
 /**
  * A named spot on a set: "console", "lift", "window". Previs reads "Kade walks to the console" and sends her
  * here. Place them with Tools > Cinemafy (or the tutorial), name them the way the script talks.
@@ -39,6 +50,14 @@ public:
 	/** Where a character can start the scene ("start" marks are used first when previs places the cast). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mark")
 	bool bStartMark = false;
+
+	/**
+	 * How someone blocked here holds it: a "bunk" mark set to Lie, a "chair" to Sit. Blocking that names the place
+	 * without a pose ("Tarrik waits by the bunk") uses this. For Lie, put the mark on the bed with its arrow toward the
+	 * pillow; people blocked here together lie side by side.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mark")
+	ECinemafyPose Pose = ECinemafyPose::Stand;
 
 	virtual void OnConstruction(const FTransform& Transform) override;
 
@@ -120,6 +139,13 @@ struct CINEMAFY_API FCinemafyCastMember
 	/** The player in a game: scenes bind the player's own pawn (gear and all) in their place. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast")
 	bool bIsPlayer = false;
+
+	/**
+	 * Heard, not seen: an announcement, a system, a radio, a narrator. Their lines play as audio and subtitles; they get
+	 * no character, mark, walk or shot. Set for speakers like "SHIP ANNOUNCEMENT" when the cast is built.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast")
+	bool bVoiceOnly = false;
 
 	/** Scratch voice: a system voice name (macOS "Samantha", Windows "Microsoft David"...). Empty = default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cast|Voice")

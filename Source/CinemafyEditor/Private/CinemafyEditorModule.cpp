@@ -1,4 +1,5 @@
 #include "CinemafyEditorModule.h"
+#include "Misc/CoreDelegates.h"
 #include "CinemafyEditorLibrary.h"
 #include "CinemafyTypes.h"
 #include "SCinemafyShotBrowser.h"
@@ -308,10 +309,24 @@ void FCinemafyEditorModule::StartupModule()
 	}));
 
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FCinemafyEditorModule::RegisterMenus));
+
+	// Let go of Sequencer, Slate and the editor world while they're all still there, before the engine tears them
+	// down (quitting with Sequencer open), rather than in ShutdownModule, which can run after.
+	PreExitHandle = FCoreDelegates::OnEnginePreExit.AddLambda([this]()
+	{
+		FCinemafyChoreoMode::Stop();
+		CinemafyChoreoTake::Shutdown();
+		if (ISequencerModule* Sequencer = FModuleManager::GetModulePtr<ISequencerModule>(TEXT("Sequencer")))
+		{
+			Sequencer->UnregisterOnSequencerCreated(SequencerCreatedHandle);
+		}
+		SequencerCreatedHandle.Reset();
+	});
 }
 
 void FCinemafyEditorModule::ShutdownModule()
 {
+	FCoreDelegates::OnEnginePreExit.Remove(PreExitHandle);
 	ACinemafySceneDirector::OnEditorRequest.Remove(DirectorRequestHandle);
 	ACinemafyChoreography::OnEditorRequest.Remove(ChoreoRequestHandle);
 	UCinemafyScriptProject::OnEditorRequest.Remove(ScriptRequestHandle);
@@ -326,13 +341,18 @@ void FCinemafyEditorModule::ShutdownModule()
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyEditPanel::TabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(SCinemafyMulticam::TabName);
 	}
-	if (ISequencerModule* SequencerModule = FModuleManager::GetModulePtr<ISequencerModule>(TEXT("Sequencer")))
+	ISequencerModule* SequencerModule = SequencerCreatedHandle.IsValid() ? FModuleManager::GetModulePtr<ISequencerModule>(TEXT("Sequencer")) : nullptr;
+	if (SequencerModule)
 	{
 		SequencerModule->UnregisterOnSequencerCreated(SequencerCreatedHandle);
 	}
 	FCinemafyEditCommands::Unregister();
-	UToolMenus::UnRegisterStartupCallback(this);
-	UToolMenus::UnregisterOwner(this);
+	// At editor exit the UObject system (and with it the menus) can already be gone.
+	if (UObjectInitialized() && UToolMenus::TryGet())
+	{
+		UToolMenus::UnRegisterStartupCallback(this);
+		UToolMenus::UnregisterOwner(this);
+	}
 }
 
 void FCinemafyEditorModule::RegisterMenus()
