@@ -130,6 +130,10 @@ What it reads:
 - **Where:** the place after *on / in / at / against / by*: "the bunk", "the console". A Cinemafy Mark with that name,
   else a piece of the set with it in its label (people go on top of it, along its length).
 
+**Partway through**, the page can pose someone too: "Lyessa lies down on the bunk beside Tarrik." walks her to the
+bunk (or, with no place named, beside whoever the line names), then she goes into the pose in the take itself and
+holds it from there on.
+
 Previs puts each block's people at its place in its pose, and **they hold it for the whole scene**: no walking off,
 no turning on the spot (their choreography is set to **Hold Pose**). They still say their lines, and the cut covers
 them. Walks the page gives them are left out (the report says so). Without notes, a pose the opening action sets

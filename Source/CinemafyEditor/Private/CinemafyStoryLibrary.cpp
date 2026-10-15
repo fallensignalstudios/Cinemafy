@@ -1000,6 +1000,30 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		{
 			return Performer->GetActorLocation(); // Held by the blocking: everything happens from there.
 		}
+		if (Beat.Pose != ECinemafyPose::Stand)
+		{
+			// Going into a pose: on top of the place (the bed, not its edge), or right beside the one named.
+			if (!Beat.Place.IsEmpty())
+			{
+				FCinemafyBlock Where;
+				Where.Place = Beat.Place;
+				Where.Pose = Beat.Pose;
+				Where.bPoseGiven = true;
+				FTransform Spot;
+				ECinemafyPose Ignored;
+				FString What;
+				if (CinemafyStory::FindBlockSpot(World, Where, Scene->Location, Spot, Ignored, What))
+				{
+					return Spot.GetLocation();
+				}
+			}
+			if (Target)
+			{
+				const FVector Side = (Performer->GetActorLocation() - Target->GetActorLocation()).GetSafeNormal2D();
+				return Target->GetActorLocation() + (Side.IsNearlyZero() ? Target->GetActorRightVector() : Side) * 45.f;
+			}
+			return Performer->GetActorLocation();
+		}
 		if (!Beat.Place.IsEmpty())
 		{
 			if (ACinemafyMark* Mark = UCinemafyProductionLibrary::FindMark(World, Beat.Place, Scene->Location))
@@ -1115,6 +1139,7 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 				Added.Listener = Target;
 				Added.HeardFrom = Beat.HeardFrom;
 			}
+			Added.PoseHere = Beat.Pose;
 			if (AActor* const* Cue = Actors.Find(Beat.WaitFor))
 			{
 				Added.WaitForLineFrom = *Cue;

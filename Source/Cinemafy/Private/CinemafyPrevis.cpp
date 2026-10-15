@@ -222,6 +222,12 @@ namespace CinemafyStaging
 	}
 }
 
+namespace CinemafyBlocking
+{
+	bool PoseWord(const FString& Word, ECinemafyPose& OutPose);
+	FString PlaceIn(const TArray<FString>& Words, const CinemafyStaging::FCastAliases& Aliases);
+}
+
 TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafyScriptScene& Scene, TArray<FString>& OutNotStaged)
 {
 	using namespace CinemafyStaging;
@@ -431,6 +437,68 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 				ClauseSubject = bPronoun ? LastNamed : Subject;
 			}
 			Subject = ClauseSubject;
+
+			// Mid-scene, someone goes into a pose ("She lies down on the bunk beside him"): walk there, then hold it.
+			ECinemafyPose ClausePose = ECinemafyPose::Stand;
+			bool bPoseClause = false;
+			for (const FString& Word : Words)
+			{
+				if (CinemafyBlocking::PoseWord(Word, ClausePose) && ClausePose != ECinemafyPose::Stand)
+				{
+					bPoseClause = true;
+					break;
+				}
+			}
+			if (bPoseClause && !Subject.IsEmpty() && !Holding.Contains(Subject))
+			{
+				// Where: a place in the words, else beside whoever else the clause names (on the bed beside him).
+				const FString Place = CinemafyBlocking::PlaceIn(Words, Aliases);
+				FString Beside;
+				for (int32 Index = 0; Index < Words.Num() && Place.IsEmpty(); ++Index)
+				{
+					int32 Length = 1;
+					const FString Named = Aliases.At(Words, Index, Length);
+					if (!Named.IsEmpty() && Named != Subject)
+					{
+						Beside = Named;
+					}
+				}
+				FCinemafyStagedBeat Pose;
+				Pose.Character = Subject;
+				Pose.Prompt = TEXT("wait 1");
+				Pose.Place = Place;
+				Pose.Target = Beside;
+				Pose.Pose = ClausePose;
+				Pose.Source = Clause;
+				if (!PendingCueFrom.IsEmpty() && PendingCueFrom != Subject)
+				{
+					Pose.WaitFor = PendingCueFrom;
+					Pose.WaitForLineNumber = LinesSaid.FindRef(PendingCueFrom);
+				}
+				PendingCueFrom.Reset();
+				if (!Place.IsEmpty() || !Beside.IsEmpty())
+				{
+					// Over there first.
+					FCinemafyStagedBeat Walk;
+					Walk.Character = Subject;
+					Walk.Prompt = TEXT("walk");
+					Walk.Place = Place;
+					Walk.Target = Beside;
+					Walk.Source = Clause;
+					Walk.WaitFor = Pose.WaitFor;
+					Walk.WaitForLineNumber = Pose.WaitForLineNumber;
+					Pose.WaitFor.Reset();
+					Pose.WaitForLineNumber = 0;
+					LastBeatOf.Add(Subject, Beats.Num());
+					LinesAtBeat.Add(TotalLines);
+					Beats.Add(Walk);
+				}
+				LastBeatOf.Add(Subject, Beats.Num());
+				LinesAtBeat.Add(TotalLines);
+				Beats.Add(Pose);
+				Holding.Add(Subject); // From here on they hold it.
+				continue;
+			}
 			if (!Verb || Subject.IsEmpty())
 			{
 				if (Verb || Words.Num() > 2)
@@ -439,8 +507,8 @@ TArray<FCinemafyStagedBeat> UCinemafyPrevisLibrary::StageScene(const FCinemafySc
 				}
 				continue;
 			}
-			const bool bChangesPlace = Verb->Kind == EVerb::Move || Verb->Kind == EVerb::Traverse || Verb->Kind == EVerb::Dodge
-				|| (Verb->Kind == EVerb::Gesture && (FCString::Strcmp(Verb->Prompt, TEXT("sit")) == 0 || FCString::Strcmp(Verb->Prompt, TEXT("kneel")) == 0));
+			const bool bChangesPlace = Verb && (Verb->Kind == EVerb::Move || Verb->Kind == EVerb::Traverse || Verb->Kind == EVerb::Dodge
+				|| (Verb->Kind == EVerb::Gesture && (FCString::Strcmp(Verb->Prompt, TEXT("sit")) == 0 || FCString::Strcmp(Verb->Prompt, TEXT("kneel")) == 0)));
 			if (bChangesPlace && Holding.Contains(Subject))
 			{
 				OutNotStaged.AddUnique(FString::Printf(TEXT("%s holds the blocking, so not: \"%s\""), *Subject, *Clause));

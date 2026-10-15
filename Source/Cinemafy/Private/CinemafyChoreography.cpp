@@ -2,6 +2,7 @@
 #include "CinemafyModule.h"
 #include "CinemafyPerformerProfile.h"
 #include "CinemafyProduction.h"
+#include "CinemafyPrevis.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
@@ -549,9 +550,75 @@ void ACinemafyChoreography::PostEditChangeProperty(FPropertyChangedEvent& Event)
 void ACinemafyChoreography::BeginPlay()
 {
 	Super::BeginPlay();
+	if (bPerformOnNextPlay)
+	{
+		// The player's pawn may not be spawned yet: hide it once the world is running.
+		GetWorldTimerManager().SetTimerForNextTick(this, &ACinemafyChoreography::HidePlayerForTake);
+	}
 	if (bPerformOnBeginPlay || bPerformOnNextPlay)
 	{
 		Perform();
+	}
+}
+
+void ACinemafyChoreography::TakePose(ECinemafyPose Pose, const FVector& Point)
+{
+	ACharacter* Character = Performer;
+	USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : nullptr;
+	if (!Mesh || Pose == ECinemafyPose::Stand)
+	{
+		return;
+	}
+	bHoldPose = true;
+	const USkeleton* Skeleton = Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
+	UAnimSequenceBase* Clip = UCinemafyPrevisLibrary::FindPoseAnimation(Pose, Skeleton, false, 0);
+	const FString PoseName = StaticEnum<ECinemafyPose>()->GetNameStringByValue(static_cast<int64>(Pose));
+	if (!Clip)
+	{
+		AddEvent(ECinemafyPerformanceEventKind::BeatStart, true, FString::Printf(TEXT("no %s clip: stays standing (set Project Settings > Cinemafy > Staging > Pose Animations)"), *PoseName));
+		return;
+	}
+	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->GravityScale = 0.f;
+	}
+	if (UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
+	{
+		Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	}
+	Mesh->PlayAnimation(Clip, true);
+	PoseSettlePoint = Point;
+	PoseSettling = Pose;
+	PoseSettleFrames = 2;
+	AddEvent(ECinemafyPerformanceEventKind::BeatStart, false, FString::Printf(TEXT("%s (%s)"), *PoseName.ToLower(), *Clip->GetName()));
+}
+
+void ACinemafyChoreography::HidePlayerForTake()
+{
+	APlayerController* Controller = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
+	if (!Pawn || Pawn->IsHidden())
+	{
+		return;
+	}
+	for (TActorIterator<ACinemafyChoreography> It(GetWorld()); It; ++It)
+	{
+		if (It->Performer == Pawn)
+		{
+			return; // The player is in the scene: they stay.
+		}
+	}
+	// Recording a take: the pawn at the Player Start would walk into the background of the cast's shots.
+	Pawn->SetActorHiddenInGame(true);
+	Pawn->SetActorEnableCollision(false);
+	Pawn->DisableInput(Controller);
+	if (ACharacter* Character = Cast<ACharacter>(Pawn))
+	{
+		if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+		{
+			Movement->DisableMovement();
+		}
 	}
 }
 
@@ -1268,6 +1335,34 @@ void ACinemafyChoreography::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	// A pose just taken: the clip has moved the body by now; put the hips over the point, just above what's there.
+	if (PoseSettleFrames >= 0 && Performer && --PoseSettleFrames < 0)
+	{
+		const USkeletalMeshComponent* Mesh = Performer->GetMesh();
+		FVector Hips = Mesh ? Mesh->Bounds.Origin : Performer->GetActorLocation();
+		for (const TCHAR* Bone : { TEXT("pelvis"), TEXT("Pelvis"), TEXT("hips"), TEXT("Hips") })
+		{
+			if (Mesh && Mesh->GetBoneIndex(Bone) != INDEX_NONE)
+			{
+				Hips = Mesh->GetBoneLocation(Bone);
+				break;
+			}
+		}
+		float Surface = PoseSettlePoint.Z;
+		FHitResult Hit;
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyTakePose), false, Performer);
+		if (GetWorld()->LineTraceSingleByChannel(Hit, PoseSettlePoint + FVector(0.f, 0.f, 150.f), PoseSettlePoint - FVector(0.f, 0.f, 300.f), ECC_Visibility, Query))
+		{
+			Surface = Hit.ImpactPoint.Z;
+		}
+		FVector Move(PoseSettlePoint.X - Hips.X, PoseSettlePoint.Y - Hips.Y, 0.f);
+		if (PoseSettling == ECinemafyPose::Lie || PoseSettling == ECinemafyPose::Sit)
+		{
+			Move.Z = Surface + (PoseSettling == ECinemafyPose::Lie ? 14.f : 10.f) - Hips.Z;
+		}
+		Performer->SetActorLocation(Performer->GetActorLocation() + Move, false, nullptr, ETeleportType::TeleportPhysics);
+	}
+
 	if (!bPerforming)
 	{
 		UWorld* World = GetWorld();
@@ -1551,6 +1646,10 @@ void ACinemafyChoreography::StartBeat()
 
 	const FVector Here = Performer->GetActorLocation();
 	const FVector Point = GetBeatWorldLocation(CurrentBeat);
+	if (Beat.PoseHere != ECinemafyPose::Stand)
+	{
+		TakePose(Beat.PoseHere, Point);
+	}
 	const FVector TargetPoint = GetTargetPoint(Beat, CurrentBeat);
 	const float Distance = FVector::Dist2D(Here, TargetPoint);
 

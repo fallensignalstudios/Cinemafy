@@ -1162,6 +1162,22 @@ namespace
 			{
 				return; // Lying on the bed, seated: a standing gesture would pull them out of the pose.
 			}
+			// Or posed partway through the take (lay down beside him): from that beat on, no standing gestures.
+			UWorld* ActorWorld = Actor ? Actor->GetWorld() : nullptr;
+			for (TActorIterator<ACinemafyChoreography> It(ActorWorld); ActorWorld && It; ++It)
+			{
+				if (It->Performer != Actor)
+				{
+					continue;
+				}
+				for (const FCinemafyChoreoBeat& Beat : It->Beats)
+				{
+					if (Beat.PoseHere != ECinemafyPose::Stand && Beat.StartTime >= 0.f && Beat.StartTime <= To)
+					{
+						return;
+					}
+				}
+			}
 			USkeletalMeshComponent* Mesh = FindBodyMesh(Actor);
 			const USkeleton* Skeleton = Mesh && Mesh->GetSkeletalMeshAsset() ? Mesh->GetSkeletalMeshAsset()->GetSkeleton() : nullptr;
 			if (!Skeleton)

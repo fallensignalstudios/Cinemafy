@@ -83,6 +83,10 @@ struct CINEMAFY_API FCinemafyStagedBeat
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	int32 WaitForLineNumber = 0;
 
+	/** From this beat on, Character holds this pose (lies down on the bunk mid-scene). Stand = no change. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
+	ECinemafyPose Pose = ECinemafyPose::Stand;
+
 	/** Set when Character hears this line rather than says it: the voice with no body it comes from ("SHIP ANNOUNCEMENT"). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Staging")
 	FString HeardFrom;

@@ -1863,6 +1863,25 @@ bool FCinemafyBlockingTest::RunTest(const FString& Parameters)
 	Opening.Text = TEXT("Kade sits in the command chair.");
 	const TArray<FCinemafyBlock> FromPage = Previs::BlockScene(Bridge);
 	TestTrue(TEXT("The opening action can pose someone too"), FromPage.Num() == 1 && FromPage[0].Pose == ECinemafyPose::Sit && FromPage[0].Place == TEXT("command chair") && !FromPage[0].bFromNotes);
+
+	// Partway through: walk over, then hold the pose from that beat on.
+	const FString Later = TEXT(
+		"INT. DORM - NIGHT\n\n"
+		"TARRIK\nCome here.\n\n"
+		"Lyessa lies down on the bunk beside Tarrik.\n\n"
+		"LYESSA\nOnly for a while.\n\n"
+		"Lyessa walks to the door.\n");
+	const TArray<FCinemafyScriptAct> LaterActs = UCinemafyScriptLibrary::BreakDownScript(Later, true, 5, Title, Report);
+	if (TestTrue(TEXT("One scene"), LaterActs.Num() == 1 && LaterActs[0].Chapters.Num() == 1 && LaterActs[0].Chapters[0].Scenes.Num() == 1))
+	{
+		NotStaged.Reset();
+		const TArray<FCinemafyStagedBeat> Lying = Previs::StageScene(LaterActs[0].Chapters[0].Scenes[0], NotStaged);
+		const int32 Walk = Lying.IndexOfByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("LYESSA") && B.Prompt == TEXT("walk") && B.Place == TEXT("bunk"); });
+		const int32 Down = Lying.IndexOfByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("LYESSA") && B.Pose == ECinemafyPose::Lie; });
+		TestTrue(TEXT("She walks to the bunk, then lies down"), Walk != INDEX_NONE && Down == Walk + 1 && Lying[Down].Place == TEXT("bunk"));
+		TestTrue(TEXT("...after Tarrik's line"), Walk != INDEX_NONE && Lying[Walk].WaitFor == TEXT("TARRIK"));
+		TestFalse(TEXT("...and stays there: no walk to the door"), Lying.ContainsByPredicate([](const FCinemafyStagedBeat& B) { return B.Character == TEXT("LYESSA") && B.Place == TEXT("door"); }));
+	}
 	return true;
 }
 

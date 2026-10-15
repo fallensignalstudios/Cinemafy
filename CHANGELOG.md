@@ -27,6 +27,12 @@
 - **Tone:** tender is warm and quiet (Neutral, soft), not Happy, so a love scene doesn't laugh through; "I love you"
   plays tender; danger in the words ("afraid", "assassin", "die", "blood") plays worried whoever says it; and once a
   warm scene's words turn dark, the rest of it plays tense (`MoodAfterLine`).
+- **Poses partway through:** "Lyessa lies down on the bunk beside Tarrik." after a few lines walks her there, then
+  she goes into the pose (the mesh plays the pose clip and the body settles onto the bed, in the take itself) and
+  holds it from that beat on. No place named: beside whoever the line names. The cut gives her no standing
+  gestures from then on.
+- **The player's pawn sits takes out:** recording a take hides the game's own pawn (spawned at the Player Start) and
+  holds it still, unless the player is in the scene.
 - New test: `Cinemafy.Previs.ReadsYourBlocking`.
 
 ## 0.18.0: "The fine print"
