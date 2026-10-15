@@ -498,9 +498,21 @@ FString UCinemafyStoryLibrary::PrevisScene(UCinemafyScriptProject* Project, cons
 		}
 		if (Target)
 		{
-			// Toward them, stopping short.
 			const FVector From = Performer->GetActorLocation();
 			const FVector To = Target->GetActorLocation();
+			if (Beat.Prompt == TEXT("say"))
+			{
+				// Talking to someone: already close enough, stay put. Otherwise meet on your own side of the middle,
+				// since the listener walks in too when they answer (stopping short of where they *were* puts both
+				// speakers on the same spot, and one gets shoved through the floor).
+				if (FVector::Dist2D(From, To) <= 300.f)
+				{
+					return From;
+				}
+				const FVector Middle = (From + To) * 0.5f;
+				return FVector(Middle.X, Middle.Y, From.Z) + (From - Middle).GetSafeNormal2D() * 75.f;
+			}
+			// Toward them, stopping short.
 			return To + (From - To).GetSafeNormal2D() * 150.f;
 		}
 		return Performer->GetActorLocation();
