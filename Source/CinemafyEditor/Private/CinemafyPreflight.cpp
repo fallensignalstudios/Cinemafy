@@ -531,7 +531,29 @@ bool UCinemafyPreflightLibrary::ApplyFix(UCinemafyScriptProject* Project, const 
 		}
 		const FVector Center = Set.IsValid ? Set.GetCenter() : FVector::ZeroVector;
 		const float Reach = Set.IsValid ? Set.GetExtent().Size2D() : 0.f;
-		const FVector Where = Center + FVector(0.f, -(Reach + 3000.f), 100.f);
+		// On real floor, out of the shot: the farthest point past the set's edge (up to 30 m out, in any direction)
+		// that has ground under it. A pawn that falls into the void when the scene hands the view back is no use.
+		FVector Where = Center + FVector(0.f, 0.f, 100.f);
+		bool bFloor = false;
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(CinemafyPlayerStart), false);
+		for (const float Out : { 3000.f, 2000.f, 1200.f, 600.f, 300.f })
+		{
+			for (int32 Side = 0; Side < 8 && !bFloor; ++Side)
+			{
+				const FVector Dir = FRotator(0.f, Side * 45.f - 90.f, 0.f).Vector();
+				const FVector Probe = Center + Dir * (Reach + Out);
+				FHitResult Hit;
+				if (World->LineTraceSingleByChannel(Hit, Probe + FVector(0.f, 0.f, 500.f), Probe - FVector(0.f, 0.f, 2000.f), ECC_Visibility, Query) && Hit.ImpactNormal.Z > 0.7f)
+				{
+					Where = Hit.ImpactPoint + FVector(0.f, 0.f, 100.f);
+					bFloor = true;
+				}
+			}
+			if (bFloor)
+			{
+				break;
+			}
+		}
 		const FScopedTransaction Transaction(LOCTEXT("AddPlayerStart", "Cinemafy: Add Player Start"));
 		FActorSpawnParameters Params;
 		APlayerStart* Start = World->SpawnActor<APlayerStart>(Where, FRotator::ZeroRotator, Params);

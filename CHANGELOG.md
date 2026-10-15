@@ -28,7 +28,8 @@ Fixes from staging a 420-page game screenplay end to end.
 - **Talking characters meet in the middle** instead of walking into each other.
 - **The cut is the playback range:** the sequence ends at the last shot instead of playing the take's black tail.
 - **Pre-flight:** warns when the level has no Player Start (the game's pawn would spawn at the origin during the
-  take), with a fix that places one off set.
+  take), with a fix that places one off set, on real floor (the farthest point up to 30 m past the set with ground
+  under it).
 - A possessive isn't a death: "kills Selene's Frost" kills the Frost.
 - **Voices in the take:** a voice-only line (an announcement, a radio) is heard by whoever just spoke (else the next to
   speak): it plays unattached with the voice's name on the subtitle, the hearer's lips stay still, it paces the take
